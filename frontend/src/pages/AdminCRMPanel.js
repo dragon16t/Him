@@ -257,6 +257,13 @@ export default function AdminCRMPanel() {
           <div className="flex items-center gap-2"><GlobalSearch /><NotificationBell /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1"/>Logout</Button></div>
         </div>
       </div>
+      {resetStatus?.pending && (
+        <div className="bg-orange-50 border-b-2 border-orange-300">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2">
+            <HardResetCountdown executeAt={resetStatus.execute_at}/>
+          </div>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Stats */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">

@@ -418,16 +418,21 @@ async def write_test_credentials():
 async def login(data: dict):
     email = data.get("email", "").lower().strip()
     password = data.get("password", "")
-    if not email or not password: raise HTTPException(status_code=400, detail="Email and password required")
+    if not email or not password: raise HTTPException(status_code=400, detail="Email and password are required")
+    found_user = None
     for coll_name, role in AUTH_COLLECTIONS.items():
         user = await db[coll_name].find_one({"email": email}, {"_id": 0})
-        if user and verify_password(password, user.get("password_hash", "")):
-            token = create_token(user["id"], email, role)
-            ud = {k: v for k, v in user.items() if k != "password_hash"}
-            ud["role"] = role
-            # Auto check-in disabled — only HR can mark attendance
-            return {"token": token, "user": ud}
-    raise HTTPException(status_code=401, detail="Invalid email or password")
+        if user:
+            if verify_password(password, user.get("password_hash", "")):
+                token = create_token(user["id"], email, role)
+                ud = {k: v for k, v in user.items() if k != "password_hash"}
+                ud["role"] = role
+                return {"token": token, "user": ud}
+            found_user = True
+            break
+    if found_user:
+        raise HTTPException(status_code=401, detail="Password entered is wrong")
+    raise HTTPException(status_code=404, detail="No account found with this email")
 
 @api_router.post("/auth/reset-password")
 async def reset_password(data: dict):
@@ -2430,12 +2435,12 @@ async def _cascade_delete_user_data(uid: str, role: str, by_user: dict, depth: i
                 )
     # 2. Delete operational data tied to this uid
     cascades = [
-        ("orders", {"created_by": uid}),
+        ("orders", {"$or": [{"created_by": uid}, {"approved_by": uid}, {"shipped_by": uid}, {"delivered_by": uid}, {"last_edited_by": uid}]}),
         ("leads", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
         ("commissions", {"user_id": uid}),
         ("tasks", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
-        ("fund_requests", {"requested_by": uid}),
-        ("expenses", {"created_by": uid}),
+        ("fund_requests", {"$or": [{"requested_by": uid}, {"approved_by": uid}]}),
+        ("expenses", {"$or": [{"created_by": uid}, {"approved_by": uid}]}),
         ("payroll", {"user_id": uid}),
         ("attendance", {"user_id": uid}),
         ("hr_attendance", {"user_id": uid}),
@@ -2443,14 +2448,24 @@ async def _cascade_delete_user_data(uid: str, role: str, by_user: dict, depth: i
         ("complaints", {"user_id": uid}),
         ("hr_complaints", {"user_id": uid}),
         ("notifications", {"user_id": uid}),
-        ("inhouse_call_logs", {"caller_id": uid}),
+        ("inhouse_call_logs", {"$or": [{"caller_id": uid}, {"user_id": uid}]}),
         ("daily_goals", {"user_id": uid}),
-        ("influencers", {"assigned_to": uid}),
-        ("content_briefs", {"assigned_to": uid}),
+        ("influencers", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
+        ("content_briefs", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
         ("contacts", {"created_by": uid}),
         ("advances", {"user_id": uid}),
         ("revenue_entries", {"created_by": uid}),
         ("ai_call_logs", {"user_id": uid}),
+        ("hiring", {"$or": [{"forwarded_to": uid}, {"created_by": uid}]}),
+        ("candidates", {"$or": [{"forwarded_to": uid}, {"created_by": uid}]}),
+        ("resignations", {"user_id": uid}),
+        ("content_calendar", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
+        ("shoot_plans", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
+        ("scripts", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
+        ("hr_call_logs", {"user_id": uid}),
+        ("outreach_logs", {"user_id": uid}),
+        ("employee_tasks", {"$or": [{"assigned_to": uid}, {"created_by": uid}]}),
+        ("audit_logs", {"user_id": uid}),
     ]
     for coll, query in cascades:
         try:

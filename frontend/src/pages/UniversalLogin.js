@@ -35,9 +35,12 @@ export default function UniversalLogin() {
     }
   }, [searchParams, navigate]);
 
+  const [errMsg, setErrMsg] = useState("");
+
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!email || !password) return toast.error("Please enter email and password");
+    setErrMsg("");
+    if (!email || !password) { setErrMsg("Please enter email and password"); return; }
     setLoading(true);
     try {
       const { data } = await axios.post(`${API}/auth/login`, { email, password });
@@ -45,7 +48,11 @@ export default function UniversalLogin() {
       localStorage.setItem("user", JSON.stringify(data.user));
       toast.success(`Welcome, ${data.user.name || data.user.email}!`);
       navigate(ROLE_ROUTES[data.user.role] || "/login");
-    } catch (err) { toast.error(err.response?.data?.detail || "Login failed"); }
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Login failed. Please try again.";
+      setErrMsg(msg);
+      toast.error(msg);
+    }
     finally { setLoading(false); }
   };
 
@@ -76,6 +83,11 @@ export default function UniversalLogin() {
             <Button type="submit" disabled={loading} className="w-full rounded-full bg-[#3B5249] hover:bg-[#4F6B60] text-white h-11" data-testid="login-submit-btn">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign In"}
             </Button>
+            {errMsg && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 text-center" data-testid="login-error">
+                {errMsg}
+              </div>
+            )}
           </form>
         </div>
       </div>

@@ -101,3 +101,122 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Test the Celesta Glow CRM backend at the production URL focusing on login error messages, system wiped state, order edit permissions, cascade delete, hard reset endpoints, and instant wipe functionality"
+
+backend:
+  - task: "Login error messages"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "All login error scenarios working correctly - 400 for empty credentials, 404 for non-existent email with correct message 'No account found with this email', 401 for wrong password with correct message 'Password entered is wrong', 200 for valid admin login with token and role='admin'"
+
+  - task: "System wiped state verification"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "System wiped state correctly implemented - only admin users exist after instant wipe, all other role endpoints (/telecallers, /agents, /sales-managers, /managers, /hr-managers) return empty arrays, system_wiped flag is respected in app_config"
+
+  - task: "Order edit permissions"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Order edit permissions working correctly - can edit pending orders, cannot edit shipped/delivered orders (returns 403 with message containing 'locked'), role-based permissions enforced. Order workflow: pending -> approved -> shipped -> delivered"
+
+  - task: "Cascade delete functionality"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Cascade delete working with DELETE /api/users/{uid} and password XYCDF6F@123 - deletes child users and related data, tombstones deleted emails to prevent re-seeding, returns cascade_counts in response showing deleted items"
+
+  - task: "Hard Reset endpoints"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Hard reset endpoints working correctly - POST /api/admin/hard-reset with password AMVPA2478F@123 schedules 48h reset with execute_at timestamp, GET /api/admin/hard-reset/status returns pending=true with execute_at, POST /api/admin/hard-reset/cancel successfully cancels pending reset"
+
+  - task: "Instant Wipe functionality"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Instant wipe working correctly - POST /api/admin/instant-wipe with password AMVPA2478F@123 wipes all non-admin users, sets system_wiped flag in app_config, returns wiped_at timestamp, preserves admin users only"
+
+  - task: "User creation via /hr/add-employee"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "User creation endpoint working - POST /api/hr/add-employee can create telecallers, agents, district managers with proper role assignment and ID generation using role-specific prefixes"
+
+  - task: "Order approval workflow"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Order approval workflow working - orders must be approved via PUT /api/orders/{id}/approve before shipping via PUT /api/orders/{id}/ship, proper status transitions enforced (pending -> confirmed -> shipped -> delivered)"
+
+frontend:
+  # No frontend testing performed as per instructions
+
+metadata:
+  created_by: "testing_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "All backend API testing complete"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "testing"
+    message: "Comprehensive backend testing completed for Celesta Glow CRM. All major functionality working correctly including login error handling, system wiped state, order permissions, cascade delete, hard reset, and instant wipe. Backend URL https://hr-central-82.preview.emergentagent.com/api is fully functional. All endpoints tested with correct credentials (admin@celestaglow.com/admin123) and master passwords (XYCDF6F@123 for delete, AMVPA2478F@123 for hard-reset/instant-wipe)."
