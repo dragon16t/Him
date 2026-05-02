@@ -55,7 +55,7 @@ export default function AdminCRMPanel() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [instructions, setInstructions] = useState([]);
   const [showInstruction, setShowInstruction] = useState(false);
-  const [instrForm, setInstrForm] = useState({title:"",content:"",target_role:"all",priority:"normal"});
+  const [instrForm, setInstrForm] = useState({title:"",content:"",target_role:"all",priority:"normal",create_as_task:false,send_email:false,due_date:"",from_time:"",to_time:""});
   const [finBalance, setFinBalance] = useState({cash:0,bank:0,total:0});
   const [finLedger, setFinLedger] = useState([]);
   const [cashHolders, setCashHolders] = useState([]);
@@ -72,6 +72,58 @@ export default function AdminCRMPanel() {
   const [showRevEntry, setShowRevEntry] = useState(false);
   const [revForm, setRevForm] = useState({platform:"amazon",sale_amount:0,platform_fee:0,shipping_cost:0,settlement_charge:0,order_ref:"",notes:"",date:""});
   const [resetStatus, setResetStatus] = useState(null);
+  // Document templates editor
+  const [showDocTemplates, setShowDocTemplates] = useState(false);
+  const [docTplOverrides, setDocTplOverrides] = useState([]);
+  const [activeTplKey, setActiveTplKey] = useState("offer");
+  const [tplForm, setTplForm] = useState({subject:"",body_html:""});
+  const [tplLoading, setTplLoading] = useState(false);
+  const docTplKeys = [
+    {k:"welcome", l:"Welcome / Joining"},
+    {k:"offer", l:"Offer Letter"},
+    {k:"employment", l:"Employment Confirmation"},
+    {k:"agreement", l:"Employment Agreement"},
+    {k:"increment", l:"Increment Letter"},
+    {k:"termination", l:"Termination Letter"},
+    {k:"warning", l:"Warning Letter"},
+    {k:"relieving", l:"Relieving Letter"},
+    {k:"experience", l:"Experience Certificate"},
+  ];
+  const loadDocTemplates = async () => {
+    try {
+      const { data } = await axios.get(`${API}/hr/document-templates`);
+      setDocTplOverrides(data.templates || []);
+      // Load currently active key
+      const cur = (data.templates||[]).find(t=>t.key===activeTplKey);
+      setTplForm({subject: cur?.subject || "", body_html: cur?.body_html || ""});
+    } catch (e) { /* ignore */ }
+  };
+  const switchTplKey = async (k) => {
+    setActiveTplKey(k);
+    try {
+      const { data } = await axios.get(`${API}/hr/document-templates/${k}`);
+      setTplForm({subject: data.template?.subject || "", body_html: data.template?.body_html || ""});
+    } catch { setTplForm({subject:"",body_html:""}); }
+  };
+  const saveDocTemplate = async () => {
+    if (!tplForm.body_html.trim()) { toast.error("Body HTML cannot be empty"); return; }
+    setTplLoading(true);
+    try {
+      await axios.put(`${API}/hr/document-templates/${activeTplKey}`, tplForm);
+      toast.success("Template saved — will be used for future emails");
+      loadDocTemplates();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    setTplLoading(false);
+  };
+  const resetDocTemplate = async () => {
+    if (!window.confirm("Revert to built-in default? Your custom version will be deleted.")) return;
+    try {
+      await axios.delete(`${API}/hr/document-templates/${activeTplKey}`);
+      setTplForm({subject:"",body_html:""});
+      loadDocTemplates();
+      toast.success("Reverted to built-in default");
+    } catch { toast.error("Failed"); }
+  };
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   // Dialogs
@@ -606,7 +658,7 @@ export default function AdminCRMPanel() {
 
           {/* INSTRUCTIONS TAB */}
           <TabsContent value="instructions"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Instructions & Broadcasts</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowInstruction(true)} data-testid="add-instruction-btn"><Plus className="w-3 h-3 mr-1"/>New Instruction</Button></div>
+            <div className="flex justify-between mb-4 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Instructions & Broadcasts</h3><div className="flex gap-2"><Button size="sm" variant="outline" className="rounded-full text-xs border-[#3B5249] text-[#3B5249]" onClick={()=>{setShowDocTemplates(true);loadDocTemplates();}} data-testid="edit-doc-templates-btn"><Edit className="w-3 h-3 mr-1"/>Edit Document Templates</Button><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowInstruction(true)} data-testid="add-instruction-btn"><Plus className="w-3 h-3 mr-1"/>New Instruction / Task</Button></div></div>
             {instructions.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No instructions</p>:
             <div className="space-y-2">{instructions.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-4"><div className="flex justify-between items-start"><div><p className="font-heading font-medium">{i.title}</p><p className="text-sm text-[#59615D] mt-1 whitespace-pre-wrap">{i.content}</p></div><div className="flex gap-1"><Badge variant="outline" className="text-[9px] capitalize">{i.target_role==="all"?"All Staff":i.target_role?.replace(/_/g," ")}</Badge><Badge className={`text-[9px] ${i.priority==="high"?"bg-red-100 text-red-800":i.priority==="urgent"?"bg-red-200 text-red-900":"bg-gray-100 text-gray-700"}`}>{i.priority}</Badge></div></div><p className="text-[10px] text-[#59615D] mt-2">By {i.created_by_name} | {i.created_at?.slice(0,10)}</p></div>))}</div>}
           </div></TabsContent>
@@ -808,13 +860,74 @@ export default function AdminCRMPanel() {
       </DialogContent></Dialog>
 
       {/* INSTRUCTION DIALOG */}
-      <Dialog open={showInstruction} onOpenChange={setShowInstruction}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Create Instruction</DialogTitle></DialogHeader><div className="space-y-3">
+      <Dialog open={showInstruction} onOpenChange={setShowInstruction}><DialogContent className="rounded-2xl max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Create Instruction / Assign Task</DialogTitle></DialogHeader><div className="space-y-3">
         <div><Label className="text-xs font-medium">Title</Label><Input value={instrForm.title} onChange={e=>setInstrForm(f=>({...f,title:e.target.value}))} placeholder="Instruction title" className="rounded-xl"/></div>
         <div><Label className="text-xs font-medium">Content / Message</Label><Textarea value={instrForm.content} onChange={e=>setInstrForm(f=>({...f,content:e.target.value}))} placeholder="Write instruction details..." className="rounded-xl min-h-[100px]"/></div>
-        <div><Label className="text-xs font-medium">Target Role</Label><Select value={instrForm.target_role} onValueChange={v=>setInstrForm(f=>({...f,target_role:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">All Staff</SelectItem><SelectItem value="telecaller">Telecallers</SelectItem><SelectItem value="agent">Agents</SelectItem><SelectItem value="district_manager">District Managers</SelectItem><SelectItem value="sales_manager">Sales Managers</SelectItem><SelectItem value="finance_manager">Finance Manager</SelectItem><SelectItem value="hr_manager">HR Manager</SelectItem><SelectItem value="inhouse_telecaller">In-House Telecallers</SelectItem><SelectItem value="content_strategist">Content Strategists</SelectItem><SelectItem value="videographer">Videographers</SelectItem><SelectItem value="editor">Editors</SelectItem><SelectItem value="graphic_designer">Graphic Designers</SelectItem></SelectContent></Select></div>
-        <div><Label className="text-xs font-medium">Priority</Label><Select value={instrForm.priority} onValueChange={v=>setInstrForm(f=>({...f,priority:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="urgent">Urgent</SelectItem></SelectContent></Select></div>
-        <Button onClick={async()=>{if(!instrForm.title)return toast.error("Title required");try{await axios.post(`${API}/instructions`,instrForm);toast.success("Instruction sent!");setShowInstruction(false);setInstrForm({title:"",content:"",target_role:"all",priority:"normal"});fetchData();}catch{toast.error("Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white">Send Instruction</Button>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label className="text-xs font-medium">Target Role</Label><Select value={instrForm.target_role} onValueChange={v=>setInstrForm(f=>({...f,target_role:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">All Staff</SelectItem><SelectItem value="telecaller">Telecallers</SelectItem><SelectItem value="agent">Agents</SelectItem><SelectItem value="district_manager">District Managers</SelectItem><SelectItem value="sales_manager">Sales Managers</SelectItem><SelectItem value="finance_manager">Finance Manager</SelectItem><SelectItem value="hr_manager">HR Manager</SelectItem><SelectItem value="inhouse_telecaller">In-House Telecallers</SelectItem><SelectItem value="content_strategist">Content Strategists</SelectItem><SelectItem value="content_developer">Content Developers</SelectItem><SelectItem value="social_media_manager">Social Media Managers</SelectItem><SelectItem value="inventory_manager">Inventory Manager</SelectItem><SelectItem value="digital_marketing_manager">Digital Marketing</SelectItem><SelectItem value="assistant_sales_manager">Asst. Sales Mgr</SelectItem><SelectItem value="assistant_district_manager">Asst. District Mgr</SelectItem></SelectContent></Select></div>
+          <div><Label className="text-xs font-medium">Priority</Label><Select value={instrForm.priority} onValueChange={v=>setInstrForm(f=>({...f,priority:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="urgent">Urgent</SelectItem></SelectContent></Select></div>
+        </div>
+        <div className="rounded-xl border border-[#E5E3DB] bg-[#F9F8F6] p-3 space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#3B5249]">Delivery Options</p>
+          <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={instrForm.create_as_task} onChange={e=>setInstrForm(f=>({...f,create_as_task:e.target.checked}))} data-testid="instr-task-checkbox"/>Push to employee dashboard as a Task</label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={instrForm.send_email} onChange={e=>setInstrForm(f=>({...f,send_email:e.target.checked}))} data-testid="instr-email-checkbox"/>Send email notification to assignees</label>
+          {instrForm.create_as_task && (
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div><Label className="text-[10px]">Due Date</Label><Input type="date" value={instrForm.due_date} onChange={e=>setInstrForm(f=>({...f,due_date:e.target.value}))} className="rounded-xl text-xs"/></div>
+              <div><Label className="text-[10px]">From</Label><Input type="time" value={instrForm.from_time} onChange={e=>setInstrForm(f=>({...f,from_time:e.target.value}))} className="rounded-xl text-xs"/></div>
+              <div><Label className="text-[10px]">To</Label><Input type="time" value={instrForm.to_time} onChange={e=>setInstrForm(f=>({...f,to_time:e.target.value}))} className="rounded-xl text-xs"/></div>
+            </div>
+          )}
+          <p className="text-[10px] text-[#59615D]">Dashboard notification is always sent. Task & email are optional add-ons.</p>
+        </div>
+        <Button onClick={async()=>{if(!instrForm.title)return toast.error("Title required");try{const{data}=await axios.post(`${API}/instructions`,instrForm);const er=data.email_results||{};const parts=[`${data.target_users_count||0} recipients notified`];if(data.tasks_created)parts.push(`${data.tasks_created} task(s)`);if(er.sent)parts.push(`${er.sent} email(s) sent`);if(er.failed)parts.push(`${er.failed} email failed`);toast.success(parts.join(" • "));setShowInstruction(false);setInstrForm({title:"",content:"",target_role:"all",priority:"normal",create_as_task:false,send_email:false,due_date:"",from_time:"",to_time:""});fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="instr-send-btn">Send</Button>
       </div></DialogContent></Dialog>
+
+      {/* DOCUMENT TEMPLATES EDITOR */}
+      <Dialog open={showDocTemplates} onOpenChange={setShowDocTemplates}>
+        <DialogContent className="rounded-2xl max-w-4xl max-h-[92vh] overflow-y-auto" data-testid="doc-templates-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Document Templates Editor</DialogTitle>
+            <p className="text-xs text-[#59615D] mt-1">Customise the HTML body for each HR letter. Use placeholders like {"{emp_name}, {position}, {salary}, {joining_date}, {department}, {effective_date}, {reason}, {today_date}, {company_name}"} — they will be auto-filled when the letter is sent.</p>
+          </DialogHeader>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="md:col-span-1 space-y-1">
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-[#59615D] mb-2">Template</p>
+              {docTplKeys.map(t => {
+                const isOverride = docTplOverrides.some(o => o.key === t.k);
+                return (
+                  <button key={t.k} onClick={()=>switchTplKey(t.k)} className={`w-full text-left text-xs px-3 py-2 rounded-xl border transition-all ${activeTplKey===t.k?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white border-[#E5E3DB] hover:bg-[#F9F8F6]"}`} data-testid={`tpl-key-${t.k}`}>
+                    <div className="flex justify-between items-center">
+                      <span>{t.l}</span>
+                      {isOverride && <span className={`text-[8px] px-1.5 py-0.5 rounded ${activeTplKey===t.k?"bg-white/20 text-white":"bg-orange-100 text-orange-700"}`}>CUSTOM</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="md:col-span-3 space-y-3">
+              <div>
+                <Label className="text-xs font-medium">Subject (optional override)</Label>
+                <Input value={tplForm.subject} onChange={e=>setTplForm(f=>({...f,subject:e.target.value}))} placeholder="Leave empty to use built-in subject" className="rounded-xl" data-testid="tpl-subject"/>
+              </div>
+              <div>
+                <Label className="text-xs font-medium">Body HTML</Label>
+                <Textarea value={tplForm.body_html} onChange={e=>setTplForm(f=>({...f,body_html:e.target.value}))} placeholder="<p>Dear {emp_name},</p><p>...</p>" className="rounded-xl font-mono text-xs min-h-[320px]" data-testid="tpl-body"/>
+                <p className="text-[10px] text-[#59615D] mt-1">The system automatically wraps your HTML inside the company letterhead and footer with employment terms.</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button onClick={saveDocTemplate} disabled={tplLoading} className="rounded-full bg-[#3B5249] text-white" data-testid="tpl-save">{tplLoading?"Saving...":"Save Template"}</Button>
+                <Button variant="outline" onClick={resetDocTemplate} className="rounded-full border-orange-300 text-orange-600" data-testid="tpl-reset">Revert to Default</Button>
+                <Button variant="outline" onClick={()=>setShowDocTemplates(false)} className="rounded-full">Close</Button>
+              </div>
+              <div className="rounded-xl bg-[#F9F8F6] border border-[#E5E3DB] p-3">
+                <p className="text-[10px] uppercase tracking-wider font-semibold text-[#3B5249] mb-1">Available Placeholders</p>
+                <p className="text-[11px] text-[#2C3531] font-mono leading-relaxed">{"{emp_name} {position} {salary} {incentive} {joining_date} {effective_date} {department} {reporting_to} {old_salary} {new_salary} {reason} {details} {today_date} {company_name} {company_email} {company_phone} {company_address} {work_hours} {weekly_off}"}</p>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* REVENUE ENTRY DIALOG */}
       <Dialog open={showRevEntry} onOpenChange={setShowRevEntry}><DialogContent className="rounded-2xl" data-testid="revenue-entry-dialog"><DialogHeader><DialogTitle className="font-heading">Add Revenue Entry</DialogTitle></DialogHeader>

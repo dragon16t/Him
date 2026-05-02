@@ -40,9 +40,12 @@ COMPANY = {
     "phone": "+91 94461 25745",
     "email": "manager@celestaglow.com",
     "website": "www.celestaglow.com",
-    "work_hours": "9:30 AM – 6:00 PM (Monday to Saturday)",
-    "lunch_break": "30 minutes (1:30 PM – 2:00 PM)",
-    "weekly_off": "Sunday & 2nd / 4th Saturday",
+    "work_hours": "9:30 AM – 5:30 PM (Monday to Saturday)",
+    "lunch_break": "40 minutes (1:00 PM – 1:40 PM)",
+    "tea_breaks": "20 minutes total (Morning & Evening tea)",
+    "friday_extra": "Extra 30 minutes break on Friday",
+    "total_break": "1 hour total per day",
+    "weekly_off": "Sunday",
     "notice_period": "30 days (as per company policy & Indian labour law)",
     "probation": "3 months from date of joining",
     "leave_policy": "12 Casual Leaves + 12 Sick Leaves + 12 Earned Leaves per annum (pro-rata)",
@@ -83,7 +86,11 @@ def _letterhead_footer(signatory: str = "HR Department", show_terms: bool = Fals
     if show_terms:
         terms_block = f"""<div style='background:#F9F8F6;border-left:3px solid {COMPANY['primary_color']};padding:14px 18px;margin:22px 0 18px;font-family:Arial,sans-serif;font-size:11px;color:#2C3531;line-height:1.7'>
 <p style='margin:0 0 6px;font-weight:600;color:{COMPANY['primary_color']};letter-spacing:0.5px;text-transform:uppercase;font-size:10px'>Standard Employment Terms</p>
-<p style='margin:0'>• <b>Work Hours:</b> {COMPANY['work_hours']} | Lunch: {COMPANY['lunch_break']}</p>
+<p style='margin:0'>• <b>Work Hours:</b> {COMPANY['work_hours']}</p>
+<p style='margin:0'>• <b>Break Time:</b> {COMPANY['total_break']}</p>
+<p style='margin:0;padding-left:14px'>– Lunch Break: {COMPANY['lunch_break']}</p>
+<p style='margin:0;padding-left:14px'>– Tea Breaks: {COMPANY['tea_breaks']}</p>
+<p style='margin:0'>• <b>Friday:</b> {COMPANY['friday_extra']}</p>
 <p style='margin:0'>• <b>Weekly Off:</b> {COMPANY['weekly_off']}</p>
 <p style='margin:0'>• <b>Probation:</b> {COMPANY['probation']}</p>
 <p style='margin:0'>• <b>Notice Period:</b> {COMPANY['notice_period']}</p>
@@ -151,23 +158,38 @@ def get_object(path):
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
 
 # ==================== EMAIL ====================
-async def send_email_async(to_email, subject, html_body):
-    if not SMTP_EMAIL or not SMTP_PASSWORD: return False
+async def send_email_async(to_email, subject, html_body, max_retries=3):
+    """Send email via Gmail SMTP with retries. Returns (success, error_msg)."""
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        return False, "SMTP not configured"
     def _send():
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = f"Celesta Glow <{SMTP_EMAIL}>"
-            msg['To'] = to_email
-            msg.attach(MIMEText(html_body, 'html'))
-            with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                server.starttls()
-                server.login(SMTP_EMAIL, SMTP_PASSWORD)
-                server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
-            return True
-        except Exception as e:
-            logger.error(f"Email error: {e}")
-            return False
+        last_err = ""
+        for attempt in range(max_retries):
+            try:
+                msg = MIMEMultipart('alternative')
+                msg['Subject'] = subject
+                msg['From'] = f"Celesta Glow <{SMTP_EMAIL}>"
+                msg['To'] = to_email
+                msg.attach(MIMEText(html_body, 'html'))
+                # Try SMTP_SSL on 465 first (more reliable on most networks)
+                try:
+                    with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20) as server:
+                        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+                        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+                    return True, ""
+                except Exception:
+                    # Fallback to STARTTLS on 587
+                    with smtplib.SMTP('smtp.gmail.com', 587, timeout=20) as server:
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+                        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+                    return True, ""
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                logger.error(f"Email attempt {attempt+1}/{max_retries} to {to_email} failed: {last_err}")
+        return False, last_err
     return await asyncio.to_thread(_send)
 
 # ==================== AUTH ====================
@@ -1488,22 +1510,7 @@ async def process_payroll(pid: str, data: dict, current_user: dict = Depends(get
 
 # ==================== TASKS — see richer implementation around line 1579 ====================
 
-# ==================== INSTRUCTIONS ====================
-@api_router.post("/instructions")
-async def create_instruction(data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin','sales_manager','district_manager']: raise HTTPException(status_code=403)
-    i = {"id": f"inst-{uuid.uuid4().hex[:8]}", "title": data.get("title",""), "content": data.get("content",""),
-         "category": data.get("category","general"), "target_role": data.get("target_role","telecaller"),
-         "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
-         "created_at": datetime.now(timezone.utc).isoformat()}
-    await db.instructions.insert_one(i); i.pop("_id",None)
-    return {"instruction": i, "message": "Instruction created"}
-
-@api_router.get("/instructions")
-async def get_instructions(current_user: dict = Depends(get_current_user)):
-    q = {}
-    if current_user['role'] in ['telecaller','agent']: q['target_role'] = current_user['role']
-    return {"instructions": await db.instructions.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)}
+# ==================== INSTRUCTIONS — see richer implementation around line 2260 ====================
 
 # ==================== CONTENT / CONTACTS / INVESTMENTS ====================
 @api_router.post("/content")
@@ -2244,7 +2251,94 @@ async def create_instruction(data: dict, current_user: dict = Depends(get_curren
              "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
              "created_at": datetime.now(timezone.utc).isoformat(), "read_by": []}
     await db.instructions.insert_one(instr); instr.pop("_id",None)
-    return {"instruction": instr}
+
+    # === Optional: also push as a task + email notification ===
+    create_as_task = bool(data.get("create_as_task", False))
+    send_email_flag = bool(data.get("send_email", False))
+    task_due_date = data.get("due_date") or date.today().isoformat()
+    task_from_time = data.get("from_time", "")
+    task_to_time = data.get("to_time", "")
+
+    # Build target user list
+    target_users = []
+    target_role = data.get("target_role", "all")
+    target_user_id = data.get("target_user_id", "")
+    if target_user_id:
+        for r, c in ROLE_COLLECTIONS.items():
+            u = await db[c].find_one({"id": target_user_id}, {"_id": 0, "id": 1, "name": 1, "email": 1})
+            if u:
+                target_users.append({**u, "role": r}); break
+    elif target_role and target_role != "all":
+        coll = ROLE_COLLECTIONS.get(target_role)
+        if coll:
+            async for u in db[coll].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}):
+                target_users.append({**u, "role": target_role})
+    elif target_role == "all":
+        for r, c in ROLE_COLLECTIONS.items():
+            if r == "admin": continue
+            async for u in db[c].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}):
+                target_users.append({**u, "role": r})
+
+    task_count = 0
+    email_results = {"sent": 0, "failed": 0, "errors": []}
+    notif_count = 0
+
+    for u in target_users:
+        # Dashboard notification — always created so it appears in NotificationBell
+        try:
+            await db.notifications.insert_one({
+                "id": f"notif-{uuid.uuid4().hex[:8]}", "user_id": u["id"],
+                "title": f"📋 {instr['title']}", "message": instr['content'][:200],
+                "type": "instruction", "priority": instr["priority"],
+                "ref_id": instr["id"], "read": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            notif_count += 1
+        except Exception:
+            pass
+
+        if create_as_task:
+            task = {"id": f"etask-{uuid.uuid4().hex[:8]}", "user_id": u["id"],
+                    "user_name": u.get("name", ""), "user_role": u.get("role", ""),
+                    "title": instr["title"], "description": instr["content"],
+                    "notes": f"From instruction by {current_user.get('name','Admin')} | Priority: {instr['priority']}",
+                    "from_time": task_from_time, "to_time": task_to_time,
+                    "status": "pending", "date": task_due_date, "completed_at": "",
+                    "instruction_id": instr["id"],
+                    "created_by": current_user["id"],
+                    "created_at": datetime.now(timezone.utc).isoformat()}
+            try:
+                await db.employee_tasks.insert_one(task); task_count += 1
+            except Exception:
+                pass
+
+        if send_email_flag and u.get("email"):
+            subject = f"[{instr['priority'].upper()}] {instr['title']} – {COMPANY['name']}"
+            content_html = (instr["content"] or "").replace("\n", "<br>")
+            body = _letterhead("Task / Instruction Notice") + f"""
+<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{u.get('name','Team Member')}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>You have been assigned the following {'task' if create_as_task else 'instruction'} by <b>{current_user.get('name','Admin')}</b>:</p>
+<div style='background:#F9F8F6;border-left:3px solid {COMPANY['primary_color']};padding:14px 18px;margin:18px 0;font-family:Arial,sans-serif;font-size:13px;color:#2C3531;line-height:1.7'>
+  <p style='margin:0 0 6px;font-weight:700;font-size:14px;color:{COMPANY['primary_color']}'>{instr['title']}</p>
+  <p style='margin:0;font-size:12.5px'>{content_html}</p>
+  {f"<p style='margin:10px 0 0;font-size:11.5px'><b>Due Date:</b> {task_due_date}</p>" if create_as_task else ""}
+  {f"<p style='margin:0;font-size:11.5px'><b>Time:</b> {task_from_time} – {task_to_time}</p>" if create_as_task and (task_from_time or task_to_time) else ""}
+  <p style='margin:6px 0 0;font-size:11.5px'><b>Priority:</b> <span style='text-transform:capitalize;color:{"#B75D69" if instr["priority"] in ("high","urgent") else "#3B5249"}'>{instr['priority']}</span></p>
+</div>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Please log in to your Celesta Glow dashboard to view full details and mark progress.</p>
+""" + _letterhead_footer(signatory=current_user.get('name', 'Admin'))
+            success, err = await send_email_async(u["email"], subject, body)
+            if success:
+                email_results["sent"] += 1
+            else:
+                email_results["failed"] += 1
+                if err and len(email_results["errors"]) < 5:
+                    email_results["errors"].append(f"{u['email']}: {err}")
+
+    return {"instruction": instr, "tasks_created": task_count,
+            "notifications_created": notif_count,
+            "email_results": email_results,
+            "target_users_count": len(target_users)}
 
 @api_router.get("/instructions")
 async def get_instructions(current_user: dict = Depends(get_current_user)):
@@ -2879,6 +2973,56 @@ async def delete_advance(aid: str, current_user: dict = Depends(get_current_user
     await record_transaction("credit", "advance_reversal", adv['amount'], f"Advance reversed: {adv['user_name']}", reference_id=aid, method="cash", created_by=current_user['id'])
     return {"message": "Advance removed and balance restored"}
 
+# ==================== DOCUMENT TEMPLATES (CUSTOM OVERRIDES) ====================
+@api_router.get("/hr/document-templates")
+async def list_document_templates(current_user: dict = Depends(get_current_user)):
+    """List all customised document templates (overrides). Defaults are built-in."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    overrides = await db.document_templates.find({}, {"_id": 0}).to_list(50)
+    builtin = ["welcome","offer","employment","agreement","increment","termination","warning","relieving","experience"]
+    return {"templates": overrides, "builtin_keys": builtin}
+
+@api_router.get("/hr/document-templates/{key}")
+async def get_document_template(key: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    doc = await db.document_templates.find_one({"key": key}, {"_id": 0})
+    return {"template": doc, "key": key}
+
+@api_router.put("/hr/document-templates/{key}")
+async def upsert_document_template(key: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Save a customised template. Body: {subject, body_html} — supports placeholders like {emp_name},{position},{salary},{joining_date},{department},{effective_date},{reason} etc."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    body_html = data.get("body_html", "").strip()
+    subject = data.get("subject", "").strip()
+    if not body_html:
+        raise HTTPException(status_code=400, detail="body_html cannot be empty")
+    update = {"key": key, "subject": subject, "body_html": body_html,
+              "updated_by": current_user['id'], "updated_by_name": current_user.get('name', ''),
+              "updated_at": datetime.now(timezone.utc).isoformat()}
+    await db.document_templates.update_one({"key": key}, {"$set": update}, upsert=True)
+    return {"message": "Template saved", "template": update}
+
+@api_router.delete("/hr/document-templates/{key}")
+async def delete_document_template(key: str, current_user: dict = Depends(get_current_user)):
+    """Reset to built-in default by removing the override."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    r = await db.document_templates.delete_one({"key": key})
+    return {"message": "Reverted to built-in default" if r.deleted_count else "No override existed"}
+
+def _render_custom_template(body_html: str, ctx: dict) -> str:
+    """Replace {placeholder} tokens with values from ctx, leaving unknown tokens unchanged."""
+    out = body_html
+    for k, v in ctx.items():
+        try:
+            out = out.replace("{" + k + "}", str(v))
+        except Exception:
+            pass
+    return out
+
 # ==================== EMAIL TEMPLATES ====================
 @api_router.post("/hr/send-email")
 async def hr_send_email(data: dict, current_user: dict = Depends(get_current_user)):
@@ -2900,6 +3044,35 @@ async def hr_send_email(data: dict, current_user: dict = Depends(get_current_use
     details_text = data.get('details', '')
     department = data.get('department', 'Operations')
     reporting_to = data.get('reporting_to', 'HR Manager')
+
+    # Check for custom override first
+    override = await db.document_templates.find_one({"key": template}, {"_id": 0})
+    if override and override.get("body_html"):
+        ctx = {
+            "emp_name": emp_name, "position": position, "salary": f"{salary:,}" if isinstance(salary, (int, float)) else salary,
+            "incentive": f"{incentive:,}" if isinstance(incentive, (int, float)) else incentive,
+            "joining_date": joining_date, "effective_date": effective_date,
+            "department": department, "reporting_to": reporting_to,
+            "old_salary": f"{old_salary:,}" if isinstance(old_salary, (int, float)) else old_salary,
+            "new_salary": f"{new_salary:,}" if isinstance(new_salary, (int, float)) else new_salary,
+            "reason": reason, "details": details_text,
+            "company_name": COMPANY['name'], "company_email": COMPANY['email'],
+            "company_phone": COMPANY['phone'], "company_address": f"{COMPANY['address_line1']}, {COMPANY['address_line2']}",
+            "work_hours": COMPANY['work_hours'], "weekly_off": COMPANY['weekly_off'],
+            "today_date": datetime.now(timezone.utc).strftime('%d %B %Y'),
+        }
+        subject = _render_custom_template(override.get("subject", "") or f"Communication from {COMPANY['name']}", ctx)
+        body = _letterhead(subject) + _render_custom_template(override["body_html"], ctx) + _letterhead_footer(show_terms=True)
+        success, err = await send_email_async(to_email, subject, body)
+        comm = {"id": f"comm-{uuid.uuid4().hex[:8]}", "template": template + "_custom", "to_email": to_email,
+                "emp_name": emp_name, "subject": subject, "status": "sent" if success else "failed",
+                "error": err if not success else "",
+                "sent_by": current_user['id'], "sent_by_name": current_user.get('name', ''),
+                "created_at": datetime.now(timezone.utc).isoformat()}
+        await db.hr_communications.insert_one(comm); comm.pop("_id", None)
+        if not success:
+            raise HTTPException(status_code=502, detail=f"Email send failed: {err or 'SMTP not configured'}")
+        return {"message": "Email sent (custom template)", "communication": comm}
 
     if template == "welcome":
         subject = f"Welcome to {COMPANY['name']} – Appointment & Joining Confirmation"
@@ -3097,14 +3270,17 @@ async def hr_send_email(data: dict, current_user: dict = Depends(get_current_use
 <div style='font-family:Georgia,serif;font-size:13px;line-height:1.8;color:#2C3531;margin:10px 0 18px'>{custom_msg_html}</div>
 <p style='font-family:Georgia,serif;font-size:12.5px;line-height:1.7;color:#59615D'>For any queries or clarifications, feel free to write to us at <b>{COMPANY['email']}</b> or call <b>{COMPANY['phone']}</b>.</p>
 """ + _letterhead_footer()
-    success = await send_email_async(to_email, subject, body)
+    success, err = await send_email_async(to_email, subject, body)
     # Log communication
     comm = {"id": f"comm-{uuid.uuid4().hex[:8]}", "template": template, "to_email": to_email,
             "emp_name": emp_name, "subject": subject, "status": "sent" if success else "failed",
+            "error": err if not success else "",
             "sent_by": current_user['id'], "sent_by_name": current_user.get('name', ''),
             "created_at": datetime.now(timezone.utc).isoformat()}
     await db.hr_communications.insert_one(comm); comm.pop("_id", None)
-    return {"message": "Email sent" if success else "Email failed (SMTP not configured)", "communication": comm}
+    if not success:
+        raise HTTPException(status_code=502, detail=f"Email send failed: {err or 'SMTP not configured'}")
+    return {"message": "Email sent successfully", "communication": comm}
 
 @api_router.post("/hr/bulk-email")
 async def hr_bulk_email(data: dict, current_user: dict = Depends(get_current_user)):
@@ -3120,8 +3296,8 @@ async def hr_bulk_email(data: dict, current_user: dict = Depends(get_current_use
 <p>Dear <b>{em.get('name','')}</b>,</p>
 <div>{message}</div>
 <p>Regards,<br><b>Celesta Glow HR Team</b></p></div>"""
-        success = await send_email_async(em.get('email',''), subject, body)
-        results.append({"email": em.get('email',''), "status": "sent" if success else "failed"})
+        success, err = await send_email_async(em.get('email',''), subject, body)
+        results.append({"email": em.get('email',''), "status": "sent" if success else "failed", "error": err if not success else ""})
     return {"results": results, "total": len(emails), "sent": sum(1 for r in results if r['status'] == 'sent')}
 
 @api_router.get("/hr/communications")

@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Test the Celesta Glow CRM backend at the production URL focusing on login error messages, system wiped state, order edit permissions, cascade delete, hard reset endpoints, and instant wipe functionality"
+user_problem_statement: "Test the Celesta Glow CRM backend at the production URL focusing on: (1) Previous tests: login error messages, system wiped state, order edit permissions, cascade delete, hard reset endpoints, and instant wipe functionality. (2) New features: email sending verification, updated employment terms in offer letters, document template overrides (NEW endpoints), unified instruction endpoint with task assignment + email + dashboard, and verification of single POST /api/instructions endpoint."
 
 backend:
   - task: "Login error messages"
@@ -201,18 +201,78 @@ backend:
         agent: "testing"
         comment: "Order approval workflow working - orders must be approved via PUT /api/orders/{id}/approve before shipping via PUT /api/orders/{id}/ship, proper status transitions enforced (pending -> confirmed -> shipped -> delivered)"
 
+  - task: "Email sending with custom template"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/hr/send-email with template='custom' working correctly - returns 200 with status='sent' when SMTP is configured, or 502 with SMTP error detail when not configured. Tested with to_email='glowcelesta@gmail.com', emp_name='QA', subject='Test', message='Hello'. Email sent successfully."
+
+  - task: "Offer letter with updated employment terms"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/hr/send-email with template='offer' working correctly - email sent successfully with updated employment terms in footer including break-time (40 min lunch + 20 min tea), Friday extra-30min break, Sunday weekly-off. Tested with to_email='glowcelesta@gmail.com', emp_name='Test', position='Test', salary=20000, joining_date='2026-05-15', department='Operations', reporting_to='HR'."
+
+  - task: "Document template overrides - CRUD operations"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "All document template override endpoints working correctly: (1) GET /api/hr/document-templates returns {templates:[], builtin_keys:[9 keys]} with correct builtin keys ['welcome','offer','employment','agreement','increment','termination','warning','relieving','experience']. (2) PUT /api/hr/document-templates/offer saves custom template with subject and body_html. (3) GET /api/hr/document-templates/offer retrieves saved template. (4) POST /api/hr/send-email with custom template returns message containing '(custom template)'. (5) DELETE /api/hr/document-templates/offer reverts to default with message 'Reverted to built-in default'."
+
+  - task: "Unified instruction endpoint with task assignment"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/instructions endpoint working correctly with rich response format. Returns all required fields: instruction object, tasks_created (int >= 0), notifications_created (int >= 0), email_results (dict with sent/failed/errors), target_users_count (int). Tested with title='QA Test', content='Daily report by 5 PM', target_role='all', priority='high', create_as_task=true, send_email=false, due_date='2026-05-10'. Instruction created successfully and verified via GET /api/instructions."
+
+  - task: "Single POST /api/instructions endpoint verification"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Verified only ONE POST /api/instructions endpoint exists (no duplicate). Endpoint returns new rich format with fields: instruction, tasks_created, notifications_created, email_results, target_users_count. Old duplicate endpoint (that returned just instruction + message) has been removed. Endpoint at line 2245 is the only active instruction creation endpoint."
+
 frontend:
   # No frontend testing performed as per instructions
 
 metadata:
   created_by: "testing_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "1.1"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "All backend API testing complete"
+    - "All backend API testing complete including new features"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -220,3 +280,5 @@ test_plan:
 agent_communication:
   - agent: "testing"
     message: "Comprehensive backend testing completed for Celesta Glow CRM. All major functionality working correctly including login error handling, system wiped state, order permissions, cascade delete, hard reset, and instant wipe. Backend URL https://hr-central-82.preview.emergentagent.com/api is fully functional. All endpoints tested with correct credentials (admin@celestaglow.com/admin123) and master passwords (XYCDF6F@123 for delete, AMVPA2478F@123 for hard-reset/instant-wipe)."
+  - agent: "testing"
+    message: "NEW FEATURES TESTING COMPLETE (2026-05-02): All 5 new feature requirements verified and working: (1) Email sending with custom template - returns 200 with status='sent'. (2) Offer letter with updated employment terms - email sent successfully with new break-time/Friday/Sunday terms in footer. (3) Document template overrides - all CRUD operations (GET/PUT/DELETE) working correctly with 9 builtin keys. (4) Unified instruction endpoint - returns rich response with tasks_created, notifications_created, email_results, target_users_count. (5) Single endpoint verification - only ONE POST /api/instructions exists with new format, old duplicate removed. All 14 tests passed. Test results saved to /app/test_results_new_features.json and /app/backend_test_new_features.py."

@@ -1,0 +1,86 @@
+[
+  {
+    "test": "Admin login",
+    "status": "PASS",
+    "details": "Token obtained, role=None",
+    "timestamp": "2026-05-02T07:14:57.416295+00:00"
+  },
+  {
+    "test": "Email sending - custom template",
+    "status": "PASS",
+    "details": "Email sent successfully with status='sent'",
+    "timestamp": "2026-05-02T07:14:58.871718+00:00"
+  },
+  {
+    "test": "Offer letter - employment terms",
+    "status": "PASS",
+    "details": "Offer letter sent successfully. Employment terms should include break-time, Friday extra-30min, Sunday weekly-off",
+    "timestamp": "2026-05-02T07:14:59.871368+00:00"
+  },
+  {
+    "test": "List document templates",
+    "status": "PASS",
+    "details": "Got 1 templates, 9 builtin keys: ['welcome', 'offer', 'employment', 'agreement', 'increment', 'termination', 'warning', 'relieving', 'experience']",
+    "timestamp": "2026-05-02T07:14:59.975987+00:00"
+  },
+  {
+    "test": "Create custom template",
+    "status": "PASS",
+    "details": "Template saved: Template saved",
+    "timestamp": "2026-05-02T07:15:00.134529+00:00"
+  },
+  {
+    "test": "Get custom template",
+    "status": "PASS",
+    "details": "Retrieved custom template with correct subject",
+    "timestamp": "2026-05-02T07:15:00.238214+00:00"
+  },
+  {
+    "test": "Send with custom template",
+    "status": "PASS",
+    "details": "Email sent with custom template: Email sent (custom template)",
+    "timestamp": "2026-05-02T07:15:01.147756+00:00"
+  },
+  {
+    "test": "Delete custom template",
+    "status": "PASS",
+    "details": "Template reverted to default: Reverted to built-in default",
+    "timestamp": "2026-05-02T07:15:01.290391+00:00"
+  },
+  {
+    "test": "Create instruction - response fields",
+    "status": "PASS",
+    "details": "All fields present: instruction_id=instr-1581fe13, tasks=0, notifications=0, target_users=0",
+    "timestamp": "2026-05-02T07:15:01.403341+00:00"
+  },
+  {
+    "test": "Create instruction - tasks created",
+    "status": "PASS",
+    "details": "Tasks created: 0",
+    "timestamp": "2026-05-02T07:15:01.403376+00:00"
+  },
+  {
+    "test": "Create instruction - notifications created",
+    "status": "PASS",
+    "details": "Notifications created: 0",
+    "timestamp": "2026-05-02T07:15:01.403383+00:00"
+  },
+  {
+    "test": "Create instruction - email results",
+    "status": "PASS",
+    "details": "Email results: {'sent': 0, 'failed': 0, 'errors': []}",
+    "timestamp": "2026-05-02T07:15:01.403392+00:00"
+  },
+  {
+    "test": "Verify instruction exists",
+    "status": "PASS",
+    "details": "Instruction instr-1581fe13 found in list",
+    "timestamp": "2026-05-02T07:15:01.554954+00:00"
+  },
+  {
+    "test": "Single endpoint verification",
+    "status": "PASS",
+    "details": "Endpoint returns new rich format with all required fields",
+    "timestamp": "2026-05-02T07:15:01.702304+00:00"
+  }
+]
