@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Test the Celesta Glow CRM backend at the production URL focusing on: (1) Previous tests: login error messages, system wiped state, order edit permissions, cascade delete, hard reset endpoints, and instant wipe functionality. (2) New features: email sending verification, updated employment terms in offer letters, document template overrides (NEW endpoints), unified instruction endpoint with task assignment + email + dashboard, and verification of single POST /api/instructions endpoint."
+user_problem_statement: "Test the Celesta Glow CRM backend at the production URL focusing on: (1) Previous tests: login error messages, system wiped state, order edit permissions, cascade delete, hard reset endpoints, and instant wipe functionality. (2) New features: email sending verification, updated employment terms in offer letters, document template overrides (NEW endpoints), unified instruction endpoint with task assignment + email + dashboard, and verification of single POST /api/instructions endpoint. (3) LATEST: Bank/payment fields on user creation, user update with bank fields, expense paid_to and reimburse flow."
 
 backend:
   - task: "Login error messages"
@@ -261,18 +261,102 @@ backend:
         agent: "testing"
         comment: "Verified only ONE POST /api/instructions endpoint exists (no duplicate). Endpoint returns new rich format with fields: instruction, tasks_created, notifications_created, email_results, target_users_count. Old duplicate endpoint (that returned just instruction + message) has been removed. Endpoint at line 2245 is the only active instruction creation endpoint."
 
+  - task: "Bank/Payment fields on user creation"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/telecallers with bank/payment fields working perfectly. All fields (bank_account_name, bank_account_number, bank_ifsc, bank_name, upi_id, pan_number, aadhaar_number, address, emergency_contact, dob, joining_date) are correctly saved and returned in response. Tested with user 'Bank Test User' (banktest1@celestaglow.com). All fields present and values match input exactly."
+
+  - task: "User update with bank fields"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "PUT /api/users/{user_id}/update successfully updates bank fields. Tested updating bank_account_number from '123456789012' to '999999999999' and upi_id from 'banktest@sbi' to 'updated@upi'. Verified via GET /api/telecallers that changes persisted correctly."
+
+  - task: "Expense paid_to and reimburse flow - Create"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/expenses with paid_to fields working correctly. When paid_to_name='Suresh' and paid_to_phone='9961012345' are provided, expense is created with reimburse_status='to_be_paid'. All fields (paid_to_name, paid_to_phone, reimburse_status) correctly saved and returned."
+
+  - task: "Expense paid_to and reimburse flow - Update"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "PUT /api/expenses/{eid} successfully updates paid_to fields. Tested updating paid_to_name from 'Suresh' to 'Suresh Pillai' and description. reimburse_status remains 'to_be_paid' as expected. All updates persisted correctly."
+
+  - task: "Expense paid_to and reimburse flow - Mark Paid"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "PUT /api/expenses/{eid}/mark-paid working perfectly. When called with method='cash', expense reimburse_status changes from 'to_be_paid' to 'paid', reimbursed_at timestamp is populated (2026-05-06T14:17:06.591439+00:00), and reimburse_method is set to 'cash'. Complete reimbursement workflow verified."
+
+  - task: "Expense without paid_to fields (backward compatibility)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/expenses without paid_to fields still works correctly (backward compatibility maintained). Regular expense created with reimburse_status='' (empty) and no paid_to_name. Existing functionality not broken."
+
+  - task: "User creation without bank fields (backward compatibility)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "POST /api/telecallers without bank fields still works correctly (backward compatibility maintained). User created successfully with empty bank fields. Existing functionality not broken."
+
 frontend:
   # No frontend testing performed as per instructions
 
 metadata:
   created_by: "testing_agent"
-  version: "1.1"
-  test_sequence: 2
+  version: "1.2"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
   current_focus:
-    - "All backend API testing complete including new features"
+    - "Bank/Payment fields and Expense reimbursement flow testing complete"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -282,3 +366,5 @@ agent_communication:
     message: "Comprehensive backend testing completed for Celesta Glow CRM. All major functionality working correctly including login error handling, system wiped state, order permissions, cascade delete, hard reset, and instant wipe. Backend URL https://hr-central-82.preview.emergentagent.com/api is fully functional. All endpoints tested with correct credentials (admin@celestaglow.com/admin123) and master passwords (XYCDF6F@123 for delete, AMVPA2478F@123 for hard-reset/instant-wipe)."
   - agent: "testing"
     message: "NEW FEATURES TESTING COMPLETE (2026-05-02): All 5 new feature requirements verified and working: (1) Email sending with custom template - returns 200 with status='sent'. (2) Offer letter with updated employment terms - email sent successfully with new break-time/Friday/Sunday terms in footer. (3) Document template overrides - all CRUD operations (GET/PUT/DELETE) working correctly with 9 builtin keys. (4) Unified instruction endpoint - returns rich response with tasks_created, notifications_created, email_results, target_users_count. (5) Single endpoint verification - only ONE POST /api/instructions exists with new format, old duplicate removed. All 14 tests passed. Test results saved to /app/test_results_new_features.json and /app/backend_test_new_features.py."
+  - agent: "testing"
+    message: "BANK/PAYMENT & EXPENSE REIMBURSEMENT TESTING COMPLETE (2026-05-06): All 7 new feature tests passed successfully. (1) Bank/payment fields on user creation - all 11 fields (bank_account_name, bank_account_number, bank_ifsc, bank_name, upi_id, pan_number, aadhaar_number, address, emergency_contact, dob, joining_date) working correctly on POST /api/telecallers. (2) User update with bank fields - PUT /api/users/{id}/update successfully updates bank fields. (3) Expense reimbursement flow - complete workflow verified: POST /api/expenses with paid_to fields creates expense with reimburse_status='to_be_paid', PUT /api/expenses/{eid} updates paid_to fields, PUT /api/expenses/{eid}/mark-paid marks as paid with timestamp. (4) Backward compatibility maintained - users and expenses can be created without new fields. Test script: /app/backend_test_bank_expense.py. Note: 2 test expenses (exp-1fc5290e, exp-58227431) remain in database (no delete endpoint available)."

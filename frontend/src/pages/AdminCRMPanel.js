@@ -15,6 +15,7 @@ import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
 import AdminCallLogs from "../components/AdminCallLogs";
 import OrderEditDialog from "../components/OrderEditDialog";
+import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 const API = "/api";
@@ -143,9 +144,18 @@ export default function AdminCRMPanel() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [createRole, setCreateRole] = useState("telecaller");
   // Forms
-  const [userForm, setUserForm] = useState({name:"",email:"",phone:"",password:"",language:"",district:"",area:"",region_id:"",salary:0,incentive:0});
-  const [editForm, setEditForm] = useState({name:"",email:"",password:"",language:"",district:"",area:""});
-  const [expenseForm, setExpenseForm] = useState({title:"",amount:0,category:"general",description:"",proof_path:""});
+  const [userForm, setUserForm] = useState({name:"",email:"",phone:"",password:"",language:"",district:"",area:"",region_id:"",salary:0,incentive:0,bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
+  const [editForm, setEditForm] = useState({name:"",email:"",phone:"",password:"",language:"",district:"",area:"",salary:0,incentive:0,bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
+  const [expenseForm, setExpenseForm] = useState({title:"",amount:0,category:"general",description:"",proof_path:"",paid_to_name:"",paid_to_user_id:"",paid_to_phone:""});
+  // Expense filters
+  const [expMonth, setExpMonth] = useState(String(new Date().getMonth()+1));
+  const [expYear, setExpYear] = useState(String(new Date().getFullYear()));
+  const [expDay, setExpDay] = useState("all");
+  const [expReimburseFilter, setExpReimburseFilter] = useState("all"); // all | to_be_paid | paid
+  // Common filters for Orders, Leads, Funds, Payroll
+  const [genMonth, setGenMonth] = useState("all");
+  const [genYear, setGenYear] = useState(String(new Date().getFullYear()));
+  const [genDay, setGenDay] = useState("all");
   const [payrollForm, setPayrollForm] = useState({user_id:"",user_name:"",user_role:"",month:"",year:"",basic_salary:0,bonus:0,deductions:0,commission:0,working_days:0,total_working_days:30});
   const [investForm, setInvestForm] = useState({title:"",amount:0,source:"",date:"",notes:"",partner_type:"main"});
   const [hrForm, setHrForm] = useState({name:"",role_title:"",email:"",phone:"",department:"",salary:0});
@@ -230,20 +240,32 @@ export default function AdminCRMPanel() {
     try {
       await axios.post(`${API}${roleConfig.endpoint}`, userForm);
       toast.success(`${roleConfig.label} created!`);
-      setShowCreateUser(false);setUserForm({name:"",email:"",phone:"",password:"",language:"",district:"",area:"",region_id:""});fetchData();
+      setShowCreateUser(false);setUserForm({name:"",email:"",phone:"",password:"",language:"",district:"",area:"",region_id:"",salary:0,incentive:0,bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});fetchData();
     } catch(e){toast.error(e.response?.data?.detail||"Failed");}
   };
   const handleEditUser = async () => {
     if(!selectedUser) return;
     const data = {};
-    if(editForm.name) data.name = editForm.name;
-    if(editForm.email) data.email = editForm.email;
-    if(editForm.password) data.password = editForm.password;
-    if(editForm.language) data.language = editForm.language;
-    if(editForm.district) data.district = editForm.district;
-    if(editForm.area) data.area = editForm.area;
+    const fields = ["name","email","phone","password","language","district","area","bank_account_name","bank_account_number","bank_ifsc","bank_name","upi_id","pan_number","aadhaar_number","address","emergency_contact","dob","joining_date"];
+    fields.forEach(k => { if (editForm[k] !== undefined && editForm[k] !== "") data[k] = editForm[k]; });
+    if (editForm.salary !== undefined && editForm.salary !== null && editForm.salary !== "") data.salary = Number(editForm.salary);
+    if (editForm.incentive !== undefined && editForm.incentive !== null && editForm.incentive !== "") data.incentive = Number(editForm.incentive);
     try { await axios.put(`${API}/users/${selectedUser.id}/update`, data); toast.success("User updated!"); setShowEditUser(false); fetchData(); }
     catch(e){toast.error(e.response?.data?.detail||"Failed");}
+  };
+  const openEditUser = (u) => {
+    setSelectedUser(u);
+    setEditForm({
+      name: u.name||"", email: u.email||"", phone: u.phone||"", password: "",
+      language: u.language||"", district: u.district||"", area: u.area||"",
+      salary: u.salary||0, incentive: u.incentive||0,
+      bank_account_name: u.bank_account_name||"", bank_account_number: u.bank_account_number||"",
+      bank_ifsc: u.bank_ifsc||"", bank_name: u.bank_name||"", upi_id: u.upi_id||"",
+      pan_number: u.pan_number||"", aadhaar_number: u.aadhaar_number||"",
+      address: u.address||"", emergency_contact: u.emergency_contact||"",
+      dob: u.dob||"", joining_date: u.joining_date||""
+    });
+    setShowEditUser(true);
   };
   const proxyLogin = async (u) => {
     const newTab = window.open('about:blank', '_blank');
@@ -262,7 +284,8 @@ export default function AdminCRMPanel() {
   };
   const approveFund = async(id,status)=>{try{await axios.put(`${API}/fund-requests/${id}/approve`,{status});toast.success("Updated");fetchData();}catch{toast.error("Failed");}};
   const approveExpense = async(id,status)=>{try{await axios.put(`${API}/expenses/${id}/approve`,{status});toast.success("Updated");fetchData();}catch{toast.error("Failed");}};
-  const handleExpense = async()=>{if(!expenseForm.title)return toast.error("Title required");try{await axios.post(`${API}/expenses`,{...expenseForm,amount:Number(expenseForm.amount)});toast.success("Created");setShowExpense(false);setExpenseForm({title:"",amount:0,category:"general",description:"",proof_path:""});fetchData();}catch{toast.error("Failed");}};
+  const handleExpense = async()=>{if(!expenseForm.title)return toast.error("Title required");try{await axios.post(`${API}/expenses`,{...expenseForm,amount:Number(expenseForm.amount)});toast.success(expenseForm.paid_to_name?`Created — to be paid to ${expenseForm.paid_to_name}`:"Created");setShowExpense(false);setExpenseForm({title:"",amount:0,category:"general",description:"",proof_path:"",paid_to_name:"",paid_to_user_id:"",paid_to_phone:""});fetchData();}catch{toast.error("Failed");}};
+  const markExpensePaid = async(id, name)=>{if(!window.confirm(`Mark this expense as paid to ${name||"payee"}?`))return;try{await axios.put(`${API}/expenses/${id}/mark-paid`,{method:"cash"});toast.success("Marked as paid");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}};
   const handlePayroll = async()=>{if(!payrollForm.user_id)return toast.error("Select employee");try{await axios.post(`${API}/payroll`,{...payrollForm,basic_salary:Number(payrollForm.basic_salary),bonus:Number(payrollForm.bonus),deductions:Number(payrollForm.deductions),commission:Number(payrollForm.commission)});toast.success("Created");setShowPayroll(false);fetchData();}catch{toast.error("Failed");}};
   const handleInvestment = async()=>{try{await axios.post(`${API}/investments`,{...investForm,amount:Number(investForm.amount)});toast.success("Added");setShowInvestment(false);setInvestForm({title:"",amount:0,source:"",date:"",notes:"",partner_type:"main"});fetchData();}catch{toast.error("Failed");}};
   const handleHrMember = async()=>{if(!hrForm.name)return toast.error("Name required");try{await axios.post(`${API}/hr-team`,{...hrForm,salary:Number(hrForm.salary)});toast.success("Added");setShowHrMember(false);fetchData();}catch{toast.error("Failed");}};
@@ -362,7 +385,7 @@ export default function AdminCRMPanel() {
                           {u.district&&<p className="text-[10px] text-[#A66E4E] mt-0.5 truncate">{u.area||""}{u.area&&", "}{u.district}</p>}
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>{setSelectedUser(u);setEditForm({name:u.name,email:u.email,password:"",language:u.language||"",district:u.district||"",area:u.area||""});setShowEditUser(true);}} data-testid={`edit-user-${u.id}`}><Edit className="w-3 h-3"/></Button>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>openEditUser(u)} data-testid={`edit-user-${u.id}`}><Edit className="w-3 h-3"/></Button>
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>proxyLogin(u)} data-testid={`view-dashboard-${u.id}`} title="Open dashboard in new tab"><Shield className="w-3 h-3"/></Button>
                           {u.role!=="admin"&&<Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600" onClick={async()=>{try{const{data}=await axios.get(`${API}/users/${u.id}/cascade-preview`);setCascadeUser(u);setCascadePreview(data);}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-user-${u.id}`} title="Delete user with cascade"><X className="w-3 h-3"/></Button>}
                         </div>
@@ -492,12 +515,23 @@ export default function AdminCRMPanel() {
 
           {/* ORDERS TAB — full workflow */}
           <TabsContent value="orders"><div className="bg-white rounded-xl border border-[#E5E3DB] p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <h3 className="font-heading text-lg font-medium">Orders ({orders.length})</h3>
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 className="font-heading text-lg font-medium">Orders</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowOrderDlg(true)} data-testid="admin-create-order-btn"><Plus className="w-4 h-4 mr-1"/>Create Order</Button>
             </div>
-            {orders.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No orders</p>:
-            <div className="space-y-3">{orders.filter(o=>!search||o.customer_name?.toLowerCase().includes(search.toLowerCase())||o.id?.includes(search)).map(o=>(
+            <MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/>
+            {(() => {
+              const list = filterByMonth(orders||[], genMonth, genYear, "created_at", genDay).filter(o=>!search||o.customer_name?.toLowerCase().includes(search.toLowerCase())||o.id?.includes(search));
+              const totalRev = list.filter(o=>o.status==="delivered").reduce((s,o)=>s+(Number(o.total_amount)||0),0);
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Orders</p><p className="font-heading font-semibold">{list.length}</p></div>
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Delivered Revenue</p><p className="font-heading font-semibold text-[#3B5249]">Rs.{totalRev.toLocaleString()}</p></div>
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Pending</p><p className="font-heading font-semibold">{list.filter(o=>o.status==="pending").length}</p></div>
+                  </div>
+                  {list.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No orders match the selected filters</p>:
+                  <div className="space-y-3">{list.map(o=>(
               <div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`order-${o.id}`}>
                 <div className="flex flex-col sm:flex-row justify-between gap-2">
                   <div>
@@ -521,12 +555,22 @@ export default function AdminCRMPanel() {
                 </div>
               </div>
             ))}</div>}
+                </>
+              );
+            })()}
           </div></TabsContent>
 
           {/* LEADS TAB */}
-          <TabsContent value="leads"><div className="bg-white rounded-xl border border-[#E5E3DB] overflow-x-auto"><div className="p-4 border-b border-[#E5E3DB]"><h3 className="font-heading text-lg font-medium">Leads ({leads.length})</h3></div>
-            <table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Name","Phone","Telecaller / Agent","Source","Status","Interest","Last Order","Repeat","Relation","Created"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-            <tbody className="divide-y divide-[#E5E3DB]">{leads.filter(l=>!search||l.name?.toLowerCase().includes(search.toLowerCase())||l.phone_number?.includes(search)||l.assigned_to_name?.toLowerCase().includes(search.toLowerCase())).map(l=>(<tr key={l.id} data-testid={`lead-row-${l.id}`}><td className="p-3 font-medium">{l.name}</td><td className="p-3">{l.phone_number}</td><td className="p-3 text-xs"><b className="text-[#3B5249]">{l.assigned_to_name||"-"}</b></td><td className="p-3"><Badge variant="outline" className="text-[9px]">{l.source}</Badge></td><td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${l.status==="converted"||l.status==="delivered"?"bg-green-100 text-green-800":l.status==="interested"?"bg-blue-100 text-blue-800":"bg-gray-100 text-gray-800"}`}>{l.status?.replace(/_/g," ")}</Badge></td><td className="p-3">{l.product_interest}</td><td className="p-3 text-xs">{l.last_order_date||"-"}</td><td className="p-3 text-xs">{l.next_repeat_order_date||"-"}</td><td className="p-3 text-xs">{l.next_relationship_date||"-"}</td><td className="p-3 text-xs">{l.created_at?.slice(0,10)}</td></tr>))}</tbody></table>
+          <TabsContent value="leads"><div className="bg-white rounded-xl border border-[#E5E3DB] overflow-x-auto"><div className="p-4 border-b border-[#E5E3DB] flex justify-between items-center flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Leads</h3></div>
+            <div className="px-4 pt-3"><MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/></div>
+            {(() => {
+              const list = filterByMonth(leads||[], genMonth, genYear, "created_at", genDay).filter(l=>!search||l.name?.toLowerCase().includes(search.toLowerCase())||l.phone_number?.includes(search)||l.assigned_to_name?.toLowerCase().includes(search.toLowerCase()));
+              return (<>
+                <p className="px-4 pb-2 text-xs text-[#59615D]">{list.length} lead(s)</p>
+                <table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Name","Phone","Telecaller / Agent","Source","Status","Interest","Last Order","Repeat","Relation","Created"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-[#E5E3DB]">{list.map(l=>(<tr key={l.id} data-testid={`lead-row-${l.id}`}><td className="p-3 font-medium">{l.name}</td><td className="p-3">{l.phone_number}</td><td className="p-3 text-xs"><b className="text-[#3B5249]">{l.assigned_to_name||"-"}</b></td><td className="p-3"><Badge variant="outline" className="text-[9px]">{l.source}</Badge></td><td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${l.status==="converted"||l.status==="delivered"?"bg-green-100 text-green-800":l.status==="interested"?"bg-blue-100 text-blue-800":"bg-gray-100 text-gray-800"}`}>{l.status?.replace(/_/g," ")}</Badge></td><td className="p-3">{l.product_interest}</td><td className="p-3 text-xs">{l.last_order_date||"-"}</td><td className="p-3 text-xs">{l.next_repeat_order_date||"-"}</td><td className="p-3 text-xs">{l.next_relationship_date||"-"}</td><td className="p-3 text-xs">{l.created_at?.slice(0,10)}</td></tr>))}</tbody></table>
+              </>);
+            })()}
           </div></TabsContent>
 
 
@@ -636,23 +680,91 @@ export default function AdminCRMPanel() {
 
           {/* FUNDS TAB - with admin fund request */}
           <TabsContent value="funds"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Fund Requests</h3>
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Fund Requests</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowFundRequest(true)} data-testid="admin-fund-request-btn"><Plus className="w-3 h-3 mr-1"/>Request Fund</Button>
             </div>
-            <div className="space-y-2">{fundRequests.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - <span className="capitalize">{f.category}</span></p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p></div><div className="flex gap-2 items-center"><Badge className={`text-[9px] whitespace-nowrap ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<><Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">From Cash</SelectItem><SelectItem value="bank">From Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>approveFund(f.id,"rejected")}>Reject</Button></>}</div></div>))}</div>
+            <MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/>
+            {(() => {
+              const list = filterByMonth(fundRequests||[], genMonth, genYear, "created_at", genDay);
+              const totalApproved = list.filter(f=>f.status==="approved").reduce((s,f)=>s+(Number(f.amount)||0),0);
+              const totalPending = list.filter(f=>f.status==="pending").reduce((s,f)=>s+(Number(f.amount)||0),0);
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Requests</p><p className="font-heading font-semibold">{list.length}</p></div>
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Approved Total</p><p className="font-heading font-semibold text-[#3B5249]">Rs.{totalApproved.toLocaleString()}</p></div>
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3"><p className="text-[9px] uppercase text-yellow-700">Pending</p><p className="font-heading font-semibold text-yellow-700">Rs.{totalPending.toLocaleString()}</p></div>
+                  </div>
+                  {list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No fund requests match the selected filters</p>:
+                  <div className="space-y-2">{list.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - <span className="capitalize">{f.category}</span></p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p><p className="text-[10px] text-[#59615D] mt-0.5">{f.created_at?.slice(0,10)}</p></div><div className="flex gap-2 items-center flex-wrap"><Badge className={`text-[9px] whitespace-nowrap ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<><Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">From Cash</SelectItem><SelectItem value="bank">From Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>approveFund(f.id,"rejected")}>Reject</Button></>}</div></div>))}</div>}
+                </>
+              );
+            })()}
           </div></TabsContent>
 
           {/* EXPENSES TAB */}
-          <TabsContent value="expenses"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Expenses</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowExpense(true)} data-testid="add-expense-btn"><Plus className="w-3 h-3 mr-1"/>Add Expense</Button></div>
-            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Title","Category","Amount","Created By","Proof","Status","Action"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-            <tbody className="divide-y divide-[#E5E3DB]">{expenses.map(e=>(<tr key={e.id}><td className="p-3 text-xs">{e.created_at?.slice(0,10)}</td><td className="p-3">{e.title}</td><td className="p-3"><Badge variant="outline" className="text-[9px] capitalize">{e.category}</Badge></td><td className="p-3 font-semibold">Rs.{e.amount}</td><td className="p-3 text-xs">{e.created_by_name}</td><td className="p-3">{e.proof_path?<a href={`${process.env.REACT_APP_BACKEND_URL}/api/files/${e.proof_path}`} target="_blank" rel="noreferrer" className="text-xs text-[#3B5249] underline inline-flex items-center"><ExternalLink className="w-3 h-3 mr-0.5"/>View</a>:<span className="text-xs text-[#59615D]">-</span>}</td><td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${e.status==="approved"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td><td className="p-3">{e.status==="pending"?<div className="flex gap-1"><Select onValueChange={async(v)=>{try{await axios.put(`${API}/expenses/${e.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected")}><X className="w-3 h-3"/></Button></div>:<Button size="sm" variant="ghost" className="h-6 text-[10px] text-red-400" onClick={async()=>{const pw=prompt("Enter delete password:");if(!pw)return;try{await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pw}});toast.success("Deleted & balance restored");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Failed");}}} data-testid={`del-expense-${e.id}`}><X className="w-3 h-3"/></Button>}</td></tr>))}</tbody></table></div>
+          <TabsContent value="expenses"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Expenses</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowExpense(true)} data-testid="add-expense-btn"><Plus className="w-3 h-3 mr-1"/>Add Expense</Button></div>
+            <MonthFilter month={expMonth} year={expYear} day={expDay} onMonthChange={setExpMonth} onYearChange={setExpYear} onDayChange={setExpDay}/>
+            <div className="flex gap-1 mb-3 flex-wrap items-center">
+              <span className="text-[10px] text-[#59615D] font-medium mr-1 uppercase">Reimbursement:</span>
+              {[{v:"all",l:"All"},{v:"to_be_paid",l:"To Be Paid"},{v:"paid",l:"Paid"},{v:"none",l:"Regular"}].map(f=>(
+                <button key={f.v} onClick={()=>setExpReimburseFilter(f.v)} data-testid={`exp-rfilter-${f.v}`} className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${expReimburseFilter===f.v?"bg-orange-600 text-white":"bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#F9F8F6]"}`}>{f.l}</button>
+              ))}
+            </div>
+            {(() => {
+              let list = filterByMonth(expenses||[], expMonth, expYear, "created_at", expDay);
+              if (expReimburseFilter === "to_be_paid") list = list.filter(e => e.reimburse_status === "to_be_paid" || ((e.paid_to_name||e.paid_to_user_id) && e.reimburse_status !== "paid"));
+              else if (expReimburseFilter === "paid") list = list.filter(e => e.reimburse_status === "paid");
+              else if (expReimburseFilter === "none") list = list.filter(e => !(e.paid_to_name||e.paid_to_user_id));
+              const totalAmt = list.reduce((s,e)=>s+(Number(e.amount)||0),0);
+              const toBePaidAmt = list.filter(e=>(e.paid_to_name||e.paid_to_user_id)&&e.reimburse_status!=="paid").reduce((s,e)=>s+(Number(e.amount)||0),0);
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Records</p><p className="font-heading font-semibold text-[#2C3531]">{list.length}</p></div>
+                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Total Amount</p><p className="font-heading font-semibold text-[#2C3531]">Rs.{totalAmt.toLocaleString()}</p></div>
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-3"><p className="text-[9px] uppercase text-orange-700">To Be Paid</p><p className="font-heading font-semibold text-orange-700">Rs.{toBePaidAmt.toLocaleString()}</p></div>
+                  </div>
+                  {list.length===0 ? <p className="text-center py-6 text-[#59615D] text-sm">No expenses match the selected filters</p> :
+                  <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Title","Category","Amount","Created By","Paid To","Proof","Status","Action"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D] whitespace-nowrap">{h}</th>)}</tr></thead>
+                    <tbody className="divide-y divide-[#E5E3DB]">{list.map(e=>(
+                      <tr key={e.id} data-testid={`expense-row-${e.id}`} className={e.reimburse_status==="to_be_paid"||((e.paid_to_name||e.paid_to_user_id)&&e.reimburse_status!=="paid")?"bg-orange-50/40":""}>
+                        <td className="p-3 text-xs whitespace-nowrap">{e.created_at?.slice(0,10)}</td>
+                        <td className="p-3 text-sm">{e.title}{e.description && <p className="text-[10px] text-[#59615D] mt-0.5 max-w-xs truncate" title={e.description}>{e.description}</p>}</td>
+                        <td className="p-3"><Badge variant="outline" className="text-[9px] capitalize">{e.category?.replace(/_/g," ")}</Badge></td>
+                        <td className="p-3 font-semibold whitespace-nowrap">Rs.{Number(e.amount||0).toLocaleString()}</td>
+                        <td className="p-3 text-xs">{e.created_by_name}</td>
+                        <td className="p-3">{e.paid_to_name?<div className="flex flex-col gap-0.5"><Badge className={`text-[10px] w-fit ${e.reimburse_status==="paid"?"bg-green-100 text-green-800":"bg-orange-100 text-orange-800"}`}>{e.reimburse_status==="paid"?"Paid":"To Be Paid"}</Badge><span className="text-xs font-medium text-[#2C3531]">{e.paid_to_name}</span>{e.paid_to_phone && <span className="text-[10px] text-[#59615D]">{e.paid_to_phone}</span>}</div>:<span className="text-xs text-[#59615D]">—</span>}</td>
+                        <td className="p-3">{e.proof_path?<a href={`${process.env.REACT_APP_BACKEND_URL}/api/files/${e.proof_path}`} target="_blank" rel="noreferrer" className="text-xs text-[#3B5249] underline inline-flex items-center"><ExternalLink className="w-3 h-3 mr-0.5"/>View</a>:<span className="text-xs text-[#59615D]">-</span>}</td>
+                        <td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${e.status==="approved"?"bg-green-100 text-green-800":e.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td>
+                        <td className="p-3"><div className="flex gap-1 flex-wrap">
+                          {e.status==="pending" && <>
+                            <Select onValueChange={async(v)=>{try{await axios.put(`${API}/expenses/${e.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select>
+                            <Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected")} title="Reject"><X className="w-3 h-3"/></Button>
+                          </>}
+                          {(e.paid_to_name||e.paid_to_user_id) && e.reimburse_status!=="paid" && <Button size="sm" className="rounded-full text-[9px] h-6 bg-orange-600 hover:bg-orange-700 text-white" onClick={()=>markExpensePaid(e.id, e.paid_to_name)} data-testid={`mark-paid-${e.id}`}>Mark Paid</Button>}
+                          <Button size="sm" variant="ghost" className="h-6 text-[10px] text-red-400" onClick={async()=>{const pw=prompt("Enter delete password:");if(!pw)return;try{await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pw}});toast.success("Deleted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Failed");}}} data-testid={`del-expense-${e.id}`} title="Delete"><X className="w-3 h-3"/></Button>
+                        </div></td>
+                      </tr>
+                    ))}</tbody></table></div>}
+                </>
+              );
+            })()}
           </div></TabsContent>
 
           {/* PAYROLL TAB - clear labels */}
-          <TabsContent value="payroll"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Payroll</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowPayroll(true)} data-testid="add-payroll-btn"><Plus className="w-3 h-3 mr-1"/>Create Payroll</Button></div>
-            {payroll.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No payroll records</p>:
-            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Employee","Role","Period","Days","Basic","Bonus","Deductions","Commission","Net Salary","Status","Action"].map(h=><th key={h} className="text-left p-2 text-[10px] uppercase text-[#59615D] whitespace-nowrap">{h}</th>)}</tr></thead>
-            <tbody className="divide-y divide-[#E5E3DB]">{payroll.map(p=>(<tr key={p.id}><td className="p-2 text-sm">{p.user_name}</td><td className="p-2"><Badge variant="outline" className="text-[9px]">{p.user_role?.replace(/_/g," ")}</Badge></td><td className="p-2 text-xs">{p.month}/{p.year}</td><td className="p-2 text-xs">{p.working_days||"-"}/{p.total_working_days||30}</td><td className="p-2">Rs.{p.basic_salary}</td><td className="p-2 text-[#6B8E6B]">+Rs.{p.bonus}</td><td className="p-2 text-[#B75D69]">-Rs.{p.deductions}</td><td className="p-2">Rs.{p.commission}</td><td className="p-2 font-semibold text-[#3B5249]">Rs.{p.net_salary}</td><td className="p-2"><Badge className={`text-[9px] ${p.status==="processed"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{p.status}</Badge></td><td className="p-2">{p.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-6" onClick={()=>processPayroll(p.id)}>Process</Button>}</td></tr>))}</tbody></table></div>}
+          <TabsContent value="payroll"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Payroll</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowPayroll(true)} data-testid="add-payroll-btn"><Plus className="w-3 h-3 mr-1"/>Create Payroll</Button></div>
+            <MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay} showDay={false}/>
+            {(() => {
+              const list = filterByMonth(payroll||[], genMonth, genYear, "created_at", "all").filter(p=>{
+                if (genMonth==="all") return true;
+                return String(p.month)===genMonth && String(p.year)===genYear;
+              });
+              return list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No payroll records match the selected filters</p>:
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Employee","Role","Period","Days","Basic","Bonus","Deductions","Commission","Net Salary","Status","Action"].map(h=><th key={h} className="text-left p-2 text-[10px] uppercase text-[#59615D] whitespace-nowrap">{h}</th>)}</tr></thead>
+              <tbody className="divide-y divide-[#E5E3DB]">{list.map(p=>(<tr key={p.id}><td className="p-2 text-sm">{p.user_name}</td><td className="p-2"><Badge variant="outline" className="text-[9px]">{p.user_role?.replace(/_/g," ")}</Badge></td><td className="p-2 text-xs">{p.month}/{p.year}</td><td className="p-2 text-xs">{p.working_days||"-"}/{p.total_working_days||30}</td><td className="p-2">Rs.{p.basic_salary}</td><td className="p-2 text-[#6B8E6B]">+Rs.{p.bonus}</td><td className="p-2 text-[#B75D69]">-Rs.{p.deductions}</td><td className="p-2">Rs.{p.commission}</td><td className="p-2 font-semibold text-[#3B5249]">Rs.{p.net_salary}</td><td className="p-2"><Badge className={`text-[9px] ${p.status==="processed"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{p.status}</Badge></td><td className="p-2">{p.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-6" onClick={()=>processPayroll(p.id)}>Process</Button>}</td></tr>))}</tbody></table></div>;
+            })()}
           </div></TabsContent>
 
 
@@ -705,30 +817,109 @@ export default function AdminCRMPanel() {
           {createRole==="telecaller"&&<div><Label className="text-xs font-medium">Language(s)</Label><Input value={userForm.language} onChange={e=>setUserForm(f=>({...f,language:e.target.value}))} placeholder="Malayalam, Hindi, English..." className="rounded-xl" data-testid="create-language-input"/></div>}
           {(createRole==="agent"||createRole==="district_manager")&&<><div><Label className="text-xs font-medium">District</Label><Input value={userForm.district} onChange={e=>setUserForm(f=>({...f,district:e.target.value}))} placeholder="e.g. Ernakulam" className="rounded-xl"/></div>{createRole==="agent"&&<div><Label className="text-xs font-medium">Area</Label><Input value={userForm.area} onChange={e=>setUserForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl"/></div>}<div><Label className="text-xs font-medium">Region</Label><Select value={userForm.region_id} onValueChange={v=>setUserForm(f=>({...f,region_id:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select region"/></SelectTrigger><SelectContent>{regions.map(r=><SelectItem key={r.id} value={r.id}>{r.name} - {r.district}</SelectItem>)}</SelectContent></Select></div></>}
           <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs font-medium">Salary (Rs./month)</Label><Input type="number" value={userForm.salary||""} onChange={e=>setUserForm(f=>({...f,salary:Number(e.target.value)}))} placeholder="Monthly salary" className="rounded-xl" data-testid="create-salary-input"/></div><div><Label className="text-xs font-medium">Incentive (Rs.)</Label><Input type="number" value={userForm.incentive||""} onChange={e=>setUserForm(f=>({...f,incentive:Number(e.target.value)}))} placeholder="Monthly incentive" className="rounded-xl" data-testid="create-incentive-input"/></div></div>
+          <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs font-medium">Date of Birth</Label><Input type="date" value={userForm.dob} onChange={e=>setUserForm(f=>({...f,dob:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs font-medium">Joining Date</Label><Input type="date" value={userForm.joining_date} onChange={e=>setUserForm(f=>({...f,joining_date:e.target.value}))} className="rounded-xl"/></div></div>
+          <div><Label className="text-xs font-medium">Address</Label><Textarea value={userForm.address} onChange={e=>setUserForm(f=>({...f,address:e.target.value}))} placeholder="Residential address" className="rounded-xl min-h-[60px]"/></div>
+          <div><Label className="text-xs font-medium">Emergency Contact</Label><Input value={userForm.emergency_contact} onChange={e=>setUserForm(f=>({...f,emergency_contact:e.target.value}))} placeholder="Name & phone" className="rounded-xl"/></div>
+
+          <div className="rounded-xl border border-[#E5E3DB] bg-[#F9F8F6] p-3 space-y-2">
+            <p className="text-[10px] uppercase tracking-wider font-semibold text-[#3B5249]">Bank / Payment Details (optional — for salary)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-[10px]">Account Holder Name</Label><Input value={userForm.bank_account_name} onChange={e=>setUserForm(f=>({...f,bank_account_name:e.target.value}))} placeholder="As per passbook" className="rounded-xl text-xs" data-testid="create-bank-name"/></div>
+              <div><Label className="text-[10px]">Bank Name</Label><Input value={userForm.bank_name} onChange={e=>setUserForm(f=>({...f,bank_name:e.target.value}))} placeholder="e.g. SBI / HDFC" className="rounded-xl text-xs"/></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-[10px]">Account Number</Label><Input value={userForm.bank_account_number} onChange={e=>setUserForm(f=>({...f,bank_account_number:e.target.value}))} placeholder="A/C No." className="rounded-xl text-xs" data-testid="create-bank-acno"/></div>
+              <div><Label className="text-[10px]">IFSC Code</Label><Input value={userForm.bank_ifsc} onChange={e=>setUserForm(f=>({...f,bank_ifsc:e.target.value.toUpperCase()}))} placeholder="ABCD0123456" className="rounded-xl text-xs uppercase" data-testid="create-bank-ifsc"/></div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div><Label className="text-[10px]">UPI ID</Label><Input value={userForm.upi_id} onChange={e=>setUserForm(f=>({...f,upi_id:e.target.value}))} placeholder="name@bank" className="rounded-xl text-xs" data-testid="create-upi"/></div>
+              <div><Label className="text-[10px]">PAN</Label><Input value={userForm.pan_number} onChange={e=>setUserForm(f=>({...f,pan_number:e.target.value.toUpperCase()}))} placeholder="ABCDE1234F" className="rounded-xl text-xs uppercase"/></div>
+              <div><Label className="text-[10px]">Aadhaar</Label><Input value={userForm.aadhaar_number} onChange={e=>setUserForm(f=>({...f,aadhaar_number:e.target.value}))} placeholder="12-digit" className="rounded-xl text-xs"/></div>
+            </div>
+          </div>
+
           <Button onClick={handleCreateUser} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-create-user-btn">Create User</Button>
         </div>
       </DialogContent></Dialog>
 
       {/* EDIT USER */}
-      <Dialog open={showEditUser} onOpenChange={setShowEditUser}><DialogContent className="rounded-2xl" data-testid="edit-user-dialog"><DialogHeader><DialogTitle className="font-heading">Edit User - {selectedUser?.name}</DialogTitle></DialogHeader>
+      <Dialog open={showEditUser} onOpenChange={setShowEditUser}><DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto" data-testid="edit-user-dialog"><DialogHeader><DialogTitle className="font-heading">Edit User — {selectedUser?.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs"><p><b>ID:</b> {selectedUser?.id}</p><p><b>Role:</b> {selectedUser?.role?.replace(/_/g," ")}</p><p><b>Email:</b> {selectedUser?.email}</p></div>
-          <div><Label className="text-xs font-medium">Name</Label><Input value={editForm.name} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))} placeholder="Full name" className="rounded-xl" data-testid="edit-name-input"/></div>
-          <div><Label className="text-xs font-medium">Email</Label><Input value={editForm.email} onChange={e=>setEditForm(f=>({...f,email:e.target.value}))} placeholder="Email address" className="rounded-xl"/></div>
+          <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs"><p><b>ID:</b> {selectedUser?.id}</p><p><b>Role:</b> {selectedUser?.role?.replace(/_/g," ")}</p></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs font-medium">Name</Label><Input value={editForm.name} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="edit-name-input"/></div>
+            <div><Label className="text-xs font-medium">Phone</Label><Input value={editForm.phone} onChange={e=>setEditForm(f=>({...f,phone:e.target.value}))} className="rounded-xl"/></div>
+          </div>
+          <div><Label className="text-xs font-medium">Email</Label><Input value={editForm.email} onChange={e=>setEditForm(f=>({...f,email:e.target.value}))} className="rounded-xl"/></div>
           <div><Label className="text-xs font-medium flex items-center gap-1"><Key className="w-3 h-3"/>New Password (leave empty to keep current)</Label><Input type="text" value={editForm.password} onChange={e=>setEditForm(f=>({...f,password:e.target.value}))} placeholder="New password" className="rounded-xl" data-testid="edit-password-input"/></div>
-          <div><Label className="text-xs font-medium">Language</Label><Input value={editForm.language} onChange={e=>setEditForm(f=>({...f,language:e.target.value}))} placeholder="Malayalam, Hindi, English..." className="rounded-xl"/></div>
-          <div><Label className="text-xs font-medium">District</Label><Input value={editForm.district} onChange={e=>setEditForm(f=>({...f,district:e.target.value}))} placeholder="e.g. Ernakulam" className="rounded-xl"/></div>
-          <div><Label className="text-xs font-medium">Area</Label><Input value={editForm.area} onChange={e=>setEditForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl"/></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs font-medium">Salary (Rs./month)</Label><Input type="number" value={editForm.salary||""} onChange={e=>setEditForm(f=>({...f,salary:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs font-medium">Incentive (Rs.)</Label><Input type="number" value={editForm.incentive||""} onChange={e=>setEditForm(f=>({...f,incentive:e.target.value}))} className="rounded-xl"/></div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label className="text-xs font-medium">Language</Label><Input value={editForm.language} onChange={e=>setEditForm(f=>({...f,language:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs font-medium">District</Label><Input value={editForm.district} onChange={e=>setEditForm(f=>({...f,district:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs font-medium">Area</Label><Input value={editForm.area} onChange={e=>setEditForm(f=>({...f,area:e.target.value}))} className="rounded-xl"/></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs font-medium">Date of Birth</Label><Input type="date" value={editForm.dob} onChange={e=>setEditForm(f=>({...f,dob:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs font-medium">Joining Date</Label><Input type="date" value={editForm.joining_date} onChange={e=>setEditForm(f=>({...f,joining_date:e.target.value}))} className="rounded-xl"/></div>
+          </div>
+          <div><Label className="text-xs font-medium">Address</Label><Textarea value={editForm.address} onChange={e=>setEditForm(f=>({...f,address:e.target.value}))} className="rounded-xl min-h-[60px]"/></div>
+          <div><Label className="text-xs font-medium">Emergency Contact</Label><Input value={editForm.emergency_contact} onChange={e=>setEditForm(f=>({...f,emergency_contact:e.target.value}))} placeholder="Name & phone" className="rounded-xl"/></div>
+
+          <div className="rounded-xl border border-[#E5E3DB] bg-[#F9F8F6] p-3 space-y-2">
+            <p className="text-[10px] uppercase tracking-wider font-semibold text-[#3B5249]">Bank / Payment Details</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-[10px]">Account Holder Name</Label><Input value={editForm.bank_account_name} onChange={e=>setEditForm(f=>({...f,bank_account_name:e.target.value}))} className="rounded-xl text-xs" data-testid="edit-bank-name"/></div>
+              <div><Label className="text-[10px]">Bank Name</Label><Input value={editForm.bank_name} onChange={e=>setEditForm(f=>({...f,bank_name:e.target.value}))} className="rounded-xl text-xs"/></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-[10px]">Account Number</Label><Input value={editForm.bank_account_number} onChange={e=>setEditForm(f=>({...f,bank_account_number:e.target.value}))} className="rounded-xl text-xs" data-testid="edit-bank-acno"/></div>
+              <div><Label className="text-[10px]">IFSC Code</Label><Input value={editForm.bank_ifsc} onChange={e=>setEditForm(f=>({...f,bank_ifsc:e.target.value.toUpperCase()}))} className="rounded-xl text-xs uppercase" data-testid="edit-bank-ifsc"/></div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div><Label className="text-[10px]">UPI ID</Label><Input value={editForm.upi_id} onChange={e=>setEditForm(f=>({...f,upi_id:e.target.value}))} className="rounded-xl text-xs" data-testid="edit-upi"/></div>
+              <div><Label className="text-[10px]">PAN</Label><Input value={editForm.pan_number} onChange={e=>setEditForm(f=>({...f,pan_number:e.target.value.toUpperCase()}))} className="rounded-xl text-xs uppercase"/></div>
+              <div><Label className="text-[10px]">Aadhaar</Label><Input value={editForm.aadhaar_number} onChange={e=>setEditForm(f=>({...f,aadhaar_number:e.target.value}))} className="rounded-xl text-xs"/></div>
+            </div>
+          </div>
+
           <Button onClick={handleEditUser} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-user-btn">Save Changes</Button>
         </div>
       </DialogContent></Dialog>
 
       {/* ADD EXPENSE */}
-      <Dialog open={showExpense} onOpenChange={setShowExpense}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Expense</DialogTitle></DialogHeader><div className="space-y-3">
+      <Dialog open={showExpense} onOpenChange={setShowExpense}><DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Add Expense</DialogTitle></DialogHeader><div className="space-y-3">
         <div><Label className="text-xs font-medium">Expense Title</Label><Input placeholder="e.g. Office Supplies, Travel Reimbursement" value={expenseForm.title} onChange={e=>setExpenseForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="expense-title-input"/></div>
-        <div><Label className="text-xs font-medium">Amount (Rs.)</Label><Input type="number" placeholder="Enter amount" value={expenseForm.amount} onChange={e=>setExpenseForm(f=>({...f,amount:e.target.value}))} className="rounded-xl"/></div>
-        <div><Label className="text-xs font-medium">Category</Label><Select value={expenseForm.category} onValueChange={v=>setExpenseForm(f=>({...f,category:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent>{["general","marketing","travel","office","salary","inventory","influencer_remuneration"].map(c=><SelectItem key={c} value={c} className="capitalize">{c.replace(/_/g," ")}</SelectItem>)}</SelectContent></Select></div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label className="text-xs font-medium">Amount (Rs.)</Label><Input type="number" placeholder="Enter amount" value={expenseForm.amount} onChange={e=>setExpenseForm(f=>({...f,amount:e.target.value}))} className="rounded-xl"/></div>
+          <div><Label className="text-xs font-medium">Category</Label><Select value={expenseForm.category} onValueChange={v=>setExpenseForm(f=>({...f,category:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent>{["general","marketing","travel","office","salary","inventory","influencer_remuneration","reimbursement"].map(c=><SelectItem key={c} value={c} className="capitalize">{c.replace(/_/g," ")}</SelectItem>)}</SelectContent></Select></div>
+        </div>
         <div><Label className="text-xs font-medium">Description</Label><Textarea placeholder="Details about this expense..." value={expenseForm.description} onChange={e=>setExpenseForm(f=>({...f,description:e.target.value}))} className="rounded-xl"/></div>
+
+        <div className="rounded-xl border border-orange-200 bg-orange-50/40 p-3 space-y-2">
+          <p className="text-[10px] uppercase tracking-wider font-semibold text-orange-700">To Be Paid To (optional)</p>
+          <p className="text-[10px] text-[#59615D]">Use this when an employee paid from their own pocket and needs to be reimbursed. Leave empty if it&apos;s a regular company expense.</p>
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={expenseForm.paid_to_user_id||"__none__"} onValueChange={v=>{
+              if (v === "__none__") { setExpenseForm(f=>({...f,paid_to_user_id:"",paid_to_name:"",paid_to_phone:""})); return; }
+              const u = allUsers.find(x=>x.id===v);
+              setExpenseForm(f=>({...f,paid_to_user_id:v,paid_to_name:u?.name||"",paid_to_phone:u?.phone||""}));
+            }}>
+              <SelectTrigger className="rounded-xl text-xs" data-testid="exp-payee-select"><SelectValue placeholder="Pick an employee..."/></SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="__none__">— None (regular expense) —</SelectItem>
+                {allUsers.map(u=>(<SelectItem key={u.id} value={u.id}>{u.name} ({u.role?.replace(/_/g," ")})</SelectItem>))}
+              </SelectContent>
+            </Select>
+            <Input placeholder="Or type name (non-employee)" value={expenseForm.paid_to_name} onChange={e=>setExpenseForm(f=>({...f,paid_to_name:e.target.value,paid_to_user_id:""}))} className="rounded-xl text-xs" data-testid="exp-payee-name"/>
+          </div>
+          {(expenseForm.paid_to_name||expenseForm.paid_to_user_id) && (
+            <Input placeholder="Phone (optional)" value={expenseForm.paid_to_phone} onChange={e=>setExpenseForm(f=>({...f,paid_to_phone:e.target.value}))} className="rounded-xl text-xs"/>
+          )}
+        </div>
+
         <div><Label className="text-xs font-medium">Payment Proof (optional)</Label>
           <input type="file" accept="image/jpeg,image/png,image/webp" className="w-full text-xs border border-[#E5E3DB] rounded-xl p-2 file:mr-2 file:rounded-full file:border-0 file:bg-[#3B5249] file:text-white file:text-xs file:px-3 file:py-1" data-testid="expense-proof-input"
             onChange={async(e)=>{const f=e.target.files[0];if(!f)return;const fd=new FormData();fd.append("file",f);try{const{data}=await axios.post(`${API}/upload/payment-proof`,fd,{headers:{"Content-Type":"multipart/form-data"}});setExpenseForm(prev=>({...prev,proof_path:data.path}));toast.success("Proof uploaded!");}catch{toast.error("Upload failed");}}}/>

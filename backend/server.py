@@ -1188,6 +1188,18 @@ def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
              "phone": phone,
              "password_hash": hash_password(pw), "salary": data.get("salary", 0),
              "incentive": data.get("incentive", 0),
+             # Bank/payment details (optional, for salary disbursement)
+             "bank_account_name": data.get("bank_account_name", ""),
+             "bank_account_number": data.get("bank_account_number", ""),
+             "bank_ifsc": data.get("bank_ifsc", ""),
+             "bank_name": data.get("bank_name", ""),
+             "upi_id": data.get("upi_id", ""),
+             "pan_number": data.get("pan_number", ""),
+             "aadhaar_number": data.get("aadhaar_number", ""),
+             "address": data.get("address", ""),
+             "emergency_contact": data.get("emergency_contact", ""),
+             "dob": data.get("dob", ""),
+             "joining_date": data.get("joining_date", ""),
              "created_at": datetime.now(timezone.utc).isoformat()}
         if extra_fields:
             for k,v in extra_fields.items():
@@ -1349,9 +1361,55 @@ async def create_expense(data: dict, current_user: dict = Depends(get_current_us
          "category": data.get("category","general"), "description": data.get("description",""),
          "proof_path": data.get("proof_path",""), "created_by": current_user['id'],
          "created_by_name": current_user.get('name',''), "status": "pending",
+         # Optional "to be paid to" tracking — useful when staff pays from own pocket and needs reimbursement
+         "paid_to_name": (data.get("paid_to_name") or "").strip(),
+         "paid_to_user_id": data.get("paid_to_user_id", ""),
+         "paid_to_phone": (data.get("paid_to_phone") or "").strip(),
+         "reimburse_status": "to_be_paid" if (data.get("paid_to_name") or data.get("paid_to_user_id")) else "",
          "approved_by": None, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.expenses.insert_one(e); e.pop("_id",None)
     return {"expense": e, "message": "Expense created"}
+
+@api_router.put("/expenses/{eid}")
+async def update_expense(eid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Edit expense details — title, amount, category, description, paid_to fields. Only creator/admin/finance can edit pending expenses."""
+    exp = await db.expenses.find_one({"id": eid}, {"_id": 0})
+    if not exp: raise HTTPException(status_code=404, detail="Expense not found")
+    if current_user['role'] not in ('admin','finance_manager') and exp.get('created_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Only creator, finance manager or admin can edit")
+    if exp.get('status') == 'approved' and current_user['role'] not in ('admin','finance_manager'):
+        raise HTTPException(status_code=400, detail="Approved expense can only be edited by admin/finance")
+    upd = {k: v for k, v in data.items() if k in ('title','amount','category','description','proof_path','paid_to_name','paid_to_user_id','paid_to_phone','notes')}
+    if 'paid_to_name' in upd or 'paid_to_user_id' in upd:
+        upd['reimburse_status'] = "to_be_paid" if (upd.get('paid_to_name') or upd.get('paid_to_user_id') or exp.get('paid_to_name') or exp.get('paid_to_user_id')) else ""
+    upd['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.expenses.update_one({"id": eid}, {"$set": upd})
+    return {"message": "Expense updated", "expense": await db.expenses.find_one({"id": eid}, {"_id": 0})}
+
+@api_router.put("/expenses/{eid}/mark-paid")
+async def mark_expense_paid(eid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    """Mark expense as reimbursed/paid to the payee — only admin/finance."""
+    if current_user['role'] not in ('admin','finance_manager'):
+        raise HTTPException(status_code=403)
+    data = data or {}
+    method = data.get("method", "cash")
+    exp = await db.expenses.find_one({"id": eid}, {"_id": 0})
+    if not exp: raise HTTPException(status_code=404)
+    update = {
+        "reimburse_status": "paid",
+        "reimbursed_at": datetime.now(timezone.utc).isoformat(),
+        "reimbursed_by": current_user['id'],
+        "reimbursed_by_name": current_user.get('name', ''),
+        "reimburse_method": method,
+    }
+    await db.expenses.update_one({"id": eid}, {"$set": update})
+    # Optionally record a finance ledger debit if not already approved & debited
+    if exp.get('status') != 'approved' and exp.get('paid_to_name'):
+        await record_transaction("debit", "reimbursement",
+            exp.get('amount', 0),
+            f"Reimbursement: {exp.get('title','')} → {exp.get('paid_to_name','')}",
+            reference_id=eid, method=method, created_by=current_user['id'])
+    return {"message": "Marked as paid"}
 
 @api_router.get("/expenses")
 async def get_expenses(current_user: dict = Depends(get_current_user)):
