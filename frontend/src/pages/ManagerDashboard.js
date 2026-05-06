@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DailyTaskSheet from "@/components/DailyTaskSheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, ShoppingBag, Users, MapPin, IndianRupee, Package, Check, X, Plus, Loader2, UserCheck, ClipboardList, Wallet, Sparkles, Phone } from "lucide-react";
+import { LogOut, ShoppingBag, Users, MapPin, IndianRupee, Package, Check, X, Plus, Loader2, UserCheck, ClipboardList, Wallet, Sparkles, Phone, PhoneCall } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
@@ -47,6 +47,12 @@ export default function ManagerDashboard() {
   const [regionForm, setRegionForm] = useState({ name: "", district: "", pincode: "", areas: "" });
   const [agentForm, setAgentForm] = useState({ name: "", email: "", password: "", district: "", area: "", region_id: "", phone: "" });
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assigned_to: "", assigned_to_name: "", assigned_to_role: "agent", priority: "medium", due_date: "" });
+  // Assistant District Managers (ADMs)
+  const [adms, setAdms] = useState([]);
+  const [showAddAdm, setShowAddAdm] = useState(false);
+  const [showEditAdm, setShowEditAdm] = useState(false);
+  const [editingAdm, setEditingAdm] = useState(null);
+  const [admForm, setAdmForm] = useState({name:"",email:"",phone:"",password:"",salary:0,incentive:0,district:""});
   const [genDistrict, setGenDistrict] = useState("");
   const [genLocalities, setGenLocalities] = useState([]);
   const [genLoading, setGenLoading] = useState(false);
@@ -65,6 +71,7 @@ export default function ManagerDashboard() {
       try { const dm = await axios.get(`${API}/dm/my-districts`); setMyDistricts(dm.data.districts); setRegions(dm.data.regions); } catch {}
       try { const hc = await axios.get(`${API}/hiring/candidates`); setHiringCandidates(hc.data.entries||[]); } catch {}
       try { const cl = await axios.get(`${API}/call-logs/all`); setCallLogs(cl.data.call_logs||[]); } catch {}
+      try { const a = await axios.get(`${API}/my-team/adms`); setAdms(a.data.adms||[]); } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,6 +89,32 @@ export default function ManagerDashboard() {
   const generateLocalities = async () => { if (!genDistrict) return; setGenLoading(true); try { const {data} = await axios.post(`${API}/ai/generate-localities`, {district:genDistrict}); setGenLocalities(data.localities || []); } catch { toast.error("AI failed"); } setGenLoading(false); };
   const saveLocalities = async () => { if (!selectedRegion || genLocalities.length === 0) return; try { await axios.put(`${API}/regions/${selectedRegion.id}`, {localities: genLocalities}); toast.success("Localities saved!"); setShowGenLocalities(false); fetchData(); } catch { toast.error("Failed"); } };
   const updateAgent = async (agentId, data) => { try { await axios.put(`${API}/users/${agentId}/update`, data); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); } };
+  const handleAddAdm = async () => {
+    if (!admForm.name || !admForm.email || !admForm.phone) return toast.error("Name, email and phone are required");
+    try {
+      await axios.post(`${API}/my-team/adm`, admForm);
+      toast.success("Assistant District Manager added — welcome email sent");
+      setShowAddAdm(false);
+      setAdmForm({name:"",email:"",phone:"",password:"",salary:0,incentive:0,district:""});
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const openEditAdm = (a) => {
+    setEditingAdm(a);
+    setAdmForm({name:a.name||"",email:a.email||"",phone:a.phone||"",password:"",salary:a.salary||0,incentive:a.incentive||0,district:a.district||""});
+    setShowEditAdm(true);
+  };
+  const handleEditAdm = async () => {
+    if (!editingAdm) return;
+    try {
+      const payload = {...admForm};
+      if (!payload.password) delete payload.password;
+      await axios.put(`${API}/my-team/adm/${editingAdm.id}`, payload);
+      toast.success("ADM updated");
+      setShowEditAdm(false); setEditingAdm(null);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
 
   const [editLocality, setEditLocality] = useState({ regionId: "", index: -1, value: "" });
   const updateLocality = async (regionId, localities) => {
@@ -134,6 +167,49 @@ export default function ManagerDashboard() {
           {[{l:"Orders",v:filteredOrders.length,i:ShoppingBag,c:"#3B5249"},{l:"Pending",v:pendingOrders.length,i:ClipboardList,c:"#D4A373"},{l:"Agents",v:agents.length,i:UserCheck,c:"#6B8E6B"},{l:"Hire Queue",v:agentCandidates.length,i:Users,c:"#A66E4E"},{l:"Revenue",v:`Rs.${monthRevenue}`,i:IndianRupee,c:"#3B5249"}].map((s,i)=>(
             <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase tracking-wider mt-1">{s.l}</p></div>
           ))}
+        </div>
+
+        {/* ASSISTANT DISTRICT MANAGERS PANEL */}
+        <div className="bg-white rounded-2xl border border-[#E5E3DB] p-5 mb-6" data-testid="dm-adm-panel">
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <div>
+              <h3 className="font-heading text-lg font-medium">My Assistant District Managers</h3>
+              <p className="text-[11px] text-[#59615D]">Manage your Asst DMs. They will be CC&apos;d on every instruction & email sent to you.</p>
+            </div>
+            <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>{setAdmForm({name:"",email:"",phone:"",password:"",salary:0,incentive:0,district:""});setShowAddAdm(true);}} data-testid="dm-add-adm-btn"><Plus className="w-4 h-4 mr-1"/>Add Asst DM</Button>
+          </div>
+          {adms.length === 0 ? (
+            <div className="text-center py-6 border-2 border-dashed border-[#E5E3DB] rounded-xl">
+              <Users className="w-8 h-8 mx-auto text-[#A0A39E] mb-2"/>
+              <p className="text-sm text-[#59615D]">No Assistant District Manager yet</p>
+              <p className="text-[11px] text-[#A0A39E]">Click &quot;Add Asst DM&quot; to add one — they will receive welcome credentials.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {adms.map(a => (
+                <div key={a.id} className="border border-[#E5E3DB] rounded-xl p-4 hover:shadow-sm transition-shadow" data-testid={`adm-card-${a.id}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="font-heading font-medium text-[#2C3531]">{a.name}</p>
+                      <Badge variant="outline" className="text-[9px] bg-[#F9F8F6] mt-1">Asst District Mgr</Badge>
+                      {a.district && <Badge variant="outline" className="text-[9px] bg-[#F9F8F6] mt-1 ml-1">{a.district}</Badge>}
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] rounded-full" onClick={()=>openEditAdm(a)} data-testid={`adm-edit-${a.id}`}>Edit</Button>
+                  </div>
+                  <div className="space-y-1 text-xs text-[#59615D]">
+                    <p className="break-all">{a.email}</p>
+                    {a.phone && (
+                      <p className="flex items-center justify-between gap-1.5">
+                        <span>{a.phone}</span>
+                        <a href={`tel:${a.phone}`}><Button size="sm" variant="outline" className="rounded-full h-6 w-6 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3 h-3"/></Button></a>
+                      </p>
+                    )}
+                    {(a.salary > 0 || a.incentive > 0) && <p className="text-[10px] text-[#A66E4E]">Rs.{a.salary || 0} salary {a.incentive ? `• Rs.${a.incentive} incentive` : ""}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <Tabs defaultValue="orders" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
@@ -277,6 +353,45 @@ export default function ManagerDashboard() {
       <Dialog open={showAddAgent} onOpenChange={setShowAddAgent}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Agent</DialogTitle></DialogHeader><div className="space-y-3"><div><Label className="text-xs font-medium">Name</Label><Input placeholder="Agent name" value={agentForm.name} onChange={e=>setAgentForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="agent-name-input"/></div><div><Label className="text-xs font-medium">Email</Label><Input placeholder="agent@celestaglow.com" value={agentForm.email} onChange={e=>setAgentForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="agent-email-input"/></div><div><Label className="text-xs font-medium">Phone (mandatory)</Label><Input placeholder="Phone number" value={agentForm.phone} onChange={e=>setAgentForm(f=>({...f,phone:e.target.value}))} className="rounded-xl" data-testid="agent-phone-input"/></div><div><Label className="text-xs font-medium">Password</Label><Input placeholder="Leave empty for default" value={agentForm.password} onChange={e=>setAgentForm(f=>({...f,password:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs font-medium">District</Label><Input placeholder="e.g. Ernakulam" value={agentForm.district} onChange={e=>setAgentForm(f=>({...f,district:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs font-medium">Area / Locality</Label><Input placeholder="e.g. Kakkanad" value={agentForm.area} onChange={e=>setAgentForm(f=>({...f,area:e.target.value}))} className="rounded-xl"/></div><Select value={agentForm.region_id} onValueChange={v=>setAgentForm(f=>({...f,region_id:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select Region"/></SelectTrigger><SelectContent>{regions.map(r=><SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent></Select><Button onClick={handleAddAgent} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-agent-btn">Add Agent</Button></div></DialogContent></Dialog>
       <Dialog open={showAddTask} onOpenChange={setShowAddTask}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Create Task</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Title" value={taskForm.title} onChange={e=>setTaskForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="task-title-input"/><Textarea placeholder="Description" value={taskForm.description} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} className="rounded-xl"/><Select value={taskForm.assigned_to} onValueChange={v=>{const a=agents.find(x=>x.id===v);setTaskForm(f=>({...f,assigned_to:v,assigned_to_name:a?.name||""}));}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Assign to agent"/></SelectTrigger><SelectContent>{agents.map(a=><SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select><Select value={taskForm.priority} onValueChange={v=>setTaskForm(f=>({...f,priority:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select><Input type="date" value={taskForm.due_date} onChange={e=>setTaskForm(f=>({...f,due_date:e.target.value}))} className="rounded-xl"/><Button onClick={handleAddTask} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-task-btn">Create</Button></div></DialogContent></Dialog>
       <Dialog open={showGenLocalities} onOpenChange={setShowGenLocalities}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading flex items-center gap-2"><Sparkles className="w-5 h-5 text-[#A66E4E]"/>AI Locality Generator</DialogTitle></DialogHeader><div className="space-y-3"><Select value={selectedRegion?.id||""} onValueChange={v=>{const r=regions.find(x=>x.id===v);setSelectedRegion(r);setGenDistrict(r?.district||"");}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select region"/></SelectTrigger><SelectContent>{regions.map(r=><SelectItem key={r.id} value={r.id}>{r.name} - {r.district}</SelectItem>)}</SelectContent></Select><Button onClick={generateLocalities} disabled={genLoading||!genDistrict} className="w-full rounded-full bg-[#A66E4E] text-white">{genLoading?<Loader2 className="w-4 h-4 animate-spin mr-2"/>:<Sparkles className="w-4 h-4 mr-2"/>}Generate Localities</Button>{genLocalities.length>0&&<div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-xs font-medium mb-2">Generated {genLocalities.length} localities:</p><div className="flex flex-wrap gap-1">{genLocalities.map((l,i)=><Badge key={i} variant="outline" className="text-xs">{l}</Badge>)}</div><Button onClick={saveLocalities} className="w-full rounded-full bg-[#3B5249] text-white mt-3">Save to Region</Button></div>}</div></DialogContent></Dialog>
+
+      {/* ADD ADM DIALOG */}
+      <Dialog open={showAddAdm} onOpenChange={setShowAddAdm}>
+        <DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="add-adm-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Add Assistant District Manager</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-[11px] text-[#59615D]">A welcome email with login credentials will be sent automatically. Your ADM will be CC&apos;d on every instruction sent to you.</p>
+            <div><Label className="text-xs">Full Name *</Label><Input value={admForm.name} onChange={e=>setAdmForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Pradeep Nair" className="rounded-xl" data-testid="adm-name-input"/></div>
+            <div><Label className="text-xs">Email *</Label><Input value={admForm.email} onChange={e=>setAdmForm(f=>({...f,email:e.target.value}))} placeholder="pradeep@celestaglow.com" className="rounded-xl" data-testid="adm-email-input"/></div>
+            <div><Label className="text-xs">Phone *</Label><Input value={admForm.phone} onChange={e=>setAdmForm(f=>({...f,phone:e.target.value}))} placeholder="9999900012" className="rounded-xl" data-testid="adm-phone-input"/></div>
+            <div><Label className="text-xs">District</Label><Input value={admForm.district} onChange={e=>setAdmForm(f=>({...f,district:e.target.value}))} placeholder="e.g. Ernakulam" className="rounded-xl"/></div>
+            <div><Label className="text-xs">Password (leave blank for default &apos;adm123&apos;)</Label><Input value={admForm.password} onChange={e=>setAdmForm(f=>({...f,password:e.target.value}))} placeholder="Optional" className="rounded-xl"/></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Salary (Rs./month)</Label><Input type="number" value={admForm.salary} onChange={e=>setAdmForm(f=>({...f,salary:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+              <div><Label className="text-xs">Incentive (Rs.)</Label><Input type="number" value={admForm.incentive} onChange={e=>setAdmForm(f=>({...f,incentive:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+            </div>
+            <Button onClick={handleAddAdm} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-adm-btn">Add Asst District Manager</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT ADM DIALOG */}
+      <Dialog open={showEditAdm} onOpenChange={(o)=>{setShowEditAdm(o); if(!o)setEditingAdm(null);}}>
+        <DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="edit-adm-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Edit ADM — {editingAdm?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">Full Name</Label><Input value={admForm.name} onChange={e=>setAdmForm(f=>({...f,name:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">Email</Label><Input value={admForm.email} onChange={e=>setAdmForm(f=>({...f,email:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">Phone</Label><Input value={admForm.phone} onChange={e=>setAdmForm(f=>({...f,phone:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">District</Label><Input value={admForm.district} onChange={e=>setAdmForm(f=>({...f,district:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">New Password (leave blank to keep current)</Label><Input value={admForm.password} onChange={e=>setAdmForm(f=>({...f,password:e.target.value}))} placeholder="Optional" className="rounded-xl"/></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Salary</Label><Input type="number" value={admForm.salary} onChange={e=>setAdmForm(f=>({...f,salary:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+              <div><Label className="text-xs">Incentive</Label><Input type="number" value={admForm.incentive} onChange={e=>setAdmForm(f=>({...f,incentive:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+            </div>
+            <Button onClick={handleEditAdm} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-adm-btn">Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

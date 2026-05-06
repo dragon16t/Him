@@ -45,6 +45,12 @@ export default function SalesManagerDashboard() {
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assigned_to: "", assigned_to_name: "", assigned_to_role: "telecaller", priority: "medium", due_date: "" });
   const [instForm, setInstForm] = useState({ title: "", content: "", category: "calling", target_role: "telecaller" });
   const [contactForm, setContactForm] = useState({ name: "", phone: "", email: "", type: "influencer", notes: "" });
+  // Assistant Sales Managers (ASMs)
+  const [asms, setAsms] = useState([]);
+  const [showAddAsm, setShowAddAsm] = useState(false);
+  const [showEditAsm, setShowEditAsm] = useState(false);
+  const [editingAsm, setEditingAsm] = useState(null);
+  const [asmForm, setAsmForm] = useState({name:"",email:"",phone:"",password:"",salary:0,incentive:0});
 
   const fetchData = useCallback(async () => {
     try {
@@ -57,6 +63,7 @@ export default function SalesManagerDashboard() {
       try { const fu = await axios.get(`${API}/leads/follow-ups`); setFollowUps(fu.data); } catch {}
       try { const hc = await axios.get(`${API}/hiring/candidates`); setHiringCandidates(hc.data.entries||[]); } catch {}
       try { const cl = await axios.get(`${API}/call-logs/all`); setCallLogs(cl.data.call_logs||[]); } catch {}
+      try { const a = await axios.get(`${API}/my-team/asms`); setAsms(a.data.asms||[]); } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,6 +83,32 @@ export default function SalesManagerDashboard() {
   const hireCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"select"}); toast.success("Selected — HR will finalize hiring"); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } };
   const rejectCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"reject"}); toast.success("Rejected"); fetchData(); } catch{ toast.error("Failed"); } };
   const handleAddContact = async () => { if (!contactForm.name) return toast.error("Name required"); try { await axios.post(`${API}/contacts`, contactForm); toast.success("Added"); setShowAddContact(false); setContactForm({name:"",phone:"",email:"",type:"influencer",notes:""}); fetchData(); } catch { toast.error("Failed"); } };
+  const handleAddAsm = async () => {
+    if (!asmForm.name || !asmForm.email || !asmForm.phone) return toast.error("Name, email and phone are required");
+    try {
+      await axios.post(`${API}/my-team/asm`, asmForm);
+      toast.success("Assistant Sales Manager added — welcome email sent");
+      setShowAddAsm(false);
+      setAsmForm({name:"",email:"",phone:"",password:"",salary:0,incentive:0});
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const openEditAsm = (a) => {
+    setEditingAsm(a);
+    setAsmForm({name:a.name||"",email:a.email||"",phone:a.phone||"",password:"",salary:a.salary||0,incentive:a.incentive||0});
+    setShowEditAsm(true);
+  };
+  const handleEditAsm = async () => {
+    if (!editingAsm) return;
+    try {
+      const payload = {...asmForm};
+      if (!payload.password) delete payload.password;
+      await axios.put(`${API}/my-team/asm/${editingAsm.id}`, payload);
+      toast.success("ASM updated");
+      setShowEditAsm(false); setEditingAsm(null);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
   const approveOrder = async (id) => { try { await axios.put(`${API}/orders/${id}/approve`); toast.success("Approved!"); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
   const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch { toast.error("Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -101,6 +134,48 @@ export default function SalesManagerDashboard() {
           {[{l:"Orders",v:filteredOrders.length,i:ShoppingBag},{l:"Pending",v:filteredOrders.filter(o=>o.status==='pending').length,i:ClipboardList},{l:"Telecallers",v:telecallers.length,i:Users},{l:"Hire Queue",v:tcCandidates.length,i:PhoneCall},{l:"Revenue",v:`Rs.${monthRevenue}`,i:IndianRupee}].map((s,i)=>(
             <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3 text-[#3B5249]"/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase">{s.l}</p></div>
           ))}
+        </div>
+
+        {/* ASSISTANT SALES MANAGERS PANEL */}
+        <div className="bg-white rounded-2xl border border-[#E5E3DB] p-5 mb-6" data-testid="sm-asm-panel">
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <div>
+              <h3 className="font-heading text-lg font-medium">My Assistant Sales Managers</h3>
+              <p className="text-[11px] text-[#59615D]">Manage your Asst SMs. They&apos;ll be CC&apos;d on every instruction & email sent to you.</p>
+            </div>
+            <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>{setAsmForm({name:"",email:"",phone:"",password:"",salary:0,incentive:0});setShowAddAsm(true);}} data-testid="sm-add-asm-btn"><Plus className="w-4 h-4 mr-1"/>Add Asst SM</Button>
+          </div>
+          {asms.length === 0 ? (
+            <div className="text-center py-6 border-2 border-dashed border-[#E5E3DB] rounded-xl">
+              <Users className="w-8 h-8 mx-auto text-[#A0A39E] mb-2"/>
+              <p className="text-sm text-[#59615D]">No Assistant Sales Manager yet</p>
+              <p className="text-[11px] text-[#A0A39E]">Click &quot;Add Asst SM&quot; to add one — they will receive welcome credentials.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {asms.map(a => (
+                <div key={a.id} className="border border-[#E5E3DB] rounded-xl p-4 hover:shadow-sm transition-shadow" data-testid={`asm-card-${a.id}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="font-heading font-medium text-[#2C3531]">{a.name}</p>
+                      <Badge variant="outline" className="text-[9px] bg-[#F9F8F6] mt-1">Asst Sales Mgr</Badge>
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] rounded-full" onClick={()=>openEditAsm(a)} data-testid={`asm-edit-${a.id}`}>Edit</Button>
+                  </div>
+                  <div className="space-y-1 text-xs text-[#59615D]">
+                    <p className="flex items-center gap-1.5"><MessageSquare className="w-3 h-3"/>{a.email}</p>
+                    {a.phone && (
+                      <p className="flex items-center justify-between gap-1.5">
+                        <span className="flex items-center gap-1.5"><PhoneCall className="w-3 h-3"/>{a.phone}</span>
+                        <a href={`tel:${a.phone}`}><Button size="sm" variant="outline" className="rounded-full h-6 w-6 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3 h-3"/></Button></a>
+                      </p>
+                    )}
+                    {(a.salary > 0 || a.incentive > 0) && <p className="text-[10px] text-[#A66E4E]">Rs.{a.salary || 0} salary {a.incentive ? `• Rs.${a.incentive} incentive` : ""}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
@@ -196,6 +271,43 @@ export default function SalesManagerDashboard() {
       <Dialog open={showAddTask} onOpenChange={setShowAddTask}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Create Task</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Title" value={taskForm.title} onChange={e=>setTaskForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="task-title-input"/><Textarea placeholder="Description" value={taskForm.description} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} className="rounded-xl"/><Select value={taskForm.assigned_to} onValueChange={v=>{const t=telecallers.find(x=>x.id===v);setTaskForm(f=>({...f,assigned_to:v,assigned_to_name:t?.name||""}));}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Assign to"/></SelectTrigger><SelectContent>{telecallers.map(t=><SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select><Select value={taskForm.priority} onValueChange={v=>setTaskForm(f=>({...f,priority:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select><Input type="date" value={taskForm.due_date} onChange={e=>setTaskForm(f=>({...f,due_date:e.target.value}))} className="rounded-xl"/><Button onClick={handleAddTask} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-task-btn">Create</Button></div></DialogContent></Dialog>
       <Dialog open={showAddInstruction} onOpenChange={setShowAddInstruction}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Create Instruction</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Title (e.g. How to Call)" value={instForm.title} onChange={e=>setInstForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="inst-title-input"/><Select value={instForm.category} onValueChange={v=>setInstForm(f=>({...f,category:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="calling">Calling</SelectItem><SelectItem value="home_visit">Home Visit</SelectItem><SelectItem value="sales">Sales</SelectItem><SelectItem value="general">General</SelectItem></SelectContent></Select><Select value={instForm.target_role} onValueChange={v=>setInstForm(f=>({...f,target_role:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="telecaller">Telecallers</SelectItem><SelectItem value="agent">Agents</SelectItem></SelectContent></Select><Textarea placeholder="Instruction content..." value={instForm.content} onChange={e=>setInstForm(f=>({...f,content:e.target.value}))} className="rounded-xl min-h-[120px]" data-testid="inst-content-input"/><Button onClick={handleAddInstruction} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-inst-btn">Create</Button></div></DialogContent></Dialog>
       <Dialog open={showAddContact} onOpenChange={setShowAddContact}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Contact</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Name" value={contactForm.name} onChange={e=>setContactForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="contact-name-input"/><Input placeholder="Phone" value={contactForm.phone} onChange={e=>setContactForm(f=>({...f,phone:e.target.value}))} className="rounded-xl"/><Input placeholder="Email" value={contactForm.email} onChange={e=>setContactForm(f=>({...f,email:e.target.value}))} className="rounded-xl"/><Select value={contactForm.type} onValueChange={v=>setContactForm(f=>({...f,type:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="influencer">Influencer</SelectItem><SelectItem value="collaborator">Collaborator</SelectItem><SelectItem value="vendor">Vendor</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Textarea placeholder="Notes / Summary" value={contactForm.notes} onChange={e=>setContactForm(f=>({...f,notes:e.target.value}))} className="rounded-xl"/><Button onClick={handleAddContact} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-contact-btn">Add</Button></div></DialogContent></Dialog>
+
+      {/* ADD ASM DIALOG */}
+      <Dialog open={showAddAsm} onOpenChange={setShowAddAsm}>
+        <DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="add-asm-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Add Assistant Sales Manager</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-[11px] text-[#59615D]">A welcome email with login credentials will be sent automatically. Your ASM will be CC&apos;d on every instruction sent to you.</p>
+            <div><Label className="text-xs">Full Name *</Label><Input value={asmForm.name} onChange={e=>setAsmForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Ravi Kumar" className="rounded-xl" data-testid="asm-name-input"/></div>
+            <div><Label className="text-xs">Email *</Label><Input value={asmForm.email} onChange={e=>setAsmForm(f=>({...f,email:e.target.value}))} placeholder="ravi@celestaglow.com" className="rounded-xl" data-testid="asm-email-input"/></div>
+            <div><Label className="text-xs">Phone *</Label><Input value={asmForm.phone} onChange={e=>setAsmForm(f=>({...f,phone:e.target.value}))} placeholder="9999900011" className="rounded-xl" data-testid="asm-phone-input"/></div>
+            <div><Label className="text-xs">Password (leave blank for default &apos;asm123&apos;)</Label><Input value={asmForm.password} onChange={e=>setAsmForm(f=>({...f,password:e.target.value}))} placeholder="Optional" className="rounded-xl"/></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Salary (Rs./month)</Label><Input type="number" value={asmForm.salary} onChange={e=>setAsmForm(f=>({...f,salary:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+              <div><Label className="text-xs">Incentive (Rs.)</Label><Input type="number" value={asmForm.incentive} onChange={e=>setAsmForm(f=>({...f,incentive:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+            </div>
+            <Button onClick={handleAddAsm} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-asm-btn">Add Asst Sales Manager</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT ASM DIALOG */}
+      <Dialog open={showEditAsm} onOpenChange={(o)=>{setShowEditAsm(o); if(!o)setEditingAsm(null);}}>
+        <DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="edit-asm-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Edit ASM — {editingAsm?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">Full Name</Label><Input value={asmForm.name} onChange={e=>setAsmForm(f=>({...f,name:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">Email</Label><Input value={asmForm.email} onChange={e=>setAsmForm(f=>({...f,email:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">Phone</Label><Input value={asmForm.phone} onChange={e=>setAsmForm(f=>({...f,phone:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">New Password (leave blank to keep current)</Label><Input value={asmForm.password} onChange={e=>setAsmForm(f=>({...f,password:e.target.value}))} placeholder="Optional" className="rounded-xl"/></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Salary</Label><Input type="number" value={asmForm.salary} onChange={e=>setAsmForm(f=>({...f,salary:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+              <div><Label className="text-xs">Incentive</Label><Input type="number" value={asmForm.incentive} onChange={e=>setAsmForm(f=>({...f,incentive:Number(e.target.value)||0}))} className="rounded-xl"/></div>
+            </div>
+            <Button onClick={handleEditAsm} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-asm-btn">Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

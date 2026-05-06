@@ -158,10 +158,12 @@ def get_object(path):
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
 
 # ==================== EMAIL ====================
-async def send_email_async(to_email, subject, html_body, max_retries=3):
+async def send_email_async(to_email, subject, html_body, max_retries=3, cc_emails=None):
     """Send email via Gmail SMTP with retries. Returns (success, error_msg)."""
     if not SMTP_EMAIL or not SMTP_PASSWORD:
         return False, "SMTP not configured"
+    cc_emails = cc_emails or []
+    cc_emails = [e for e in cc_emails if e and e != to_email]  # dedupe
     def _send():
         last_err = ""
         for attempt in range(max_retries):
@@ -170,12 +172,15 @@ async def send_email_async(to_email, subject, html_body, max_retries=3):
                 msg['Subject'] = subject
                 msg['From'] = f"Celesta Glow <{SMTP_EMAIL}>"
                 msg['To'] = to_email
+                if cc_emails:
+                    msg['Cc'] = ", ".join(cc_emails)
                 msg.attach(MIMEText(html_body, 'html'))
+                recipients = [to_email] + cc_emails
                 # Try SMTP_SSL on 465 first (more reliable on most networks)
                 try:
                     with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20) as server:
                         server.login(SMTP_EMAIL, SMTP_PASSWORD)
-                        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+                        server.sendmail(SMTP_EMAIL, recipients, msg.as_string())
                     return True, ""
                 except Exception:
                     # Fallback to STARTTLS on 587
@@ -184,7 +189,7 @@ async def send_email_async(to_email, subject, html_body, max_retries=3):
                         server.starttls()
                         server.ehlo()
                         server.login(SMTP_EMAIL, SMTP_PASSWORD)
-                        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+                        server.sendmail(SMTP_EMAIL, recipients, msg.as_string())
                     return True, ""
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"
@@ -1299,6 +1304,138 @@ api_router.add_api_route("/assistant-sales-managers", _create_user_factory("assi
 api_router.add_api_route("/assistant-district-managers", _create_user_factory("assistant_district_managers","adm","adm123",{"commission_earned":0,"managed_by":"","district":""}), methods=["POST"])
 api_router.add_api_route("/inventory-managers", _create_user_factory("inventory_managers","inv","inv123",{}), methods=["POST"])
 api_router.add_api_route("/digital-marketing-managers", _create_user_factory("digital_marketing_managers","dmm","dm123",{}), methods=["POST"])
+
+# ==================== ASM / ADM MANAGEMENT (for SM / DM dashboards) ====================
+@api_router.get("/my-team/asms")
+async def get_my_asms(current_user: dict = Depends(get_current_user)):
+    """SM/Asst SM/Admin: list Assistant Sales Managers assigned to me."""
+    if current_user['role'] not in ('sales_manager', 'assistant_sales_manager', 'admin'):
+        raise HTTPException(status_code=403, detail="Only Sales Managers / Admin can view ASMs")
+    q = {} if current_user['role'] == 'admin' else {"managed_by": current_user['id']}
+    asms = await db.assistant_sales_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(100)
+    return {"asms": asms, "total": len(asms)}
+
+@api_router.get("/my-team/adms")
+async def get_my_adms(current_user: dict = Depends(get_current_user)):
+    """DM/Asst DM/Admin: list Assistant District Managers assigned to me."""
+    if current_user['role'] not in ('district_manager', 'assistant_district_manager', 'admin'):
+        raise HTTPException(status_code=403, detail="Only District Managers / Admin can view ADMs")
+    q = {} if current_user['role'] == 'admin' else {"managed_by": current_user['id']}
+    adms = await db.assistant_district_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(100)
+    return {"adms": adms, "total": len(adms)}
+
+@api_router.post("/my-team/asm")
+async def add_my_asm(data: dict, current_user: dict = Depends(get_current_user)):
+    """SM creates a new Assistant Sales Manager reporting to themselves."""
+    if current_user['role'] not in ('sales_manager', 'admin'):
+        raise HTTPException(status_code=403, detail="Only Sales Managers / Admin can add ASMs")
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").lower().strip()
+    phone = (data.get("phone") or "").strip()
+    if not name or not email or not phone:
+        raise HTTPException(status_code=400, detail="Name, email and phone are required")
+    if await db.deleted_seed_emails.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="This email was previously deleted; choose a different email")
+    for c in AUTH_COLLECTIONS:
+        if await db[c].find_one({"email": email}):
+            raise HTTPException(status_code=400, detail=f"User with email {email} already exists")
+    pw = data.get("password") or "asm123"
+    asm = {
+        "id": f"asm-{uuid.uuid4().hex[:6]}", "email": email, "name": name, "phone": phone,
+        "password_hash": hash_password(pw),
+        "salary": int(data.get("salary") or 0), "incentive": int(data.get("incentive") or 0),
+        "commission_earned": 0, "managed_by": current_user['id'] if current_user['role']=='sales_manager' else (data.get('managed_by') or current_user['id']),
+        "managed_by_name": current_user.get('name', '') if current_user['role']=='sales_manager' else "",
+        "bank_account_name": data.get("bank_account_name", ""), "bank_account_number": data.get("bank_account_number", ""),
+        "bank_ifsc": data.get("bank_ifsc", ""), "bank_name": data.get("bank_name", ""),
+        "upi_id": data.get("upi_id", ""), "address": data.get("address", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.assistant_sales_managers.insert_one(asm); asm.pop("_id", None); asm.pop("password_hash", None)
+    # Welcome email (best-effort)
+    try:
+        body = _letterhead("Welcome to Celesta Glow") + f"<p>Dear {name},</p><p>Welcome aboard as an <b>Assistant Sales Manager</b>. You report to <b>{current_user.get('name','your Sales Manager')}</b>.</p><p><b>Login:</b> {email}<br><b>Password:</b> {pw}</p><p>Please log in to your dashboard and change your password.</p>" + _letterhead_footer(show_terms=True)
+        await send_email_async(email, f"Welcome — {COMPANY['name']}", body)
+    except Exception: pass
+    return {"asm": asm, "message": "Assistant Sales Manager added"}
+
+@api_router.post("/my-team/adm")
+async def add_my_adm(data: dict, current_user: dict = Depends(get_current_user)):
+    """DM creates a new Assistant District Manager reporting to themselves."""
+    if current_user['role'] not in ('district_manager', 'admin'):
+        raise HTTPException(status_code=403, detail="Only District Managers / Admin can add ADMs")
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").lower().strip()
+    phone = (data.get("phone") or "").strip()
+    if not name or not email or not phone:
+        raise HTTPException(status_code=400, detail="Name, email and phone are required")
+    if await db.deleted_seed_emails.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="This email was previously deleted; choose a different email")
+    for c in AUTH_COLLECTIONS:
+        if await db[c].find_one({"email": email}):
+            raise HTTPException(status_code=400, detail=f"User with email {email} already exists")
+    pw = data.get("password") or "adm123"
+    adm = {
+        "id": f"adm-{uuid.uuid4().hex[:6]}", "email": email, "name": name, "phone": phone,
+        "password_hash": hash_password(pw),
+        "salary": int(data.get("salary") or 0), "incentive": int(data.get("incentive") or 0),
+        "commission_earned": 0, "managed_by": current_user['id'] if current_user['role']=='district_manager' else (data.get('managed_by') or current_user['id']),
+        "managed_by_name": current_user.get('name', '') if current_user['role']=='district_manager' else "",
+        "district": data.get("district", ""),
+        "bank_account_name": data.get("bank_account_name", ""), "bank_account_number": data.get("bank_account_number", ""),
+        "bank_ifsc": data.get("bank_ifsc", ""), "bank_name": data.get("bank_name", ""),
+        "upi_id": data.get("upi_id", ""), "address": data.get("address", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.assistant_district_managers.insert_one(adm); adm.pop("_id", None); adm.pop("password_hash", None)
+    try:
+        body = _letterhead("Welcome to Celesta Glow") + f"<p>Dear {name},</p><p>Welcome aboard as an <b>Assistant District Manager</b>. You report to <b>{current_user.get('name','your District Manager')}</b>.</p><p><b>Login:</b> {email}<br><b>Password:</b> {pw}</p><p>Please log in to your dashboard and change your password.</p>" + _letterhead_footer(show_terms=True)
+        await send_email_async(email, f"Welcome — {COMPANY['name']}", body)
+    except Exception: pass
+    return {"adm": adm, "message": "Assistant District Manager added"}
+
+@api_router.put("/my-team/asm/{asm_id}")
+async def update_my_asm(asm_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ('sales_manager', 'admin'):
+        raise HTTPException(status_code=403)
+    asm = await db.assistant_sales_managers.find_one({"id": asm_id}, {"_id": 0})
+    if not asm: raise HTTPException(status_code=404)
+    if current_user['role']=='sales_manager' and asm.get('managed_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your ASM")
+    upd = {k: v for k, v in data.items() if k in ('name','email','phone','salary','incentive','bank_account_name','bank_account_number','bank_ifsc','bank_name','upi_id','address')}
+    if 'password' in data and data['password']:
+        upd['password_hash'] = hash_password(data['password'])
+    upd['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.assistant_sales_managers.update_one({"id": asm_id}, {"$set": upd})
+    return {"message": "ASM updated"}
+
+@api_router.put("/my-team/adm/{adm_id}")
+async def update_my_adm(adm_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ('district_manager', 'admin'):
+        raise HTTPException(status_code=403)
+    adm = await db.assistant_district_managers.find_one({"id": adm_id}, {"_id": 0})
+    if not adm: raise HTTPException(status_code=404)
+    if current_user['role']=='district_manager' and adm.get('managed_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your ADM")
+    upd = {k: v for k, v in data.items() if k in ('name','email','phone','salary','incentive','district','bank_account_name','bank_account_number','bank_ifsc','bank_name','upi_id','address')}
+    if 'password' in data and data['password']:
+        upd['password_hash'] = hash_password(data['password'])
+    upd['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.assistant_district_managers.update_one({"id": adm_id}, {"$set": upd})
+    return {"message": "ADM updated"}
+
+async def _get_cc_assistants(target_user_id: str, target_role: str) -> list:
+    """If target is a SM/DM, return their ASM/ADM emails for CC."""
+    cc_emails = []
+    try:
+        if target_role == 'sales_manager':
+            async for a in db.assistant_sales_managers.find({"managed_by": target_user_id}, {"_id": 0, "email": 1}):
+                if a.get('email'): cc_emails.append(a['email'])
+        elif target_role == 'district_manager':
+            async for a in db.assistant_district_managers.find({"managed_by": target_user_id}, {"_id": 0, "email": 1}):
+                if a.get('email'): cc_emails.append(a['email'])
+    except Exception: pass
+    return cc_emails
 
 @api_router.post("/hr-team")
 async def create_hr_member(data: dict, current_user: dict = Depends(get_current_user)):
@@ -2496,9 +2633,27 @@ async def create_instruction(data: dict, current_user: dict = Depends(get_curren
 </div>
 <p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Please log in to your Celesta Glow dashboard to view full details and mark progress.</p>
 """ + _letterhead_footer(signatory=current_user.get('name', 'Admin'))
-            success, err = await send_email_async(u["email"], subject, body)
+            # CC the recipient's ASM/ADM if they are a SM/DM
+            cc = await _get_cc_assistants(u["id"], u.get("role", ""))
+            success, err = await send_email_async(u["email"], subject, body, cc_emails=cc)
             if success:
                 email_results["sent"] += 1
+                # Notify CC'd ASMs/ADMs in their dashboard too
+                for cc_email in cc:
+                    try:
+                        # find user_id by email
+                        for c, role in AUTH_COLLECTIONS.items():
+                            cc_user = await db[c].find_one({"email": cc_email}, {"_id": 0, "id": 1})
+                            if cc_user:
+                                await db.notifications.insert_one({
+                                    "id": f"notif-{uuid.uuid4().hex[:8]}", "user_id": cc_user["id"],
+                                    "title": f"📋 (CC) {instr['title']}", "message": f"Copy of instruction sent to {u.get('name','manager')}: {instr['content'][:160]}",
+                                    "type": "instruction_cc", "priority": instr["priority"],
+                                    "ref_id": instr["id"], "read": False,
+                                    "created_at": datetime.now(timezone.utc).isoformat(),
+                                })
+                                break
+                    except Exception: pass
             else:
                 email_results["failed"] += 1
                 if err and len(email_results["errors"]) < 5:
