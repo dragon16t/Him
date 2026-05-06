@@ -291,9 +291,39 @@ async def seed_database():
     wiped_doc = await db.app_config.find_one({"key": "system_wiped"})
     if wiped_doc and wiped_doc.get("value") is True:
         logger.info("System is in WIPED state — only admin seeded. Skipping all other seed data.")
-        # Still create indexes (idempotent)
-        for idx in [("leads","assigned_to"),("leads","status"),("leads","phone_number"),("orders","created_by"),("orders","status"),("commissions","user_id"),("fund_requests","requested_by"),("expenses","status"),("payroll","user_id"),("tasks","assigned_to"),("audit_logs","timestamp"),("influencers","assigned_to"),("content_briefs","assigned_to"),("leaves","user_id"),("complaints","user_id")]:
-            await db[idx[0]].create_index(idx[1])
+        # Performance indexes — single + compound for fast date-range / role queries
+        single_idx = [
+            ("leads","assigned_to"),("leads","status"),("leads","phone_number"),("leads","created_at"),
+            ("orders","created_by"),("orders","status"),("orders","created_at"),
+            ("commissions","user_id"),("commissions","created_at"),
+            ("fund_requests","requested_by"),("fund_requests","status"),("fund_requests","created_at"),
+            ("expenses","status"),("expenses","reimburse_status"),("expenses","created_at"),
+            ("payroll","user_id"),("payroll","month"),("payroll","year"),("payroll","created_at"),
+            ("tasks","assigned_to"),("tasks","created_at"),
+            ("audit_logs","timestamp"),("audit_logs","user_id"),
+            ("influencers","assigned_to"),("content_briefs","assigned_to"),
+            ("leaves","user_id"),("complaints","user_id"),
+            ("notifications","user_id"),("notifications","role"),("notifications","read"),
+            ("attendance","user_id"),("attendance","date"),
+            ("employee_tasks","user_id"),("employee_tasks","date"),
+            ("revenue_entries","created_at"),("inhouse_call_logs","created_at"),
+            ("ai_call_logs","created_at"),("hr_communications","created_at"),
+        ]
+        for coll, field in single_idx:
+            try: await db[coll].create_index(field)
+            except Exception: pass
+        # Compound indexes for common date+role queries
+        try:
+            await db.orders.create_index([("created_at", -1), ("status", 1)])
+            await db.orders.create_index([("created_by", 1), ("created_at", -1)])
+            await db.leads.create_index([("assigned_to", 1), ("created_at", -1)])
+            await db.leads.create_index([("status", 1), ("created_at", -1)])
+            await db.expenses.create_index([("status", 1), ("created_at", -1)])
+            await db.expenses.create_index([("reimburse_status", 1), ("created_at", -1)])
+            await db.audit_logs.create_index([("timestamp", -1)])
+            await db.notifications.create_index([("user_id", 1), ("read", 1), ("created_at", -1)])
+        except Exception as _e:
+            logger.warning(f"Compound index creation: {_e}")
         return
     for p in SEED_PRODUCTS:
         if not await db.products.find_one({"id": p["id"]}):
@@ -520,12 +550,27 @@ async def change_password(data: dict, current_user: dict = Depends(get_current_u
 
 # ==================== LEAD ROUTES ====================
 @api_router.get("/leads")
-async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = None,
+                   limit: int = 500, skip: int = 0,
+                   month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
+                   current_user: dict = Depends(get_current_user)):
     query = {}
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
     elif assigned_to: query['assigned_to'] = assigned_to
     if status: query['status'] = status
-    return {"leads": await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    if year and month and day and month != "all":
+        prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        query['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
+    elif year and month and month != "all":
+        prefix = f"{year}-{month.zfill(2)}"
+        query['created_at'] = {"$gte": prefix, "$lt": prefix + "~"}
+    elif year:
+        query['created_at'] = {"$gte": year, "$lt": year + "~"}
+    limit = max(1, min(int(limit or 500), 2000))
+    skip = max(0, int(skip or 0))
+    total = await db.leads.count_documents(query)
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"leads": leads, "total": total, "skip": skip, "limit": limit}
 
 @api_router.get("/leads/today-calls")
 async def get_todays_calls(current_user: dict = Depends(get_current_user)):
@@ -685,7 +730,10 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
 
 # ==================== ORDER ROUTES ====================
 @api_router.get("/orders")
-async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = None,
+                    limit: int = 1000, skip: int = 0,
+                    month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
+                    current_user: dict = Depends(get_current_user)):
     query = {}
     if current_user['role'] in ['telecaller', 'agent']: query['created_by'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
@@ -703,7 +751,19 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
     if status: query['status'] = status
     if date_filter:  # YYYY-MM-DD
         query['created_at'] = {"$regex": f"^{date_filter}"}
-    return {"orders": await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)}
+    elif year and month and day and month != "all":
+        prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        query['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
+    elif year and month and month != "all":
+        prefix = f"{year}-{month.zfill(2)}"
+        query['created_at'] = {"$gte": prefix, "$lt": prefix + "~"}
+    elif year:
+        query['created_at'] = {"$gte": year, "$lt": year + "~"}
+    limit = max(1, min(int(limit or 1000), 5000))
+    skip = max(0, int(skip or 0))
+    total = await db.orders.count_documents(query)
+    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"orders": orders, "total": total, "skip": skip, "limit": limit}
 
 @api_router.get("/orders/pending")
 async def get_pending_orders(current_user: dict = Depends(get_current_user)):
@@ -1312,10 +1372,24 @@ async def create_fund_request(data: dict, current_user: dict = Depends(get_curre
     return {"fund_request": fr, "message": "Fund request submitted"}
 
 @api_router.get("/fund-requests")
-async def get_fund_requests(current_user: dict = Depends(get_current_user)):
+async def get_fund_requests(limit: int = 200, skip: int = 0,
+                           month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
+                           current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] in ['telecaller','agent']: q['requested_by'] = current_user['id']
-    return {"fund_requests": await db.fund_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    if year and month and day and month != "all":
+        prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        q['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
+    elif year and month and month != "all":
+        prefix = f"{year}-{month.zfill(2)}"
+        q['created_at'] = {"$gte": prefix, "$lt": prefix + "~"}
+    elif year:
+        q['created_at'] = {"$gte": year, "$lt": year + "~"}
+    limit = max(1, min(int(limit or 200), 1000))
+    skip = max(0, int(skip or 0))
+    total = await db.fund_requests.count_documents(q)
+    items = await db.fund_requests.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"fund_requests": items, "total": total, "skip": skip, "limit": limit}
 
 @api_router.put("/fund-requests/{frid}/approve")
 async def approve_fund_request(frid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -1412,8 +1486,26 @@ async def mark_expense_paid(eid: str, data: dict = None, current_user: dict = De
     return {"message": "Marked as paid"}
 
 @api_router.get("/expenses")
-async def get_expenses(current_user: dict = Depends(get_current_user)):
-    return {"expenses": await db.expenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)}
+async def get_expenses(limit: int = 500, skip: int = 0,
+                       month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
+                       reimburse_status: Optional[str] = None,
+                       current_user: dict = Depends(get_current_user)):
+    q = {}
+    if reimburse_status:
+        q['reimburse_status'] = reimburse_status
+    if year and month and day and month != "all":
+        prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        q['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
+    elif year and month and month != "all":
+        prefix = f"{year}-{month.zfill(2)}"
+        q['created_at'] = {"$gte": prefix, "$lt": prefix + "~"}
+    elif year:
+        q['created_at'] = {"$gte": year, "$lt": year + "~"}
+    limit = max(1, min(int(limit or 500), 2000))
+    skip = max(0, int(skip or 0))
+    total = await db.expenses.count_documents(q)
+    items = await db.expenses.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"expenses": items, "total": total, "skip": skip, "limit": limit}
 
 @api_router.put("/expenses/{eid}/approve")
 async def approve_expense(eid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -1552,10 +1644,18 @@ async def create_payroll(data: dict, current_user: dict = Depends(get_current_us
     return {"payroll": pr, "message": "Payroll record created"}
 
 @api_router.get("/payroll")
-async def get_payroll(current_user: dict = Depends(get_current_user)):
+async def get_payroll(limit: int = 200, skip: int = 0,
+                     month: Optional[str] = None, year: Optional[str] = None,
+                     current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] in ['telecaller','agent']: q['user_id'] = current_user['id']
-    return {"payroll": await db.payroll.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    if month and month != "all": q['month'] = month
+    if year: q['year'] = year
+    limit = max(1, min(int(limit or 200), 1000))
+    skip = max(0, int(skip or 0))
+    total = await db.payroll.count_documents(q)
+    items = await db.payroll.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"payroll": items, "total": total, "skip": skip, "limit": limit}
 
 @api_router.put("/payroll/{pid}/process")
 async def process_payroll(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -1791,9 +1891,20 @@ async def log_audit(action, entity_type, entity_id, changed_by, changed_by_name,
     await db.audit_logs.insert_one({"id": f"audit-{uuid.uuid4().hex[:8]}", "action": action, "entity_type": entity_type, "entity_id": entity_id, "changed_by": changed_by, "changed_by_name": changed_by_name, "details": details, "timestamp": datetime.now(timezone.utc).isoformat()})
 
 @api_router.get("/audit-logs")
-async def get_audit_logs(current_user: dict = Depends(get_current_user)):
+async def get_audit_logs(limit: int = 200, skip: int = 0,
+                        from_date: Optional[str] = None, to_date: Optional[str] = None,
+                        current_user: dict = Depends(get_current_user)):
     if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    return {"audit_logs": await db.audit_logs.find({}, {"_id": 0}).sort("timestamp", -1).to_list(500)}
+    q = {}
+    if from_date and to_date:
+        q['timestamp'] = {"$gte": from_date, "$lt": to_date + "~"}
+    elif from_date:
+        q['timestamp'] = {"$gte": from_date}
+    limit = max(1, min(int(limit or 200), 1000))
+    skip = max(0, int(skip or 0))
+    total = await db.audit_logs.count_documents(q)
+    items = await db.audit_logs.find(q, {"_id": 0}).sort("timestamp", -1).skip(skip).limit(limit).to_list(limit)
+    return {"audit_logs": items, "total": total, "skip": skip, "limit": limit}
 
 # ==================== STATES ====================
 @api_router.post("/states")
