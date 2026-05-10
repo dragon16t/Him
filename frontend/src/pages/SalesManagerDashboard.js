@@ -17,6 +17,8 @@ import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
+import TeamActivityPanel from "../components/TeamActivityPanel";
+import TeamGroupsPanel from "../components/TeamGroupsPanel";
 
 const API = "/api";
 
@@ -179,10 +181,12 @@ export default function SalesManagerDashboard() {
         </div>
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"telecallers",l:"Telecallers"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"telecallers",l:"Telecallers"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
+          <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
+          <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={telecallers} candidateLabel="Telecallers" /></TabsContent>
           <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Telecallers</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTC(true)} data-testid="add-tc-btn"><Plus className="w-4 h-4 mr-1"/>Add</Button></div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start"><div><p className="font-heading font-medium">{tc.name}</p><p className="text-xs text-[#59615D]">{tc.email}</p>{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div><div className="flex flex-wrap gap-1 mt-1">{tc.language&&<Badge variant="outline" className="text-[10px] bg-[#F9F8F6]">{tc.language}</Badge>}</div><div className="grid grid-cols-3 gap-2 mt-2 text-center">{[{l:"Calls",v:tc.total_calls||0},{l:"Conv.",v:tc.conversions||0},{l:"Comm.",v:`Rs.${tc.commission_earned||0}`}].map((s,i)=>(<div key={i} className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">{s.l}</p><p className="font-semibold text-xs">{s.v}</p></div>))}</div>
               <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if(!window.confirm(`Promote ${tc.name} to Asst Sales Manager?`))return;try{await axios.post(`${API}/promote/tc-to-asm`,{telecaller_id:tc.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-tc-${tc.id}`}>Promote to Asst SM</Button>

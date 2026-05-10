@@ -715,8 +715,8 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
         await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     if current_user['role'] == 'telecaller':
         await db.telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
-        if data.get("status") == "interested":
-            await db.telecallers.update_one({"id": current_user['id']}, {"$inc": {"conversions": 1}})
+        # NOTE: conversions are incremented ONLY when an actual order is created (see /orders endpoint).
+        # Marking a lead as "interested" no longer counts as a conversion.
     # Send follow-up email notification if time is set
     if data.get("next_follow_up_date") and data.get("next_follow_up_time") and SMTP_EMAIL and SMTP_PASSWORD:
         try:
@@ -1436,6 +1436,260 @@ async def _get_cc_assistants(target_user_id: str, target_role: str) -> list:
                 if a.get('email'): cc_emails.append(a['email'])
     except Exception: pass
     return cc_emails
+
+# ==================== TEAM ACTIVITY (SM/DM call & visit tracker) ====================
+@api_router.get("/team-activity")
+async def get_team_activity(
+    month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
+    user_id: Optional[str] = None, activity_type: Optional[str] = None,
+    limit: int = 500, skip: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    """Manager view of agent/telecaller call & home-visit activity.
+    Returns lead.call_logs (calls + remarks) + agent_call_logs (home visits) + inhouse_call_logs.
+    SM sees only telecallers' & ASM activity; DM sees only agents' & ADM activity."""
+    role = current_user['role']
+    if role not in ('sales_manager','district_manager','assistant_sales_manager','assistant_district_manager','admin'):
+        raise HTTPException(status_code=403, detail="Only Managers / Admin can view team activity")
+    # Build user-id allowlist for current manager
+    allowed_ids: list = []
+    if role in ('sales_manager','assistant_sales_manager'):
+        async for tc in db.telecallers.find({}, {"_id":0,"id":1}): allowed_ids.append(tc['id'])
+        async for asm in db.assistant_sales_managers.find({}, {"_id":0,"id":1}): allowed_ids.append(asm['id'])
+        # In-house telecallers also fall under SM scope
+        async for ih in db.inhouse_telecallers.find({}, {"_id":0,"id":1}): allowed_ids.append(ih['id'])
+    elif role in ('district_manager','assistant_district_manager'):
+        async for ag in db.agents.find({}, {"_id":0,"id":1}): allowed_ids.append(ag['id'])
+        async for adm in db.assistant_district_managers.find({}, {"_id":0,"id":1}): allowed_ids.append(adm['id'])
+    elif role == 'admin':
+        allowed_ids = None  # all
+    if user_id:
+        if allowed_ids is not None and user_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="User not in your team")
+        allowed_ids = [user_id]
+
+    # Date range
+    date_prefix = ""
+    if year and month and day and month != "all":
+        date_prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+    elif year and month and month != "all":
+        date_prefix = f"{year}-{month.zfill(2)}"
+    elif year:
+        date_prefix = f"{year}"
+
+    activities: list = []
+    # 1) Lead call_logs (telecaller calls — phone number, notes, status changes)
+    if (not activity_type) or activity_type in ('call','calls','telecaller','lead_call'):
+        lead_q = {} if allowed_ids is None else {"assigned_to": {"$in": allowed_ids}}
+        async for lead in db.leads.find(lead_q, {"_id":0, "id":1, "name":1, "phone_number":1, "assigned_to":1, "assigned_to_name":1, "call_logs":1, "status":1, "product_interest":1}):
+            for cl in (lead.get("call_logs") or []):
+                ts = (cl.get("timestamp") or cl.get("date") or cl.get("created_at") or "")
+                if date_prefix and not str(ts).startswith(date_prefix): continue
+                activities.append({
+                    "type": "call",
+                    "user_id": lead.get("assigned_to",""),
+                    "user_name": lead.get("assigned_to_name","-"),
+                    "customer_name": lead.get("name",""),
+                    "customer_phone": lead.get("phone_number",""),
+                    "outcome": cl.get("outcome") or cl.get("status") or lead.get("status",""),
+                    "notes": cl.get("notes") or cl.get("remarks") or cl.get("customer_remarks") or "",
+                    "duration": cl.get("duration") or cl.get("duration_seconds"),
+                    "product_interest": lead.get("product_interest",""),
+                    "timestamp": ts,
+                    "lead_id": lead.get("id",""),
+                })
+    # 2) Agent call/home visits
+    if (not activity_type) or activity_type in ('home_visit','visit','agent','agent_call'):
+        ag_q = {}
+        if allowed_ids is not None: ag_q["agent_id"] = {"$in": allowed_ids}
+        if date_prefix: ag_q["call_date"] = {"$regex": f"^{date_prefix}"}
+        async for log in db.agent_call_logs.find(ag_q, {"_id":0}).sort("created_at", -1):
+            activities.append({
+                "type": "home_visit" if (log.get("visit_type")=="home" or log.get("type")=="visit") else "call",
+                "user_id": log.get("agent_id",""),
+                "user_name": log.get("agent_name","-"),
+                "customer_name": log.get("customer_name","") or log.get("client_name",""),
+                "customer_phone": log.get("phone","") or log.get("customer_phone",""),
+                "outcome": log.get("outcome",""),
+                "notes": log.get("notes","") or log.get("remarks",""),
+                "address": log.get("address",""),
+                "duration": log.get("duration"),
+                "timestamp": log.get("call_date") or log.get("created_at",""),
+            })
+    # 3) In-house telecaller call logs
+    if (not activity_type) or activity_type in ('call','inhouse','telecaller'):
+        ih_q = {}
+        if allowed_ids is not None: ih_q["caller_id"] = {"$in": allowed_ids}
+        if date_prefix: ih_q["created_at"] = {"$regex": f"^{date_prefix}"}
+        async for log in db.inhouse_call_logs.find(ih_q, {"_id":0}).sort("created_at", -1):
+            activities.append({
+                "type": "call",
+                "user_id": log.get("caller_id",""),
+                "user_name": log.get("caller_name","-"),
+                "customer_name": log.get("contact_name","") or log.get("customer_name",""),
+                "customer_phone": log.get("phone",""),
+                "outcome": log.get("outcome","") or log.get("status",""),
+                "notes": log.get("notes","") or log.get("remarks",""),
+                "timestamp": log.get("created_at",""),
+            })
+    # Sort by timestamp desc
+    activities.sort(key=lambda x: str(x.get("timestamp","")), reverse=True)
+    total = len(activities)
+    items = activities[skip: skip + max(1, min(int(limit or 500), 2000))]
+    # Summary
+    summary = {
+        "total": total,
+        "calls": sum(1 for a in activities if a["type"] == "call"),
+        "home_visits": sum(1 for a in activities if a["type"] == "home_visit"),
+        "with_notes": sum(1 for a in activities if a.get("notes")),
+        "by_user": {},
+    }
+    for a in activities:
+        uid = a.get("user_id") or "_unknown"
+        if uid not in summary["by_user"]:
+            summary["by_user"][uid] = {"name": a.get("user_name","?"), "total":0, "calls":0, "visits":0}
+        summary["by_user"][uid]["total"] += 1
+        if a["type"] == "home_visit":
+            summary["by_user"][uid]["visits"] += 1
+        else:
+            summary["by_user"][uid]["calls"] += 1
+    return {"activities": items, "summary": summary, "total": total, "skip": skip, "limit": limit}
+
+# ==================== TEAM GROUPS (Language / Locality with HEAD) ====================
+@api_router.get("/team/groups")
+async def list_groups(current_user: dict = Depends(get_current_user)):
+    role = current_user['role']
+    if role not in ('sales_manager','district_manager','assistant_sales_manager','assistant_district_manager','admin'):
+        raise HTTPException(status_code=403)
+    q = {} if role == 'admin' else {"created_by": current_user['id']}
+    groups = await db.team_groups.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Enrich with member info
+    for g in groups:
+        members_full: list = []
+        for mid in (g.get("member_ids") or []):
+            for coll in ("telecallers","agents","assistant_sales_managers","assistant_district_managers","inhouse_telecallers"):
+                u = await db[coll].find_one({"id": mid}, {"_id":0,"id":1,"name":1,"email":1,"phone":1,"language":1,"area":1,"district":1,"total_calls":1,"conversions":1,"commission_earned":1})
+                if u:
+                    u['role'] = coll[:-1] if not coll.endswith('s') else (coll[:-1])
+                    members_full.append(u); break
+        g['members'] = members_full
+        # Head info
+        head = None
+        if g.get("head_id"):
+            for coll in ("telecallers","agents","assistant_sales_managers","assistant_district_managers"):
+                u = await db[coll].find_one({"id": g["head_id"]}, {"_id":0,"id":1,"name":1,"email":1,"phone":1})
+                if u: head = u; break
+        g['head'] = head
+    return {"groups": groups}
+
+@api_router.post("/team/groups")
+async def create_group(data: dict, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ('sales_manager','district_manager','admin'):
+        raise HTTPException(status_code=403)
+    name = (data.get("name") or "").strip()
+    if not name: raise HTTPException(status_code=400, detail="Group name required")
+    member_ids = data.get("member_ids") or []
+    if len(member_ids) > 10:
+        raise HTTPException(status_code=400, detail="A group can have at most 10 members. Create another group for additional members.")
+    grp = {
+        "id": f"grp-{uuid.uuid4().hex[:8]}",
+        "name": name,
+        "type": data.get("type", "language"),  # 'language' or 'locality'
+        "language": data.get("language", ""),
+        "locality": data.get("locality", ""),
+        "district": data.get("district", ""),
+        "head_id": data.get("head_id", ""),
+        "member_ids": member_ids,
+        "created_by": current_user['id'],
+        "created_by_name": current_user.get('name', ''),
+        "created_by_role": current_user.get('role', ''),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.team_groups.insert_one(grp); grp.pop("_id", None)
+    return {"group": grp, "message": "Group created"}
+
+@api_router.put("/team/groups/{gid}")
+async def update_group(gid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    grp = await db.team_groups.find_one({"id": gid}, {"_id": 0})
+    if not grp: raise HTTPException(status_code=404)
+    if current_user['role'] != 'admin' and grp.get('created_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your group")
+    upd = {k: v for k, v in data.items() if k in ('name','type','language','locality','district','head_id','member_ids')}
+    if 'member_ids' in upd and len(upd['member_ids']) > 10:
+        raise HTTPException(status_code=400, detail="A group can have at most 10 members.")
+    upd['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.team_groups.update_one({"id": gid}, {"$set": upd})
+    return {"message": "Group updated"}
+
+@api_router.delete("/team/groups/{gid}")
+async def delete_group(gid: str, current_user: dict = Depends(get_current_user)):
+    grp = await db.team_groups.find_one({"id": gid}, {"_id": 0})
+    if not grp: raise HTTPException(status_code=404)
+    if current_user['role'] != 'admin' and grp.get('created_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your group")
+    await db.team_groups.delete_one({"id": gid})
+    return {"message": "Group deleted"}
+
+@api_router.post("/team/groups/{gid}/send-performance-report")
+async def send_perf_report(gid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    """Email the head of a group with the daily performance summary of all sub-members."""
+    if current_user['role'] not in ('sales_manager','district_manager','admin'):
+        raise HTTPException(status_code=403)
+    grp = await db.team_groups.find_one({"id": gid}, {"_id": 0})
+    if not grp: raise HTTPException(status_code=404)
+    head = None
+    for coll in ("telecallers","agents","assistant_sales_managers","assistant_district_managers"):
+        u = await db[coll].find_one({"id": grp.get("head_id","")}, {"_id":0,"id":1,"name":1,"email":1})
+        if u: head = u; break
+    if not head or not head.get("email"):
+        raise HTTPException(status_code=400, detail="Group has no head with email — set a head first")
+    # Compute stats per member for the requested period (defaults to today)
+    period_label = "Today"
+    today = date.today().isoformat()
+    date_prefix = (data or {}).get("date") or today
+    if (data or {}).get("month") and (data or {}).get("year"):
+        date_prefix = f"{(data or {})['year']}-{str((data or {})['month']).zfill(2)}"
+        period_label = f"{(data or {})['month']}/{(data or {})['year']}"
+    rows_html = ""
+    totals = {"calls": 0, "orders": 0, "revenue": 0}
+    for mid in (grp.get("member_ids") or []):
+        # Find member name
+        member = None
+        for coll in ("telecallers","agents","assistant_sales_managers","assistant_district_managers","inhouse_telecallers"):
+            u = await db[coll].find_one({"id": mid}, {"_id":0,"id":1,"name":1})
+            if u: member = u; break
+        if not member: continue
+        # Calls: count call_logs in leads + agent_call_logs that match the prefix
+        calls_count = 0
+        async for lead in db.leads.find({"assigned_to": mid}, {"_id":0,"call_logs":1}):
+            for cl in (lead.get("call_logs") or []):
+                ts = str(cl.get("timestamp") or cl.get("date") or cl.get("created_at") or "")
+                if ts.startswith(date_prefix): calls_count += 1
+        calls_count += await db.agent_call_logs.count_documents({"agent_id": mid, "call_date": {"$regex": f"^{date_prefix}"}})
+        calls_count += await db.inhouse_call_logs.count_documents({"caller_id": mid, "created_at": {"$regex": f"^{date_prefix}"}})
+        # Orders & revenue
+        orders_q = {"created_by": mid, "created_at": {"$regex": f"^{date_prefix}"}}
+        orders_count = await db.orders.count_documents(orders_q)
+        revenue = 0
+        async for o in db.orders.find(orders_q, {"_id":0,"total_amount":1,"status":1}):
+            if o.get("status") in ("delivered","confirmed","shipped"):
+                revenue += int(o.get("total_amount") or 0)
+        rows_html += f"<tr><td style='padding:8px;border:1px solid #E5E3DB'>{member['name']}</td><td style='padding:8px;border:1px solid #E5E3DB;text-align:center'>{calls_count}</td><td style='padding:8px;border:1px solid #E5E3DB;text-align:center'>{orders_count}</td><td style='padding:8px;border:1px solid #E5E3DB;text-align:right'>Rs.{revenue:,}</td></tr>"
+        totals["calls"] += calls_count; totals["orders"] += orders_count; totals["revenue"] += revenue
+    body = _letterhead(f"Daily Performance Report — {grp['name']}") + f"""
+<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{head['name']}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>You are the <b>group head</b> of <b>{grp['name']}</b> ({grp.get('type','').title()} based group of {len(grp.get('member_ids') or [])} members). Below is the performance summary for <b>{period_label}</b> ({date_prefix}). Please review and coach your members where needed.</p>
+<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;margin:16px 0'>
+  <thead><tr style='background:#F9F8F6'><th style='padding:8px;border:1px solid #E5E3DB;text-align:left'>Member</th><th style='padding:8px;border:1px solid #E5E3DB'>Calls</th><th style='padding:8px;border:1px solid #E5E3DB'>Orders</th><th style='padding:8px;border:1px solid #E5E3DB'>Revenue</th></tr></thead>
+  <tbody>{rows_html}</tbody>
+  <tfoot><tr style='background:#3B5249;color:white'><td style='padding:8px'><b>Total</b></td><td style='padding:8px;text-align:center'><b>{totals['calls']}</b></td><td style='padding:8px;text-align:center'><b>{totals['orders']}</b></td><td style='padding:8px;text-align:right'><b>Rs.{totals['revenue']:,}</b></td></tr></tfoot>
+</table>
+<p style='font-family:Georgia,serif;font-size:12px;color:#59615D;line-height:1.6'>Please log in to your Celesta Glow dashboard to view detailed call notes and home-visit logs. Reach out to under-performing members and share best practices.</p>
+""" + _letterhead_footer(signatory=current_user.get('name','Manager'))
+    success, err = await send_email_async(head['email'], f"Daily Performance Report — {grp['name']}", body)
+    if not success:
+        raise HTTPException(status_code=502, detail=f"Email failed: {err}")
+    return {"message": f"Performance report sent to {head['name']} ({head['email']})", "totals": totals}
 
 @api_router.post("/hr-team")
 async def create_hr_member(data: dict, current_user: dict = Depends(get_current_user)):
@@ -4069,9 +4323,17 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
     if role not in ['inhouse_telecaller', 'admin', 'hr_manager', 'sales_manager', 'district_manager', 'social_media_manager']:
         raise HTTPException(status_code=403)
     include_hired = request.query_params.get('include_hired', 'false').lower() == 'true'
+    show_all = request.query_params.get('show_all', 'false').lower() == 'true'
     query = {}
     if role == 'inhouse_telecaller':
         query["created_by"] = current_user['id']
+    elif role == 'hr_manager':
+        # HR sees only candidates THEY added unless show_all=true
+        if not show_all:
+            query["created_by"] = current_user['id']
+    elif role == 'social_media_manager':
+        if not show_all:
+            query["created_by"] = current_user['id']
     elif role == 'sales_manager':
         # SM sees telecaller/telesales candidates either forwarded to them or selected/interviewed status
         query = {"$and": [{"position": {"$in": ["telecaller", "telesales"]}},

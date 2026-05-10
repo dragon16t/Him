@@ -17,6 +17,7 @@ import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
+import DocumentTemplatesEditor from "../components/DocumentTemplatesEditor";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
@@ -77,6 +78,7 @@ export default function HRManagerDashboard() {
   // Employee Library (Add/Edit/Delete)
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [showEditEmp, setShowEditEmp] = useState(false);
+  const [showDocTemplates, setShowDocTemplates] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
   const [empSearch, setEmpSearch] = useState("");
@@ -392,6 +394,7 @@ export default function HRManagerDashboard() {
               <div className="flex gap-2 items-center flex-wrap">
                 <Input placeholder="Search name/email" value={empSearch} onChange={e=>setEmpSearch(e.target.value)} className="rounded-full h-8 text-xs w-44" data-testid="emp-search-input"/>
                 <Select value={empRoleFilter} onValueChange={setEmpRoleFilter}><SelectTrigger className="rounded-full h-8 text-xs w-36"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">All Roles</SelectItem>{Object.keys({telecaller:1,agent:1,district_manager:1,sales_manager:1,finance_manager:1,hr_manager:1,social_media_manager:1,inhouse_telecaller:1,content_strategist:1,content_developer:1,assistant_sales_manager:1,assistant_district_manager:1,inventory_manager:1,digital_marketing_manager:1}).map(r=><SelectItem key={r} value={r} className="capitalize text-xs">{r.replace(/_/g," ")}</SelectItem>)}</SelectContent></Select>
+                <Button size="sm" variant="outline" className="rounded-full text-xs border-[#3B5249] text-[#3B5249]" onClick={()=>setShowDocTemplates(true)} data-testid="hr-edit-templates-btn"><Plus className="w-3 h-3 mr-1"/>Edit Document Templates</Button>
                 <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEmpForm({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""}); setShowAddEmp(true);}} data-testid="hr-add-emp-btn"><Plus className="w-3 h-3 mr-1"/>Add Employee</Button>
               </div>
             </div>
@@ -1194,6 +1197,8 @@ export default function HRManagerDashboard() {
           <Button onClick={handleEditEmp} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="emp-update-btn">Update Employee</Button>
         </div>
       </DialogContent></Dialog>
+
+      <DocumentTemplatesEditor open={showDocTemplates} onOpenChange={setShowDocTemplates} />
     </div>
   );
 }

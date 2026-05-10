@@ -17,6 +17,8 @@ import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
+import TeamActivityPanel from "../components/TeamActivityPanel";
+import TeamGroupsPanel from "../components/TeamGroupsPanel";
 
 const API = "/api";
 
@@ -213,10 +215,12 @@ export default function ManagerDashboard() {
         </div>
         <Tabs defaultValue="orders" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"orders",l:"Orders"},{v:"agents",l:"Agents"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${agentCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"regions",l:"Regions"},{v:"products",l:"Products"},{v:"tasks",l:"Tasks"},{v:"funds",l:"Fund Req"},{v:"commissions",l:"Commissions"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"orders",l:"Orders"},{v:"agents",l:"Agents"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${agentCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"regions",l:"Regions"},{v:"products",l:"Products"},{v:"tasks",l:"Tasks"},{v:"funds",l:"Fund Req"},{v:"commissions",l:"Commissions"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
+          <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
+          <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={agents} candidateLabel="Agents" /></TabsContent>
           <TabsContent value="orders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Orders ({pendingOrders.length} pending, {confirmedOrders.length} to ship)</h3>
             {filteredOrders.length===0?<div className="p-10 text-center text-[#59615D]">No orders</div>:
