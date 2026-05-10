@@ -95,8 +95,7 @@ const ROLE_GUIDES = {
       "Process payroll after HR submits records",
       "Record external revenue entries (Amazon, Flipkart, Website, Offline)",
       "Monitor P&L statement monthly — flag unusual expenses",
-      "Track cash held by employees and manage returns",
-      "Maintain investment records with partner breakdowns"
+      "Track cash held by employees and manage returns"
     ],
     tips: [
       "Check the P&L tab weekly for financial health",

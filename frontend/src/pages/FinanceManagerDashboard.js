@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DailyTaskSheet from "@/components/DailyTaskSheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, IndianRupee, ClipboardList, Check, X, Loader2, Wallet, TrendingUp, CreditCard, BarChart3, Image, ExternalLink, Plus } from "lucide-react";
+import { LogOut, IndianRupee, ClipboardList, Check, X, Loader2, CreditCard, BarChart3, Image, ExternalLink, Plus } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
@@ -27,7 +27,6 @@ export default function FinanceManagerDashboard() {
   const [stats, setStats] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [payroll, setPayroll] = useState([]);
-  const [investments, setInvestments] = useState([]);
   const [finBalance, setFinBalance] = useState({cash:0,bank:0,total:0});
   const [finLedger, setFinLedger] = useState([]);
   const [fundRequests, setFundRequests] = useState([]);
@@ -35,10 +34,8 @@ export default function FinanceManagerDashboard() {
   const [commSummary, setCommSummary] = useState({agents:[],total_weekly:0,total_monthly:0,total_today:0});
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showAddInvestment, setShowAddInvestment] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showFinTxn, setShowFinTxn] = useState(false);
-  const [investForm, setInvestForm] = useState({ title: "", amount: 0, source: "", date: "", notes: "", partner_type: "main" });
   const [expForm, setExpForm] = useState({ title: "", amount: 0, category: "general", description: "" });
   const [finTxnForm, setFinTxnForm] = useState({ type: "credit", amount: 0, category: "manual", description: "", method: "bank" });
 
@@ -65,11 +62,11 @@ export default function FinanceManagerDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [s, e, p, i] = await Promise.all([
+      const [s, e, p] = await Promise.all([
         axios.get(`${API}/dashboard/stats`), axios.get(`${API}/expenses`),
-        axios.get(`${API}/payroll`), axios.get(`${API}/investments`)
+        axios.get(`${API}/payroll`)
       ]);
-      setStats(s.data.stats); setExpenses(e.data.expenses); setPayroll(p.data.payroll); setInvestments(i.data.investments);
+      setStats(s.data.stats); setExpenses(e.data.expenses); setPayroll(p.data.payroll);
       try { const [fb, fl] = await Promise.all([axios.get(`${API}/finance/balance`), axios.get(`${API}/finance/ledger`)]);
         setFinBalance(fb.data.balance); setFinLedger(fl.data.transactions);
         try { const [fr, ch, cs, au, ms] = await Promise.all([axios.get(`${API}/fund-requests`), axios.get(`${API}/finance/cash-holders`), axios.get(`${API}/commissions/summary`).catch(()=>({data:{agents:[],total_weekly:0,total_monthly:0,total_today:0}})), axios.get(`${API}/all-users`).catch(()=>({data:{users:[]}})), axios.get(`${API}/finance/monthly-stats`).catch(()=>({data:{monthly_stats:[]}}))]);
@@ -101,7 +98,6 @@ export default function FinanceManagerDashboard() {
 
   const approveExpense = async (id, status, debitFrom) => { try { await axios.put(`${API}/expenses/${id}/approve`, {status, debit_from: debitFrom}); toast.success(`Updated (${debitFrom})`); fetchData(); } catch { toast.error("Failed"); } };
   const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddInvestment = async () => { if (!investForm.title||!investForm.amount) return toast.error("Fill fields"); try { await axios.post(`${API}/investments`, {...investForm,amount:Number(investForm.amount)}); toast.success("Added"); setShowAddInvestment(false); setInvestForm({title:"",amount:0,source:"",date:"",notes:"",partner_type:"main"}); fetchData(); } catch { toast.error("Failed"); } };
   const handleAddExpense = async () => { if (!expForm.title) return toast.error("Title required"); try { await axios.post(`${API}/expenses`, {...expForm,amount:Number(expForm.amount)}); toast.success("Expense added"); setShowAddExpense(false); setExpForm({title:"",amount:0,category:"general",description:""}); fetchData(); } catch { toast.error("Failed"); } };
   const handleFinTxn = async () => { if (!finTxnForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/transaction`, finTxnForm); toast.success("Recorded"); setShowFinTxn(false); setFinTxnForm({type:"credit",amount:0,category:"manual",description:"",method:"bank"}); fetchData(); } catch { toast.error("Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -125,7 +121,7 @@ export default function FinanceManagerDashboard() {
           <div className="bg-[#3B5249] rounded-xl p-4 text-center"><p className="text-xs text-white/70 uppercase">Working Capital</p><p className="font-heading text-2xl font-bold text-white" data-testid="fin-total">Rs.{finBalance.total}</p></div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          {[{l:"Total Expenses",v:`Rs.${stats.total_expenses||0}`,i:IndianRupee,c:"#B75D69"},{l:"Pending",v:stats.pending_expenses||0,i:ClipboardList,c:"#D4A373"},{l:"Approved",v:`Rs.${stats.approved_expenses||0}`,i:Check,c:"#6B8E6B"},{l:"Investments",v:`Rs.${stats.total_investment||0}`,i:TrendingUp,c:"#3B5249"},{l:"Payroll Pending",v:stats.pending_payroll||0,i:CreditCard,c:"#A66E4E"}].map((s,i)=>(
+          {[{l:"Total Expenses",v:`Rs.${stats.total_expenses||0}`,i:IndianRupee,c:"#B75D69"},{l:"Pending",v:stats.pending_expenses||0,i:ClipboardList,c:"#D4A373"},{l:"Approved",v:`Rs.${stats.approved_expenses||0}`,i:Check,c:"#6B8E6B"},{l:"Payroll Pending",v:stats.pending_payroll||0,i:CreditCard,c:"#A66E4E"}].map((s,i)=>(
             <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase mt-1">{s.l}</p></div>
           ))}
         </div>
@@ -149,7 +145,7 @@ export default function FinanceManagerDashboard() {
         )}
         <Tabs defaultValue="expenses" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"expenses",l:"Expenses"},{v:"pnl",l:"P&L"},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"investments",l:"Investments"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"expenses",l:"Expenses"},{v:"pnl",l:"P&L"},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-4" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -233,10 +229,6 @@ export default function FinanceManagerDashboard() {
               </div>
             ))}</div>}
           </div></TabsContent>
-          <TabsContent value="investments" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Investments</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddInvestment(true)} data-testid="add-investment-btn"><Wallet className="w-4 h-4 mr-1"/>Add</Button></div>
-            <div className="mb-4 bg-[#F9F8F6] rounded-xl p-4 text-center"><p className="text-xs text-[#59615D] uppercase">Total Investment Received</p><p className="font-heading text-3xl font-bold text-[#3B5249]">Rs.{investments.reduce((s,i)=>s+i.amount,0)}</p></div>
-            <div className="space-y-3">{investments.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-4 flex justify-between"><div><p className="font-medium">{i.title}</p><p className="text-xs text-[#59615D]">{i.source} | {i.date}</p>{i.notes&&<p className="text-xs text-[#59615D] mt-1">{i.notes}</p>}</div><p className="font-heading text-lg font-semibold text-[#3B5249]">Rs.{i.amount}</p></div>))}</div>
-          </div></TabsContent>
 
           {/* GST */}
           <TabsContent value="gst" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
@@ -289,7 +281,6 @@ export default function FinanceManagerDashboard() {
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Finance Manager" /></TabsContent>
         </Tabs>
       </div>
-      <Dialog open={showAddInvestment} onOpenChange={setShowAddInvestment}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Investment</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Title" value={investForm.title} onChange={e=>setInvestForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="invest-title-input"/><Input type="number" placeholder="Amount" value={investForm.amount} onChange={e=>setInvestForm(f=>({...f,amount:e.target.value}))} className="rounded-xl" data-testid="invest-amount-input"/><Input placeholder="Source" value={investForm.source} onChange={e=>setInvestForm(f=>({...f,source:e.target.value}))} className="rounded-xl"/><Input type="date" value={investForm.date} onChange={e=>setInvestForm(f=>({...f,date:e.target.value}))} className="rounded-xl"/><Textarea placeholder="Notes" value={investForm.notes} onChange={e=>setInvestForm(f=>({...f,notes:e.target.value}))} className="rounded-xl"/><Button onClick={handleAddInvestment} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-invest-btn">Add</Button></div></DialogContent></Dialog>
 
       {/* GST Dialog */}
       <Dialog open={showGST} onOpenChange={setShowGST}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add GST Entry</DialogTitle></DialogHeader><div className="space-y-3">

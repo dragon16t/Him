@@ -2135,7 +2135,7 @@ async def update_contact(cid: str, data: dict, current_user: dict = Depends(get_
 
 @api_router.post("/investments")
 async def create_investment(data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
+    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
     i = {"id": f"inv-{uuid.uuid4().hex[:8]}", "title": data.get("title",""), "amount": data.get("amount",0),
          "source": data.get("source",""), "partner_type": data.get("partner_type","main"),
          "date": data.get("date",""), "notes": data.get("notes",""),
@@ -2146,7 +2146,7 @@ async def create_investment(data: dict, current_user: dict = Depends(get_current
 
 @api_router.get("/investments")
 async def get_investments(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
+    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
     return {"investments": await db.investments.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
 
 @api_router.delete("/investments/{iid}")
@@ -2243,12 +2243,10 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         }
     elif role == 'finance_manager':
         total_expenses = await db.expenses.find({},{"_id":0,"amount":1,"status":1}).to_list(1000)
-        total_investments = await db.investments.find({},{"_id":0,"amount":1}).to_list(500)
         stats = {
             "total_expenses": round(sum(e.get("amount",0) for e in total_expenses),2),
             "pending_expenses": len([e for e in total_expenses if e.get("status")=="pending"]),
             "approved_expenses": round(sum(e['amount'] for e in total_expenses if e.get("status")=="approved"),2),
-            "total_investment": round(sum(i.get("amount",0) for i in total_investments),2),
             "pending_payroll": await db.payroll.count_documents({"status":"pending"})
         }
     return {"stats": stats}
