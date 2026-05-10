@@ -3583,6 +3583,114 @@ async def delete_advance(aid: str, current_user: dict = Depends(get_current_user
     return {"message": "Advance removed and balance restored"}
 
 # ==================== DOCUMENT TEMPLATES (CUSTOM OVERRIDES) ====================
+
+# Editable starter HTML for each letter — uses placeholders that get auto-filled when sent.
+# When HR clicks Edit, this is what they see (so they can modify times, content, notes etc.)
+DEFAULT_TEMPLATE_BODIES = {
+    "welcome": {
+        "subject": "Welcome to {company_name} – Appointment & Joining Confirmation",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>We are delighted to welcome you to <b>{company_name}</b>. Your appointment as <b>{position}</b> in the <b>{department}</b> department is hereby confirmed.</p>
+<p style='font-family:Georgia,serif;font-size:13px'>Below are your appointment details:</p>
+<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;margin:14px 0'>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6;width:40%'><b>Employee Name</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{emp_name}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Designation</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{position}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Department</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{department}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Reporting To</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{reporting_to}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Date of Joining</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{joining_date}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Monthly Gross Salary</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {salary} per month</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Performance Incentive</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {incentive} per month (target-based)</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Work Schedule</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{work_hours}</td></tr>
+</table>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Please report at the office on <b>{joining_date}</b> at 9:30 AM for orientation. Carry the originals + photocopies of: Aadhaar, PAN, last salary slip, educational certificates, and 2 passport-size photos.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>We look forward to a long and productive association with you. Welcome aboard!</p>"""
+    },
+    "offer": {
+        "subject": "Offer of Employment – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Pursuant to your discussions with our Hiring Team, we are pleased to offer you the position of <b>{position}</b> at <b>{company_name}</b>.</p>
+<p style='font-family:Georgia,serif;font-size:13px'>The principal terms of this offer are as follows:</p>
+<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;margin:14px 0'>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6;width:40%'><b>Position</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{position}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Department</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{department}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Date of Joining</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{joining_date}</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Gross Salary</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {salary} per month</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Performance Incentive</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {incentive} per month (target-based)</td></tr>
+</table>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This offer is conditional upon (a) verification of your documents, (b) satisfactory background check, and (c) your acceptance within 7 days of receipt of this letter.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>If the above terms are acceptable, please sign and return a copy of this letter. We look forward to welcoming you to the team.</p>"""
+    },
+    "employment": {
+        "subject": "Confirmation of Employment – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This is to formally confirm your employment with <b>{company_name}</b> as <b>{position}</b> in the <b>{department}</b> department, effective <b>{effective_date}</b>, post successful completion of your probation period.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Your performance during the probation has been satisfactory and we are pleased to confirm you in regular employment with all benefits, leave entitlements, and statutory protections as per company policy.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>We thank you for your contributions so far and look forward to your continued growth with us.</p>"""
+    },
+    "agreement": {
+        "subject": "Employment Agreement – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This Employment Agreement is entered into between <b>{company_name}</b> ("Employer") and <b>{emp_name}</b> ("Employee") with effect from <b>{joining_date}</b>.</p>
+<h4 style='font-family:Georgia,serif;color:#3B5249'>1. Position & Duties</h4>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Employee will serve as <b>{position}</b> in the <b>{department}</b> department, reporting to <b>{reporting_to}</b>, and will perform all duties reasonably assigned.</p>
+<h4 style='font-family:Georgia,serif;color:#3B5249'>2. Compensation</h4>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Gross monthly salary: Rs. {salary}. Performance-based incentive: Rs. {incentive}. Salary is paid by the 7th of every month.</p>
+<h4 style='font-family:Georgia,serif;color:#3B5249'>3. Confidentiality</h4>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Employee shall maintain strict confidentiality of all proprietary information, customer data, and trade secrets, both during and after employment.</p>
+<h4 style='font-family:Georgia,serif;color:#3B5249'>4. Non-Compete</h4>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Employee shall not, directly or indirectly, engage in any competing business for a period of 6 months after termination of employment.</p>
+<h4 style='font-family:Georgia,serif;color:#3B5249'>5. Termination</h4>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Either party may terminate this agreement with 30 days written notice. Company reserves the right to terminate without notice for misconduct, fraud, or breach of agreement.</p>"""
+    },
+    "increment": {
+        "subject": "Salary Revision – Effective {effective_date}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>In recognition of your dedication, performance, and contribution to <b>{company_name}</b>, the management is pleased to announce a revision in your compensation, effective <b>{effective_date}</b>.</p>
+<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;margin:14px 0'>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6;width:40%'><b>Previous Gross Salary</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {old_salary} per month</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Revised Gross Salary</b></td><td style='padding:8px;border:1px solid #E5E3DB'>Rs. {new_salary} per month</td></tr>
+  <tr><td style='padding:8px;border:1px solid #E5E3DB;background:#F9F8F6'><b>Effective Date</b></td><td style='padding:8px;border:1px solid #E5E3DB'>{effective_date}</td></tr>
+</table>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>All other terms and conditions of your employment remain unchanged. We thank you for your contributions and wish you continued success.</p>"""
+    },
+    "warning": {
+        "subject": "Warning Letter – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This is a formal written warning regarding the following matter:</p>
+<div style='background:#FEF3F2;border-left:3px solid #B75D69;padding:12px 16px;margin:14px 0;font-family:Arial,sans-serif;font-size:12.5px;line-height:1.7'>
+  <p style='margin:0'><b>Issue / Incident:</b> {reason}</p>
+  <p style='margin:6px 0 0'><b>Details:</b> {details}</p>
+</div>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This conduct/performance is contrary to the standards expected of all employees of <b>{company_name}</b>. We expect immediate and sustained improvement.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Please treat this as a final warning. Any repetition or further violation may result in disciplinary action, up to and including termination of employment, without further notice.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Kindly acknowledge receipt of this letter by signing below.</p>"""
+    },
+    "termination": {
+        "subject": "Notice of Termination – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>Dear <b>{emp_name}</b>,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This letter is to formally notify you of the termination of your employment with <b>{company_name}</b>, effective <b>{effective_date}</b>.</p>
+<div style='background:#F9F8F6;border-left:3px solid #B75D69;padding:12px 16px;margin:14px 0;font-family:Arial,sans-serif;font-size:12.5px;line-height:1.7'>
+  <p style='margin:0'><b>Reason for Termination:</b> {reason}</p>
+</div>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>Please return all company property (ID card, devices, documents) on or before your last working day. Your full and final settlement, including any pending dues, will be processed within 30 days of clearance.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>We thank you for your services and wish you the best in your future endeavours.</p>"""
+    },
+    "relieving": {
+        "subject": "Relieving Letter – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>To Whomsoever It May Concern,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This is to certify that <b>{emp_name}</b> was employed with <b>{company_name}</b> as <b>{position}</b> from <b>{joining_date}</b> to <b>{effective_date}</b>.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>{emp_name} has been relieved from all duties and responsibilities effective <b>{effective_date}</b>, the last working day. All dues and final settlement have been completed.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>During the tenure with us, the conduct was found to be satisfactory. We wish {emp_name} all the very best for future endeavours.</p>"""
+    },
+    "experience": {
+        "subject": "Experience Certificate – {company_name}",
+        "body_html": """<p style='font-family:Georgia,serif;font-size:13px'>To Whomsoever It May Concern,</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>This is to certify that <b>{emp_name}</b> was employed with <b>{company_name}</b> as <b>{position}</b> in the <b>{department}</b> department from <b>{joining_date}</b> to <b>{effective_date}</b>.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>During the tenure with us, {emp_name} demonstrated dedication, professionalism, and a strong commitment to assigned responsibilities. The conduct was found to be exemplary.</p>
+<p style='font-family:Georgia,serif;font-size:13px;line-height:1.7'>We wish {emp_name} continued success and growth in all future endeavours.</p>"""
+    },
+}
+
 @api_router.get("/hr/document-templates")
 async def list_document_templates(current_user: dict = Depends(get_current_user)):
     """List all customised document templates (overrides). Defaults are built-in."""
