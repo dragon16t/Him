@@ -55,6 +55,14 @@ COMPANY = {
     "danger_color": "#B75D69",
 }
 
+# Editable employment-terms keys (the 9 fields shown in every letter footer).
+# These can be overridden by HR/Admin via /api/hr/employment-terms — the override is
+# stored in db.company_settings and merged into COMPANY at startup + on every save.
+EMPLOYMENT_TERM_KEYS = [
+    "work_hours", "total_break", "lunch_break", "tea_breaks", "friday_extra",
+    "weekly_off", "probation", "notice_period", "leave_policy",
+]
+
 def _letterhead(title: str, accent: str = None) -> str:
     """Standard letterhead header with logo block, company details, and section title."""
     accent = accent or COMPANY["primary_color"]
@@ -3740,6 +3748,59 @@ async def delete_document_template(key: str, current_user: dict = Depends(get_cu
     r = await db.document_templates.delete_one({"key": key})
     return {"message": "Reverted to built-in default" if r.deleted_count else "No override existed"}
 
+# ==================== STANDARD EMPLOYMENT TERMS (editable footer block) ====================
+# Built-in defaults — used when no DB override exists. Kept in sync with COMPANY at module load.
+DEFAULT_EMPLOYMENT_TERMS = {k: COMPANY[k] for k in EMPLOYMENT_TERM_KEYS}
+
+async def _refresh_employment_terms_cache():
+    """Reload override from DB and merge into COMPANY so every letter footer picks it up."""
+    try:
+        doc = await db.company_settings.find_one({"key": "employment_terms"}, {"_id": 0})
+        for k in EMPLOYMENT_TERM_KEYS:
+            COMPANY[k] = (doc or {}).get(k) or DEFAULT_EMPLOYMENT_TERMS[k]
+    except Exception as e:
+        logger.error(f"Failed to load employment terms override: {e}")
+
+@api_router.get("/hr/employment-terms")
+async def get_employment_terms(current_user: dict = Depends(get_current_user)):
+    """Return current effective terms (override if any, else built-in) + the built-in defaults."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    doc = await db.company_settings.find_one({"key": "employment_terms"}, {"_id": 0})
+    effective = {k: (doc or {}).get(k) or DEFAULT_EMPLOYMENT_TERMS[k] for k in EMPLOYMENT_TERM_KEYS}
+    return {
+        "terms": effective,
+        "defaults": DEFAULT_EMPLOYMENT_TERMS,
+        "is_default": doc is None,
+        "updated_by_name": (doc or {}).get("updated_by_name", ""),
+        "updated_at": (doc or {}).get("updated_at", ""),
+    }
+
+@api_router.put("/hr/employment-terms")
+async def update_employment_terms(data: dict, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    update = {"key": "employment_terms",
+              "updated_by": current_user['id'],
+              "updated_by_name": current_user.get('name', ''),
+              "updated_at": datetime.now(timezone.utc).isoformat()}
+    for k in EMPLOYMENT_TERM_KEYS:
+        v = (data.get(k) or "").strip()
+        if not v:
+            raise HTTPException(status_code=400, detail=f"Field '{k}' cannot be empty")
+        update[k] = v
+    await db.company_settings.update_one({"key": "employment_terms"}, {"$set": update}, upsert=True)
+    await _refresh_employment_terms_cache()
+    return {"message": "Standard employment terms updated", "terms": {k: COMPANY[k] for k in EMPLOYMENT_TERM_KEYS}}
+
+@api_router.delete("/hr/employment-terms")
+async def reset_employment_terms(current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    r = await db.company_settings.delete_one({"key": "employment_terms"})
+    await _refresh_employment_terms_cache()
+    return {"message": "Reverted to built-in defaults" if r.deleted_count else "No override existed"}
+
 def _render_custom_template(body_html: str, ctx: dict) -> str:
     """Replace {placeholder} tokens with values from ctx, leaving unknown tokens unchanged."""
     out = body_html
@@ -6299,6 +6360,7 @@ async def startup():
     await seed_database()
     await write_test_credentials()
     init_storage()
+    await _refresh_employment_terms_cache()
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")
