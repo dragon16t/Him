@@ -561,6 +561,16 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
                    current_user: dict = Depends(get_current_user)):
     query = {}
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
+    elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
+    elif current_user['role'] == 'sales_manager':
+        # SM sees only leads assigned to their telecallers
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+        ids = [t['id'] for t in tcs] + [current_user['id']]
+        query['assigned_to'] = {"$in": ids}
+    elif current_user['role'] == 'district_manager':
+        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+        ids = [a['id'] for a in ags] + [current_user['id']]
+        query['assigned_to'] = {"$in": ids}
     elif assigned_to: query['assigned_to'] = assigned_to
     if status: query['status'] = status
     if year and month and day and month != "all":
@@ -742,17 +752,26 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
     query = {}
     if current_user['role'] in ['telecaller', 'agent']: query['created_by'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
-        # SM sees only telecaller-created orders (their team)
-        tcs = await db.telecallers.find({}, {"_id": 0, "id": 1}).to_list(500)
+        # SM sees only telecaller-created orders FROM THEIR TEAM (managed_by = self)
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
         asms = await db.assistant_sales_managers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(50)
         ids = [t['id'] for t in tcs] + [current_user['id']] + [a['id'] for a in asms]
-        query['$or'] = [{'created_by': {'$in': ids}}, {'created_by_role': {'$in': ['telecaller','sales_manager','assistant_sales_manager']}}]
+        query['created_by'] = {'$in': ids}
     elif current_user['role'] == 'district_manager':
-        # DM sees only agent-created orders
-        ags = await db.agents.find({}, {"_id": 0, "id": 1}).to_list(500)
+        # DM sees only agent-created orders FROM THEIR TEAM (managed_by = self)
+        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
         adms = await db.assistant_district_managers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(50)
         ids = [a['id'] for a in ags] + [current_user['id']] + [a['id'] for a in adms]
-        query['$or'] = [{'created_by': {'$in': ids}}, {'created_by_role': {'$in': ['agent','district_manager','assistant_district_manager']}}]
+        query['created_by'] = {'$in': ids}
+    elif current_user['role'] == 'assistant_sales_manager':
+        # ASM sees same scope as their parent SM
+        tcs = await db.telecallers.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(500)
+        ids = [t['id'] for t in tcs] + [current_user['id'], current_user.get('managed_by','')]
+        query['created_by'] = {'$in': ids}
+    elif current_user['role'] == 'assistant_district_manager':
+        ags = await db.agents.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(500)
+        ids = [a['id'] for a in ags] + [current_user['id'], current_user.get('managed_by','')]
+        query['created_by'] = {'$in': ids}
     if status: query['status'] = status
     if date_filter:  # YYYY-MM-DD
         query['created_at'] = {"$regex": f"^{date_filter}"}
@@ -1084,23 +1103,33 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
 # ==================== USER MANAGEMENT ====================
 @api_router.get("/telecallers")
 async def get_telecallers(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['district_manager','admin','sales_manager']: raise HTTPException(status_code=403)
-    return {"telecallers": await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager']: raise HTTPException(status_code=403)
+    q = {}
+    if current_user['role'] == 'sales_manager':
+        q['managed_by'] = current_user['id']
+    elif current_user['role'] == 'assistant_sales_manager':
+        q['managed_by'] = current_user.get('managed_by','')
+    return {"telecallers": await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)}
 
 @api_router.get("/managers")
 async def get_managers(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    return {"managers": await db.managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    if current_user['role'] not in ('admin','hr_manager'): raise HTTPException(status_code=403)
+    return {"managers": await db.managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
 
 @api_router.get("/sales-managers")
 async def get_sales_managers(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    if current_user['role'] not in ('admin','hr_manager'): raise HTTPException(status_code=403)
+    return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
 
 @api_router.get("/agents")
 async def get_agents(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['district_manager','admin','sales_manager']: raise HTTPException(status_code=403)
-    agents = await db.agents.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_district_manager']: raise HTTPException(status_code=403)
+    q = {}
+    if current_user['role'] == 'district_manager':
+        q['managed_by'] = current_user['id']
+    elif current_user['role'] == 'assistant_district_manager':
+        q['managed_by'] = current_user.get('managed_by','')
+    agents = await db.agents.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     today = date.today().isoformat()
     week_ago = (date.today() - timedelta(days=7)).isoformat()
     for a in agents:
@@ -1454,13 +1483,15 @@ async def get_team_activity(
     # Build user-id allowlist for current manager
     allowed_ids: list = []
     if role in ('sales_manager','assistant_sales_manager'):
-        async for tc in db.telecallers.find({}, {"_id":0,"id":1}): allowed_ids.append(tc['id'])
-        async for asm in db.assistant_sales_managers.find({}, {"_id":0,"id":1}): allowed_ids.append(asm['id'])
-        # In-house telecallers also fall under SM scope
-        async for ih in db.inhouse_telecallers.find({}, {"_id":0,"id":1}): allowed_ids.append(ih['id'])
+        sm_id = current_user['id'] if role == 'sales_manager' else current_user.get('managed_by','')
+        async for tc in db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}): allowed_ids.append(tc['id'])
+        async for asm in db.assistant_sales_managers.find({"managed_by": sm_id}, {"_id":0,"id":1}): allowed_ids.append(asm['id'])
+        # In-house telecallers also fall under SM scope (if managed_by set)
+        async for ih in db.inhouse_telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}): allowed_ids.append(ih['id'])
     elif role in ('district_manager','assistant_district_manager'):
-        async for ag in db.agents.find({}, {"_id":0,"id":1}): allowed_ids.append(ag['id'])
-        async for adm in db.assistant_district_managers.find({}, {"_id":0,"id":1}): allowed_ids.append(adm['id'])
+        dm_id = current_user['id'] if role == 'district_manager' else current_user.get('managed_by','')
+        async for ag in db.agents.find({"managed_by": dm_id}, {"_id":0,"id":1}): allowed_ids.append(ag['id'])
+        async for adm in db.assistant_district_managers.find({"managed_by": dm_id}, {"_id":0,"id":1}): allowed_ids.append(adm['id'])
     elif role == 'admin':
         allowed_ids = None  # all
     if user_id:
@@ -4994,6 +5025,23 @@ async def approve_hire(cid: str, data: dict, current_user: dict = Depends(get_cu
                     "incentive": data.get('incentive', 0) or 0,
                     "commission_earned": 0, "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat()}
+        # MANAGER ASSIGNMENT — link telecaller→SM, agent→DM
+        managed_by = data.get('managed_by', '') or candidate.get('manager_selected_by', '')
+        managed_by_name = data.get('managed_by_name', '') or candidate.get('manager_selected_by_name', '')
+        managed_by_role = data.get('managed_by_role', '') or candidate.get('manager_selected_by_role', '')
+        if managed_by:
+            # Verify the manager exists and matches the candidate's position
+            valid_mgr = False
+            if position in ('telecaller', 'telesales'):
+                if await db.sales_managers.find_one({"id": managed_by}): valid_mgr = True
+            elif position == 'agent':
+                if await db.managers.find_one({"id": managed_by}): valid_mgr = True
+            elif position == 'inhouse_telecaller':
+                if await db.sales_managers.find_one({"id": managed_by}): valid_mgr = True
+            if valid_mgr:
+                new_user['managed_by'] = managed_by
+                new_user['managed_by_name'] = managed_by_name
+                new_user['managed_by_role'] = managed_by_role
         if coll == "agents": new_user.update({"district": candidate.get('location',''), "area": "", "region_id": "", "inventory": {}, "total_sales": 0})
         if coll == "telecallers": new_user.update({"total_calls": 0, "conversions": 0, "language": ""})
         await db[coll].insert_one(new_user)

@@ -80,8 +80,14 @@ export default function HRManagerDashboard() {
   const [showEditEmp, setShowEditEmp] = useState(false);
   const [showDocTemplates, setShowDocTemplates] = useState(false);
   const [hiringFilter, setHiringFilter] = useState("all");
+  // Final Hire flow — pick manager
+  const [showFinalHire, setShowFinalHire] = useState(false);
+  const [hireCandidate, setHireCandidate] = useState(null);
+  const [hireMgrId, setHireMgrId] = useState("");
+  const [salesManagers, setSalesManagers] = useState([]);
+  const [districtManagers, setDistrictManagers] = useState([]);
   const [editingEmp, setEditingEmp] = useState(null);
-  const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
+  const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:"",managed_by:"",managed_by_name:"",managed_by_role:""});
   const [empSearch, setEmpSearch] = useState("");
   const [empRoleFilter, setEmpRoleFilter] = useState("all");
 
@@ -95,7 +101,7 @@ export default function HRManagerDashboard() {
       setEmployees(emp.data.employees); setPayroll(pr.data.payroll);
       setLeaves(lv.data.leaves); setComplaints(cp.data.complaints);
       setCallLogs(cl.data.call_logs); setDailyGoals(dg.data.goals);
-      try { const [cs, au, adv, cm, att, hire, et, allcl] = await Promise.all([
+      try { const [cs, au, adv, cm, att, hire, et, allcl, sms, dms] = await Promise.all([
         axios.get(`${API}/commissions/summary`).catch(()=>({data:{agents:[]}})),
         axios.get(`${API}/all-users`).catch(()=>({data:{users:[]}})),
         axios.get(`${API}/advances`).catch(()=>({data:{advances:[]}})),
@@ -103,13 +109,17 @@ export default function HRManagerDashboard() {
         axios.get(`${API}/attendance`).catch(()=>({data:{records:[]}})),
         axios.get(`${API}/hiring/candidates`).catch(()=>({data:{entries:[]}})),
         axios.get(`${API}/employee-tasks`).catch(()=>({data:{tasks:[]}})),
-        axios.get(`${API}/call-logs/all`).catch(()=>({data:{call_logs:[]}}))
+        axios.get(`${API}/call-logs/all`).catch(()=>({data:{call_logs:[]}})),
+        axios.get(`${API}/sales-managers`).catch(()=>({data:{sales_managers:[]}})),
+        axios.get(`${API}/managers`).catch(()=>({data:{managers:[]}}))
       ]);
         setCommSummary(cs.data); setAllUsers(au.data.users||[]);
         setAdvances(adv.data.advances||[]); setCommunications(cm.data.communications||[]);
         setAttendance(att.data.records||[]); setHiringCandidates(hire.data.entries||[]);
         setEmployeeTasks(et.data.tasks||[]);
         if (allcl.data.call_logs?.length) setCallLogs(allcl.data.call_logs);
+        setSalesManagers(sms.data.sales_managers||[]);
+        setDistrictManagers(dms.data.managers||[]);
       } catch {}
       try {
         const [bd, rg] = await Promise.all([
@@ -244,6 +254,7 @@ export default function HRManagerDashboard() {
         pan_number: empForm.pan_number, aadhaar_number: empForm.aadhaar_number,
         address: empForm.address, emergency_contact: empForm.emergency_contact,
         dob: empForm.dob, joining_date: empForm.joining_date,
+        managed_by: empForm.managed_by, managed_by_name: empForm.managed_by_name, managed_by_role: empForm.managed_by_role,
       };
       if (empForm.password) payload.password = empForm.password;
       await axios.put(`${API}/users/${editingEmp.id}/update`, payload);
@@ -421,7 +432,7 @@ export default function HRManagerDashboard() {
                   {e.district && <p className="text-[10px] text-[#A66E4E] mt-1">{e.area ? `${e.area}, ` : ""}{e.district}</p>}
                   <div className="flex gap-1 mt-2 flex-wrap">
                     <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setSelectedEmp(e);setSalaryForm({salary:e.salary||0,incentive:e.incentive||0});setShowEditSalary(true);}} data-testid={`edit-salary-${e.id}`}><IndianRupee className="w-3 h-3 mr-0.5"/>Salary</Button>
-                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:e.email||"",password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
+                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:e.email||"",password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
                     <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>handleDeleteEmp(e)} data-testid={`delete-emp-${e.id}`}>Delete</Button>
                   </div>
                 </div>
@@ -666,7 +677,7 @@ export default function HRManagerDashboard() {
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setEditingCandidate(c);setCandidateForm({name:c.name,phone:c.phone,email:c.email||"",position:c.position,location:c.location||"",experience:c.experience||"",qualification:c.qualification||"",skills:c.skills||"",expected_salary:c.expected_salary||0,interview_date:c.interview_date||"",interview_notes:c.interview_notes||"",source:c.source||"direct",status:c.status,notes:c.notes||""});setShowAddCandidate(true);}} data-testid={`edit-${c.id}`}>Edit</Button>
                       <Button size="sm" className="rounded-full text-[9px] h-6 bg-pink-600 text-white" onClick={()=>{setForwardingCandidate(c);setForwardForm({target_user_id:"",target_role:c.position==='agent'?'district_manager':'sales_manager',status:c.status==='contacted'?'interviewed':c.status});setShowForward(true);}} data-testid={`forward-${c.id}`}>Forward</Button>
                     </div>
-                    {c.status==='selected' && <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm" onClick={async()=>{const ok=window.confirm(`Complete final hiring of ${c.name}?\n\nThis will create a user account and grant system access. Salary/incentive can be set after via Edit Salary.`);if(!ok)return;try{const r=await axios.post(`${API}/hiring/approve/${c.id}`,{action:"hire"});toast.success(r.data.message||"Hired & employee created");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`hire-${c.id}`}>✓ Final Hire</Button>}
+                    {c.status==='selected' && <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm" onClick={()=>{setHireCandidate(c); setHireMgrId(c.manager_selected_by||""); setShowFinalHire(true);}} data-testid={`hire-${c.id}`}>✓ Final Hire</Button>}
                     {c.status!=='selected' && c.status!=='hired' && c.status!=='rejected' && <p className="text-[9px] text-[#A66E4E] italic">Awaiting manager selection</p>}
                   </div>
                 </div>
@@ -1205,6 +1216,25 @@ export default function HRManagerDashboard() {
             <div><Label className="text-xs">Incentive (Rs.)</Label><Input type="number" value={empForm.incentive} onChange={e=>setEmpForm(f=>({...f,incentive:e.target.value}))} className="rounded-xl"/></div>
           </div>
           <Input placeholder="Phone * (required for calling)" value={empForm.phone} onChange={e=>setEmpForm(f=>({...f,phone:e.target.value}))} className="rounded-xl" required/>
+          {(editingEmp?.role === 'telecaller' || editingEmp?.role === 'agent') && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 space-y-2">
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-blue-700">Reports To — {editingEmp?.role === 'agent' ? 'District Manager' : 'Sales Manager'}</p>
+              <p className="text-[10px] text-[#59615D]">This {editingEmp?.role}&apos;s data will only be visible to the selected manager.</p>
+              <Select value={empForm.managed_by || "__none__"} onValueChange={v=>{
+                if (v === "__none__") { setEmpForm(f=>({...f, managed_by:"", managed_by_name:"", managed_by_role:""})); return; }
+                const list = editingEmp?.role === 'agent' ? districtManagers : salesManagers;
+                const m = list.find(x => x.id === v);
+                setEmpForm(f=>({...f, managed_by: v, managed_by_name: m?.name||"", managed_by_role: editingEmp?.role === 'agent' ? "district_manager" : "sales_manager"}));
+              }}>
+                <SelectTrigger className="rounded-xl text-xs" data-testid="edit-mgr-select"><SelectValue placeholder="Pick manager…"/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Unassigned —</SelectItem>
+                  {(editingEmp?.role === 'agent' ? districtManagers : salesManagers).map(m => <SelectItem key={m.id} value={m.id}>{m.name}{m.email?` • ${m.email}`:""}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {empForm.managed_by_name && <p className="text-[10px] text-blue-700">Currently reports to: <b>{empForm.managed_by_name}</b></p>}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Input placeholder="District" value={empForm.district} onChange={e=>setEmpForm(f=>({...f,district:e.target.value}))} className="rounded-xl"/>
             <Input placeholder="Area" value={empForm.area} onChange={e=>setEmpForm(f=>({...f,area:e.target.value}))} className="rounded-xl"/>
@@ -1236,6 +1266,67 @@ export default function HRManagerDashboard() {
       </DialogContent></Dialog>
 
       <DocumentTemplatesEditor open={showDocTemplates} onOpenChange={setShowDocTemplates} />
+
+      {/* FINAL HIRE DIALOG - assign manager */}
+      <Dialog open={showFinalHire} onOpenChange={(o)=>{setShowFinalHire(o); if(!o){setHireCandidate(null); setHireMgrId("");}}}>
+        <DialogContent className="rounded-2xl max-w-md" data-testid="final-hire-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Complete Final Hire — {hireCandidate?.name}</DialogTitle></DialogHeader>
+          {hireCandidate && (() => {
+            const isAgent = hireCandidate.position === 'agent';
+            const mgrList = isAgent ? districtManagers : salesManagers;
+            const mgrLabel = isAgent ? "District Manager" : "Sales Manager";
+            return (
+              <div className="space-y-3">
+                <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs">
+                  <p><b>Candidate:</b> {hireCandidate.name}</p>
+                  <p><b>Position:</b> <span className="capitalize">{hireCandidate.position}</span></p>
+                  <p><b>Phone:</b> {hireCandidate.phone}</p>
+                  {hireCandidate.expected_salary > 0 && <p><b>Expected Salary:</b> Rs.{hireCandidate.expected_salary}/mo</p>}
+                </div>
+                <div>
+                  <Label className="text-xs font-medium">Assign to {mgrLabel} *</Label>
+                  <p className="text-[10px] text-[#59615D] mb-1">{isAgent ? "Agents only see data of their own DM. Pick which DM this agent reports to." : "Telecallers only see data of their own SM. Pick which SM this telecaller reports to."}</p>
+                  <Select value={hireMgrId || "__none__"} onValueChange={v=>setHireMgrId(v==="__none__"?"":v)}>
+                    <SelectTrigger className="rounded-xl" data-testid="hire-mgr-select"><SelectValue placeholder={`Pick a ${mgrLabel}…`}/></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— No manager (admin only) —</SelectItem>
+                      {mgrList.map(m => <SelectItem key={m.id} value={m.id}>{m.name}{m.email?` • ${m.email}`:""}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {mgrList.length === 0 && <p className="text-[10px] text-[#A66E4E] mt-1">⚠ No {mgrLabel}s exist yet. You can hire without assignment and link later from Edit Employee.</p>}
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+                  <p className="font-medium mb-1">What happens next:</p>
+                  <ul className="space-y-0.5 text-[11px] list-disc list-inside">
+                    <li>A user account will be created with login credentials</li>
+                    <li>The {mgrLabel.toLowerCase()} will see this {hireCandidate.position}'s data only</li>
+                    <li>Welcome email with credentials will be sent</li>
+                    <li>Salary / incentive can be edited from Employees tab</li>
+                  </ul>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="rounded-full flex-1" onClick={()=>{setShowFinalHire(false); setHireCandidate(null); setHireMgrId("");}}>Cancel</Button>
+                  <Button className="rounded-full flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={async()=>{
+                    try {
+                      const mgr = mgrList.find(m => m.id === hireMgrId);
+                      const payload = { action: "hire" };
+                      if (hireMgrId && mgr) {
+                        payload.managed_by = hireMgrId;
+                        payload.managed_by_name = mgr.name;
+                        payload.managed_by_role = isAgent ? "district_manager" : "sales_manager";
+                      }
+                      const r = await axios.post(`${API}/hiring/approve/${hireCandidate.id}`, payload);
+                      toast.success(r.data.message || "Hired & employee created");
+                      setShowFinalHire(false); setHireCandidate(null); setHireMgrId("");
+                      fetchData();
+                    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+                  }} data-testid="confirm-final-hire">✓ Confirm Hire</Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
