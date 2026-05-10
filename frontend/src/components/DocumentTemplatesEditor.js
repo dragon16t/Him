@@ -25,25 +25,36 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
   const [overrides, setOverrides] = useState([]);
   const [activeKey, setActiveKey] = useState("offer");
   const [form, setForm] = useState({ subject: "", body_html: "" });
+  const [isDefault, setIsDefault] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  const loadTemplate = useCallback(async (k) => {
+    try {
+      const { data } = await axios.get(`${API}/hr/document-templates/${k}`);
+      setForm({
+        subject: data.template?.subject || "",
+        body_html: data.template?.body_html || "",
+      });
+      setIsDefault(!!data.is_default);
+    } catch {
+      setForm({ subject: "", body_html: "" });
+      setIsDefault(true);
+    }
+  }, []);
 
   const fetchAll = useCallback(async () => {
     try {
       const { data } = await axios.get(`${API}/hr/document-templates`);
       setOverrides(data.templates || []);
-      const cur = (data.templates || []).find(t => t.key === activeKey);
-      setForm({ subject: cur?.subject || "", body_html: cur?.body_html || "" });
     } catch {}
-  }, [activeKey]);
+    await loadTemplate(activeKey);
+  }, [activeKey, loadTemplate]);
 
   useEffect(() => { if (open) fetchAll(); }, [open, fetchAll]);
 
   const switchKey = async (k) => {
     setActiveKey(k);
-    try {
-      const { data } = await axios.get(`${API}/hr/document-templates/${k}`);
-      setForm({ subject: data.template?.subject || "", body_html: data.template?.body_html || "" });
-    } catch { setForm({ subject: "", body_html: "" }); }
+    await loadTemplate(k);
   };
 
   const save = async () => {
@@ -52,7 +63,7 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
     try {
       await axios.put(`${API}/hr/document-templates/${activeKey}`, form);
       toast.success("Template saved — will be used for future emails");
-      fetchAll();
+      await fetchAll();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     setLoading(false);
   };
@@ -61,8 +72,7 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
     if (!window.confirm("Revert to built-in default? Your custom version will be deleted.")) return;
     try {
       await axios.delete(`${API}/hr/document-templates/${activeKey}`);
-      setForm({ subject: "", body_html: "" });
-      fetchAll();
+      await fetchAll();
       toast.success("Reverted to built-in default");
     } catch { toast.error("Failed"); }
   };
@@ -95,7 +105,12 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
               <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="Leave empty to use built-in subject" className="rounded-xl" data-testid="tpl-subject" />
             </div>
             <div>
-              <Label className="text-xs font-medium">Body HTML</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">Body HTML</Label>
+                <span className={`text-[9px] px-2 py-0.5 rounded-full ${isDefault ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-orange-50 text-orange-700 border border-orange-200"}`} data-testid="tpl-status-badge">
+                  {isDefault ? "BUILT-IN DEFAULT — editing will create a custom version" : "CUSTOM VERSION (in use)"}
+                </span>
+              </div>
               <Textarea value={form.body_html} onChange={e => setForm(f => ({ ...f, body_html: e.target.value }))} placeholder="<p>Dear {emp_name},</p><p>...</p>" className="rounded-xl font-mono text-xs min-h-[320px]" data-testid="tpl-body" />
               <p className="text-[10px] text-[#59615D] mt-1">The system automatically wraps your HTML inside the company letterhead and footer with employment terms.</p>
             </div>

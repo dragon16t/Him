@@ -3705,7 +3705,17 @@ async def get_document_template(key: str, current_user: dict = Depends(get_curre
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
     doc = await db.document_templates.find_one({"key": key}, {"_id": 0})
-    return {"template": doc, "key": key}
+    if doc:
+        return {"template": doc, "key": key, "is_default": False}
+    # Fall back to built-in default so HR sees the existing letter content to edit
+    default = DEFAULT_TEMPLATE_BODIES.get(key)
+    if not default:
+        return {"template": None, "key": key, "is_default": True}
+    return {
+        "template": {"key": key, "subject": default["subject"], "body_html": default["body_html"]},
+        "key": key,
+        "is_default": True,
+    }
 
 @api_router.put("/hr/document-templates/{key}")
 async def upsert_document_template(key: str, data: dict, current_user: dict = Depends(get_current_user)):
