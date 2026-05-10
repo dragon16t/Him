@@ -79,6 +79,7 @@ export default function HRManagerDashboard() {
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [showEditEmp, setShowEditEmp] = useState(false);
   const [showDocTemplates, setShowDocTemplates] = useState(false);
+  const [hiringFilter, setHiringFilter] = useState("all");
   const [editingEmp, setEditingEmp] = useState(null);
   const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
   const [empSearch, setEmpSearch] = useState("");
@@ -594,22 +595,47 @@ export default function HRManagerDashboard() {
 
           {/* HIRING — Full feature: add, edit, forward, hire/reject */}
           <TabsContent value="hiring"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-3"><h3 className="font-heading text-lg font-medium">Hiring Pipeline ({hiringCandidates.length})</h3>
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Hiring Pipeline ({hiringCandidates.length})</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEditingCandidate(null);setCandidateForm({name:"",phone:"",email:"",position:"telecaller",location:"",experience:"",qualification:"",skills:"",expected_salary:0,interview_date:"",interview_notes:"",source:"direct",status:"contacted",notes:""});setShowAddCandidate(true);}} data-testid="hr-add-candidate-btn">+ Add Candidate</Button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">
-              {[{l:"Total",v:hiringCandidates.length},{l:"Contacted",v:hiringCandidates.filter(c=>c.status==='contacted').length},{l:"Interested",v:hiringCandidates.filter(c=>c.status==='interested').length},{l:"Interviewed",v:hiringCandidates.filter(c=>c.status==='interviewed').length},{l:"Selected",v:hiringCandidates.filter(c=>c.status==='selected').length},{l:"Forwarded",v:hiringCandidates.filter(c=>c.forwarded_to).length}].map(s=>(
-                <div key={s.l} className="bg-[#F9F8F6] rounded-lg p-2 text-center"><p className="text-[9px] text-[#59615D] uppercase">{s.l}</p><p className="font-heading text-lg font-bold">{s.v}</p></div>
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">
+              {[{l:"Total",v:hiringCandidates.length,k:"all"},{l:"Contacted",v:hiringCandidates.filter(c=>c.status==='contacted').length,k:"contacted"},{l:"Not Answering",v:hiringCandidates.filter(c=>c.status==='not_answering').length,k:"not_answering"},{l:"Interested",v:hiringCandidates.filter(c=>c.status==='interested').length,k:"interested"},{l:"Interviewed",v:hiringCandidates.filter(c=>c.status==='interviewed').length,k:"interviewed"},{l:"Selected",v:hiringCandidates.filter(c=>c.status==='selected').length,k:"selected"},{l:"Forwarded",v:hiringCandidates.filter(c=>c.forwarded_to).length,k:"forwarded"}].map(s=>(
+                <button key={s.l} onClick={()=>setHiringFilter(s.k)} data-testid={`hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hiringFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hiringFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-lg font-bold">{s.v}</p></button>
               ))}
             </div>
-            {hiringCandidates.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No candidates yet</p>:
-            <div className="space-y-2" data-testid="hr-hiring-list">{hiringCandidates.map(c=>(
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-[10px] text-[#59615D] font-medium uppercase">Filter by Status:</span>
+              <Select value={hiringFilter} onValueChange={setHiringFilter}>
+                <SelectTrigger className="w-44 h-8 text-xs rounded-full" data-testid="hiring-status-filter"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Candidates</SelectItem>
+                  <SelectItem value="contacted">Contacted</SelectItem>
+                  <SelectItem value="not_answering">Not Answering</SelectItem>
+                  <SelectItem value="no_response">No Response</SelectItem>
+                  <SelectItem value="interested">Interested</SelectItem>
+                  <SelectItem value="not_interested">Not Interested</SelectItem>
+                  <SelectItem value="callback">Callback Required</SelectItem>
+                  <SelectItem value="interviewed">Interviewed</SelectItem>
+                  <SelectItem value="selected">Selected</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="forwarded">Forwarded to Manager</SelectItem>
+                  <SelectItem value="hired">Hired</SelectItem>
+                </SelectContent>
+              </Select>
+              {hiringFilter !== "all" && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>setHiringFilter("all")}>Clear</Button>}
+            </div>
+            {(() => {
+              const list = hiringFilter === "all" ? hiringCandidates :
+                hiringFilter === "forwarded" ? hiringCandidates.filter(c=>c.forwarded_to) :
+                hiringCandidates.filter(c=>c.status === hiringFilter);
+              return list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">{hiringFilter==="all"?"No candidates yet":`No candidates with status "${hiringFilter.replace(/_/g," ")}"`}</p>:
+              <div className="space-y-2" data-testid="hr-hiring-list">{list.map(c=>(
               <div key={c.id} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`hr-cand-${c.id}`}>
                 <div className="flex justify-between items-start gap-2 flex-wrap">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap"><p className="font-medium text-sm">{c.name}</p>
                       <Badge variant="outline" className="text-[8px] capitalize">{c.position}</Badge>
-                      <Badge className={`text-[8px] ${c.status==='hired'?'bg-green-100 text-green-800':c.status==='rejected'?'bg-red-100 text-red-800':c.status==='selected'?'bg-blue-100 text-blue-800':c.status==='interviewed'?'bg-purple-100 text-purple-800':'bg-yellow-100 text-yellow-800'}`}>{c.status}</Badge>
+                      <Badge className={`text-[8px] capitalize ${c.status==='hired'?'bg-green-100 text-green-800':c.status==='rejected'||c.status==='not_interested'?'bg-red-100 text-red-800':c.status==='selected'?'bg-blue-100 text-blue-800':c.status==='interviewed'?'bg-purple-100 text-purple-800':c.status==='not_answering'||c.status==='no_response'?'bg-orange-100 text-orange-800':c.status==='callback'?'bg-cyan-100 text-cyan-800':'bg-yellow-100 text-yellow-800'}`}>{(c.status||"").replace(/_/g," ")}</Badge>
                       {c.forwarded_to && <Badge className="text-[8px] bg-pink-100 text-pink-800">→ {c.forwarded_to_name}</Badge>}
                       {c.manager_selected_by_name && <Badge className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold" data-testid={`mgr-selected-${c.id}`}>✓ Selected by {c.manager_selected_by_name}</Badge>}
                     </div>
@@ -618,12 +644,22 @@ export default function HRManagerDashboard() {
                     {c.expected_salary>0 && <p className="text-[10px] text-[#A66E4E]">Expected: Rs.{c.expected_salary}/mo</p>}
                     {c.interview_date && <p className="text-[10px] text-blue-700">📅 Interview: {c.interview_date}</p>}
                     {c.manager_selected_by_name && <p className="text-[10px] text-emerald-700 font-medium mt-0.5">✓ Recommended by {c.manager_selected_by_name} ({(c.manager_selected_by_role||'').replace(/_/g,' ')}) — awaiting your final hire approval</p>}
-                    {c.notes && <p className="text-[10px] text-[#59615D] italic mt-0.5">"{c.notes}"</p>}
+                    {c.notes && <p className="text-[10px] text-[#59615D] italic mt-0.5">&quot;{c.notes}&quot;</p>}
                   </div>
                   <div className="flex flex-col gap-1 items-end">
                     <Select value={c.status} onValueChange={async(v)=>{try{await axios.put(`${API}/hiring/candidates/${c.id}`,{status:v});toast.success("Updated");fetchData();}catch{toast.error("Failed");}}}>
-                      <SelectTrigger className="h-6 w-28 text-[9px] rounded-full" data-testid={`status-${c.id}`}><SelectValue/></SelectTrigger>
-                      <SelectContent>{["contacted","interested","interviewed","selected","rejected"].map(s=><SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent>
+                      <SelectTrigger className="h-6 w-32 text-[9px] rounded-full" data-testid={`status-${c.id}`}><SelectValue/></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="contacted" className="text-xs">Contacted</SelectItem>
+                        <SelectItem value="not_answering" className="text-xs">Not Answering</SelectItem>
+                        <SelectItem value="no_response" className="text-xs">No Response</SelectItem>
+                        <SelectItem value="interested" className="text-xs">Interested</SelectItem>
+                        <SelectItem value="not_interested" className="text-xs">Not Interested</SelectItem>
+                        <SelectItem value="callback" className="text-xs">Callback Required</SelectItem>
+                        <SelectItem value="interviewed" className="text-xs">Interviewed</SelectItem>
+                        <SelectItem value="selected" className="text-xs">Selected</SelectItem>
+                        <SelectItem value="rejected" className="text-xs">Rejected</SelectItem>
+                      </SelectContent>
                     </Select>
                     <div className="flex gap-1">
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setHrCallForm(f=>({...f,contact_name:c.name,phone:c.phone,linked_candidate_id:c.id,purpose:"candidate_followup"}));setShowHRCall(true);}} data-testid={`call-${c.id}`}><Phone className="w-2.5 h-2.5 mr-1"/>Log Call</Button>
@@ -635,7 +671,8 @@ export default function HRManagerDashboard() {
                   </div>
                 </div>
               </div>
-            ))}</div>}
+            ))}</div>;
+            })()}
           </div></TabsContent>
 
           {/* HR CALL LOGS — HR's own calls */}
@@ -1066,7 +1103,7 @@ export default function HRManagerDashboard() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Select value={candidateForm.source} onValueChange={v=>setCandidateForm(f=>({...f,source:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Source"/></SelectTrigger><SelectContent>{["direct","referral","naukri","linkedin","indeed","social_media","walk_in","other"].map(s=><SelectItem key={s} value={s} className="capitalize">{s.replace(/_/g," ")}</SelectItem>)}</SelectContent></Select>
-            <Select value={candidateForm.status} onValueChange={v=>setCandidateForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent>{["contacted","interested","interviewed","selected","rejected"].map(s=><SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent></Select>
+            <Select value={candidateForm.status} onValueChange={v=>setCandidateForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_answering">Not Answering</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="callback">Callback Required</SelectItem><SelectItem value="interviewed">Interviewed</SelectItem><SelectItem value="selected">Selected</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent></Select>
           </div>
           <Textarea placeholder="Interview notes" value={candidateForm.interview_notes} onChange={e=>setCandidateForm(f=>({...f,interview_notes:e.target.value}))} className="rounded-xl" rows={2}/>
           <Textarea placeholder="General notes" value={candidateForm.notes} onChange={e=>setCandidateForm(f=>({...f,notes:e.target.value}))} className="rounded-xl" rows={2}/>

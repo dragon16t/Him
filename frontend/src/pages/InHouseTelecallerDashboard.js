@@ -36,6 +36,7 @@ export default function InHouseTelecallerDashboard() {
   const [callForm, setCallForm] = useState({ contact_name: "", phone: "", call_type: "outreach", notes: "" });
   const [infForm, setInfForm] = useState({ influencer_name: "", platform: "instagram", followers: 0, category: "nano", contact: "", status: "contacted", barter_type: "", response: "", notes: "" });
   const [hireForm, setHireForm] = useState({ name: "", phone: "", position: "telecaller", status: "contacted", location: "", experience: "", notes: "" });
+  const [hireFilter, setHireFilter] = useState("all");
   const [goalForm, setGoalForm] = useState({ target_calls: 30, target_followups: 10 });
 
   const fetchData = useCallback(async () => {
@@ -154,18 +155,40 @@ export default function InHouseTelecallerDashboard() {
               <h3 className="font-heading text-lg font-medium">HR Hiring Support</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={() => setShowHiring(true)} data-testid="add-candidate-btn"><Plus className="w-3 h-3 mr-1" />Log Candidate</Button>
             </div>
-            <div className="grid grid-cols-5 gap-2 mb-4">
-              {[{ l: "Total", v: hiringStats.total || 0 }, { l: "Contacted", v: hiringStats.contacted || 0 }, { l: "Interested", v: hiringStats.interested || 0 }, { l: "Interviewed", v: hiringStats.interviewed || 0 }, { l: "Hired", v: hiringStats.hired || 0 }].map((s, i) => (
-                <div key={i} className="bg-[#F9F8F6] rounded-lg p-2 text-center"><p className="text-[9px] text-[#59615D] uppercase">{s.l}</p><p className="font-heading text-sm font-bold">{s.v}</p></div>
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">
+              {[{ l: "Total", v: hiringEntries.length, k:"all" }, { l: "Contacted", v: hiringEntries.filter(e=>e.status==='contacted').length, k:"contacted" }, { l: "Not Answering", v: hiringEntries.filter(e=>e.status==='not_answering').length, k:"not_answering" }, { l: "Interested", v: hiringEntries.filter(e=>e.status==='interested').length, k:"interested" }, { l: "Interviewed", v: hiringEntries.filter(e=>e.status==='interviewed').length, k:"interviewed" }, { l: "Hired", v: hiringEntries.filter(e=>e.status==='hired').length, k:"hired" }, { l: "Rejected", v: hiringEntries.filter(e=>e.status==='rejected').length, k:"rejected" }].map((s, i) => (
+                <button key={i} onClick={()=>setHireFilter(s.k)} data-testid={`ih-hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hireFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hireFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-sm font-bold">{s.v}</p></button>
               ))}
             </div>
-            {hiringEntries.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No candidates yet</p> :
-              <div className="space-y-2">{hiringEntries.map(e => (
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-[10px] text-[#59615D] font-medium uppercase">Filter:</span>
+              <Select value={hireFilter} onValueChange={setHireFilter}>
+                <SelectTrigger className="w-44 h-8 text-xs rounded-full" data-testid="ih-hire-filter"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Candidates</SelectItem>
+                  <SelectItem value="contacted">Contacted</SelectItem>
+                  <SelectItem value="not_answering">Not Answering</SelectItem>
+                  <SelectItem value="no_response">No Response</SelectItem>
+                  <SelectItem value="interested">Interested</SelectItem>
+                  <SelectItem value="not_interested">Not Interested</SelectItem>
+                  <SelectItem value="callback">Callback Required</SelectItem>
+                  <SelectItem value="interviewed">Interviewed</SelectItem>
+                  <SelectItem value="hired">Hired</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+              {hireFilter !== "all" && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>setHireFilter("all")}>Clear</Button>}
+            </div>
+            {(() => {
+              const filteredHire = hireFilter === "all" ? hiringEntries : hiringEntries.filter(e => e.status === hireFilter);
+              return filteredHire.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">{hireFilter==="all"?"No candidates yet":`No candidates with status "${hireFilter.replace(/_/g," ")}"`}</p> :
+              <div className="space-y-2">{filteredHire.map(e => (
                 <div key={e.id} className="border border-[#E5E3DB] rounded-lg p-3 flex justify-between items-start">
-                  <div><div className="flex items-center gap-2"><p className="font-medium text-xs">{e.name}</p><Badge variant="outline" className="text-[8px] capitalize">{e.position}</Badge></div><p className="text-[10px] text-[#59615D]">{e.phone} | {e.location}</p>{e.experience && <p className="text-[9px] text-[#A66E4E]">Exp: {e.experience}</p>}{e.notes && <p className="text-[9px] text-[#59615D]">{e.notes}</p>}</div>
-                  <Select value={e.status} onValueChange={v => updateHiringStatus(e.id, v)}><SelectTrigger className="h-6 w-24 text-[9px] rounded-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="interested">Interested</SelectItem><SelectItem value="interviewed">Interviewed</SelectItem><SelectItem value="hired">Hired</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent></Select>
+                  <div><div className="flex items-center gap-2 flex-wrap"><p className="font-medium text-xs">{e.name}</p><Badge variant="outline" className="text-[8px] capitalize">{e.position}</Badge><Badge className={`text-[8px] capitalize ${e.status==='hired'?'bg-green-100 text-green-800':e.status==='rejected'||e.status==='not_interested'?'bg-red-100 text-red-800':e.status==='not_answering'||e.status==='no_response'?'bg-orange-100 text-orange-800':e.status==='callback'?'bg-cyan-100 text-cyan-800':e.status==='interviewed'?'bg-purple-100 text-purple-800':'bg-yellow-100 text-yellow-800'}`}>{(e.status||"").replace(/_/g," ")}</Badge></div><p className="text-[10px] text-[#59615D]">{e.phone} | {e.location}</p>{e.experience && <p className="text-[9px] text-[#A66E4E]">Exp: {e.experience}</p>}{e.notes && <p className="text-[9px] text-[#59615D]">{e.notes}</p>}</div>
+                  <Select value={e.status} onValueChange={v => updateHiringStatus(e.id, v)}><SelectTrigger className="h-6 w-32 text-[9px] rounded-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_answering">Not Answering</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="callback">Callback Required</SelectItem><SelectItem value="interviewed">Interviewed</SelectItem><SelectItem value="hired">Hired</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent></Select>
                 </div>
-              ))}</div>}
+              ))}</div>;
+            })()}
           </div></TabsContent>
 
           {/* CALL LOG */}
