@@ -4543,14 +4543,13 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
         if not show_all:
             query["created_by"] = current_user['id']
     elif role == 'sales_manager':
-        # SM sees telecaller/telesales candidates either forwarded to them or selected/interviewed status
+        # SM sees ONLY candidates explicitly forwarded to them by HR
         query = {"$and": [{"position": {"$in": ["telecaller", "telesales"]}},
-                          {"$or": [{"forwarded_to": current_user['id']},
-                                   {"status": {"$in": ["interviewed", "selected", "interested", "contacted"]}}]}]}
+                          {"forwarded_to": current_user['id']}]}
     elif role == 'district_manager':
+        # DM sees ONLY candidates explicitly forwarded to them by HR
         query = {"$and": [{"position": "agent"},
-                          {"$or": [{"forwarded_to": current_user['id']},
-                                   {"status": {"$in": ["interviewed", "selected", "interested", "contacted"]}}]}]}
+                          {"forwarded_to": current_user['id']}]}
     # Auto-hide hired candidates from active list (HR/admin can opt-in via include_hired=true)
     if not include_hired:
         if role in ('hr_manager', 'admin', 'inhouse_telecaller'):
