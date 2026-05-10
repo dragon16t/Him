@@ -721,7 +721,22 @@ export default function HRManagerDashboard() {
 
           {/* DOCUMENTS */}
           <TabsContent value="documents"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <h3 className="font-heading text-lg font-medium mb-4">HR Document Templates</h3>
+            <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
+              <div>
+                <h3 className="font-heading text-lg font-medium">HR Document Templates</h3>
+                <p className="text-[11px] text-[#59615D]">Click any letter to send it. Use <b>Edit Templates</b> to customise the wording — once edited, your version will be sent to the candidate (not the default).</p>
+              </div>
+              <Button size="sm" className="rounded-full bg-[#3B5249] hover:bg-[#4F6B60] text-white shadow-sm" onClick={()=>setShowDocTemplates(true)} data-testid="hr-edit-templates-btn-top">
+                <FileText className="w-4 h-4 mr-1"/>Edit Templates
+              </Button>
+            </div>
+            <div className="bg-[#F4ECD2]/30 border-l-4 border-[#A66E4E] rounded-xl p-3 mb-4 flex items-start gap-3">
+              <FileText className="w-5 h-5 text-[#A66E4E] mt-0.5 shrink-0"/>
+              <div className="flex-1 text-xs text-[#2C3531]">
+                <p className="font-semibold text-[#A66E4E] mb-0.5">Customise letter content</p>
+                <p>Click <b>&quot;Edit Templates&quot;</b> above to open the template editor. You can edit the subject and body of each letter (Offer, Employment, Increment, Termination etc.) using placeholders like {"{emp_name}, {position}, {salary}"}. The customised version is automatically used when you send that letter to a candidate or employee.</p>
+              </div>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
               {[
                 {t:"welcome",l:"Welcome / Appointment Letter",desc:"New employee welcome with company introduction, salary, joining date"},
@@ -735,15 +750,23 @@ export default function HRManagerDashboard() {
                 {t:"experience",l:"Experience Certificate",desc:"Work experience certification with role, duration, performance"},
                 {t:"custom",l:"Custom Communication",desc:"Free-form letter on official letterhead"}
               ].map(d=>(
-                <button key={d.t} onClick={()=>{setEmailForm(f=>({...f,template:d.t,to_email:"",emp_name:""}));setShowEmail(true);}} className="bg-[#F9F8F6] rounded-xl p-3 text-left hover:shadow-md transition-all border border-transparent hover:border-[#E5E3DB]" data-testid={`doc-${d.t}`}>
-                  <FileText className="w-4 h-4 text-[#3B5249] mb-1"/><p className="text-[10px] font-medium">{d.l}</p><p className="text-[8px] text-[#59615D] mt-0.5">{d.desc}</p>
-                </button>
+                <div key={d.t} className="bg-[#F9F8F6] rounded-xl p-3 hover:shadow-md transition-all border border-transparent hover:border-[#E5E3DB]" data-testid={`doc-${d.t}`}>
+                  <FileText className="w-4 h-4 text-[#3B5249] mb-1"/>
+                  <p className="text-[10px] font-medium">{d.l}</p>
+                  <p className="text-[8px] text-[#59615D] mt-0.5">{d.desc}</p>
+                  <div className="flex gap-1 mt-2">
+                    <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2 flex-1 border-[#3B5249] text-[#3B5249]" onClick={()=>{setShowDocTemplates(true);}} data-testid={`edit-doc-${d.t}`}>Edit</Button>
+                    <Button size="sm" className="rounded-full text-[9px] h-6 px-2 flex-1 bg-[#3B5249] text-white" onClick={()=>{setEmailForm(f=>({...f,template:d.t,to_email:"",emp_name:""}));setShowEmail(true);}} data-testid={`send-doc-${d.t}`}>Send</Button>
+                  </div>
+                </div>
               ))}
             </div>
             <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs text-[#59615D] space-y-0.5">
-              <p className="font-medium mb-1 text-[#3B5249]">📄 All letters print on official Veegal Enterprises LLP letterhead with auto-included terms:</p>
-              <p>• <b>Work Hours:</b> 9:30 AM – 6:00 PM (Mon–Sat, 30-min lunch)</p>
-              <p>• <b>Weekly Off:</b> Sunday & 2nd / 4th Saturday</p>
+              <p className="font-medium mb-1 text-[#3B5249]">All letters print on official Veegal Enterprises LLP letterhead with auto-included terms:</p>
+              <p>• <b>Work Hours:</b> 9:30 AM – 5:30 PM (Mon–Sat)</p>
+              <p>• <b>Break Time:</b> 1 hour total — Lunch 40 min + Tea 20 min (morning &amp; evening)</p>
+              <p>• <b>Friday:</b> Extra 30 minutes break</p>
+              <p>• <b>Weekly Off:</b> Sunday</p>
               <p>• <b>Probation:</b> 3 months · <b>Notice Period:</b> 30 days</p>
               <p>• <b>Leave:</b> 12 CL + 12 SL + 12 EL per annum (pro-rata)</p>
               <p>• <b>Company:</b> Veegal Enterprises LLP, Cherutti Road, Calicut, Kerala 673032</p>
