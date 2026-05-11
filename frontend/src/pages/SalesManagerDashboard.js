@@ -47,6 +47,9 @@ export default function SalesManagerDashboard() {
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assigned_to: "", assigned_to_name: "", assigned_to_role: "telecaller", priority: "medium", due_date: "" });
   const [instForm, setInstForm] = useState({ title: "", content: "", category: "calling", target_role: "telecaller" });
   const [contactForm, setContactForm] = useState({ name: "", phone: "", email: "", type: "influencer", notes: "" });
+  // Direct order creation (Sales Manager)
+  const [showCreateOrder, setShowCreateOrder] = useState(false);
+  const [orderForm, setOrderForm] = useState({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 });
   // Assistant Sales Managers (ASMs)
   const [asms, setAsms] = useState([]);
   const [showAddAsm, setShowAddAsm] = useState(false);
@@ -112,6 +115,30 @@ export default function SalesManagerDashboard() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const approveOrder = async (id) => { try { await axios.put(`${API}/orders/${id}/approve`); toast.success("Approved!"); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
+  const handleCreateOrder = async () => {
+    if (!orderForm.customer_name || !orderForm.customer_phone || !orderForm.customer_address || !orderForm.product_name) {
+      return toast.error("Customer name, phone, address and product are required");
+    }
+    const qty = Number(orderForm.quantity) || 1;
+    const price = Number(orderForm.price) || 0;
+    if (price <= 0) return toast.error("Price must be greater than 0");
+    try {
+      await axios.post(`${API}/orders`, {
+        customer_name: orderForm.customer_name,
+        customer_phone: orderForm.customer_phone,
+        customer_address: orderForm.customer_address,
+        customer_city: orderForm.customer_city,
+        customer_pincode: orderForm.customer_pincode,
+        payment_type: orderForm.payment_type,
+        items: [{ product_name: orderForm.product_name, quantity: qty, price: price }],
+        total_amount: qty * price,
+      });
+      toast.success("Order created");
+      setShowCreateOrder(false);
+      setOrderForm({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 });
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create order"); }
+  };
   const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch { toast.error("Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
@@ -224,16 +251,58 @@ export default function SalesManagerDashboard() {
           <TabsContent value="repeat" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Repeat Orders — Telecallers ({followUps.repeat_due.length} due)</h3>
             {followUps.repeat_due.length===0&&followUps.repeat_upcoming.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No repeat orders pending</p>:<>
-            {followUps.repeat_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.repeat_due.map(l=>(<div key={l.id} className="border border-orange-200 bg-orange-50 rounded-xl p-3 flex justify-between items-center"><div><p className="font-medium text-sm">{l.name}</p><p className="text-xs text-[#59615D]">{l.phone_number} | Assigned: {l.assigned_to}</p></div><div className="text-right"><Badge className="bg-orange-100 text-orange-800 text-[9px]">REPEAT DUE</Badge><p className="text-[10px] text-[#59615D]">{l.next_repeat_order_date}</p></div></div>))}</div></div>}
-            {followUps.repeat_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.repeat_upcoming.map(l=>(<div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between text-xs"><span>{l.name} - {l.phone_number}</span><span className="text-[#A66E4E]">{l.next_repeat_order_date}</span></div>))}</div></div>}
+            {followUps.repeat_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.repeat_due.map(l=>(
+              <div key={l.id} className="border border-orange-200 bg-orange-50 rounded-xl p-3" data-testid={`repeat-due-${l.id}`}>
+                <div className="flex justify-between gap-2 flex-wrap items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{l.name} <span className="text-[#59615D] text-xs font-normal">· {l.phone_number}</span></p>
+                    <p className="text-[11px] text-[#59615D]">Telecaller: <b className="text-[#3B5249]">{l.assigned_to_name || l.assigned_to || "—"}</b></p>
+                    {(l.last_order_products || l.product_interest) && <p className="text-[11px] text-[#2C3531]"><b>Product:</b> {l.last_order_products || l.product_interest}</p>}
+                  </div>
+                  <div className="text-right">
+                    <Badge className="bg-orange-100 text-orange-800 text-[9px]">REPEAT DUE</Badge>
+                    <p className="text-[10px] text-[#59615D] mt-1">Due: {l.next_repeat_order_date}</p>
+                    {l.last_order_amount > 0 && <p className="text-[11px] font-heading font-semibold text-[#3B5249]">Last: Rs.{l.last_order_amount}</p>}
+                    {l.callback_by && !l.callback_done && <p className="text-[9px] text-red-700 font-medium">⏰ Call due: {String(l.callback_by).slice(11,16)}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}</div></div>}
+            {followUps.repeat_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.repeat_upcoming.map(l=>(
+              <div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between items-center text-xs gap-2 flex-wrap">
+                <span className="flex-1"><b>{l.name}</b> · {l.phone_number} {l.assigned_to_name && <span className="text-[#59615D]">· TC: {l.assigned_to_name}</span>} {(l.last_order_products || l.product_interest) && <span className="text-[#59615D]"> · {l.last_order_products || l.product_interest}</span>}</span>
+                <span className="text-[#A66E4E] whitespace-nowrap">{l.next_repeat_order_date}{l.last_order_amount > 0 && ` · Rs.${l.last_order_amount}`}</span>
+              </div>
+            ))}</div></div>}
             </>}
           </div></TabsContent>
           {/* RELATIONSHIP CALLS */}
           <TabsContent value="relationship" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Relationship Calls — Telecallers ({followUps.relationship_due.length} due)</h3>
             {followUps.relationship_due.length===0&&followUps.relationship_upcoming.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No relationship calls pending</p>:<>
-            {followUps.relationship_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.relationship_due.map(l=>(<div key={l.id} className="border border-pink-200 bg-pink-50 rounded-xl p-3 flex justify-between items-center"><div><p className="font-medium text-sm">{l.name}</p><p className="text-xs text-[#59615D]">{l.phone_number} | Assigned: {l.assigned_to}</p></div><div className="text-right"><Badge className="bg-pink-100 text-pink-800 text-[9px]">RELATIONSHIP DUE</Badge><p className="text-[10px] text-[#59615D]">{l.next_relationship_date}</p></div></div>))}</div></div>}
-            {followUps.relationship_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.relationship_upcoming.map(l=>(<div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between text-xs"><span>{l.name} - {l.phone_number}</span><span className="text-[#D4A373]">{l.next_relationship_date}</span></div>))}</div></div>}
+            {followUps.relationship_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.relationship_due.map(l=>(
+              <div key={l.id} className="border border-pink-200 bg-pink-50 rounded-xl p-3" data-testid={`rel-due-${l.id}`}>
+                <div className="flex justify-between gap-2 flex-wrap items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{l.name} <span className="text-[#59615D] text-xs font-normal">· {l.phone_number}</span></p>
+                    <p className="text-[11px] text-[#59615D]">Telecaller: <b className="text-[#3B5249]">{l.assigned_to_name || l.assigned_to || "—"}</b></p>
+                    {(l.last_order_products || l.product_interest) && <p className="text-[11px] text-[#2C3531]"><b>Product:</b> {l.last_order_products || l.product_interest}</p>}
+                  </div>
+                  <div className="text-right">
+                    <Badge className="bg-pink-100 text-pink-800 text-[9px]">RELATIONSHIP DUE</Badge>
+                    <p className="text-[10px] text-[#59615D] mt-1">Due: {l.next_relationship_date}</p>
+                    {l.last_order_amount > 0 && <p className="text-[11px] font-heading font-semibold text-[#3B5249]">Last: Rs.{l.last_order_amount}</p>}
+                    {l.callback_by && !l.callback_done && <p className="text-[9px] text-red-700 font-medium">⏰ Call due: {String(l.callback_by).slice(11,16)}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}</div></div>}
+            {followUps.relationship_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.relationship_upcoming.map(l=>(
+              <div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between items-center text-xs gap-2 flex-wrap">
+                <span className="flex-1"><b>{l.name}</b> · {l.phone_number} {l.assigned_to_name && <span className="text-[#59615D]">· TC: {l.assigned_to_name}</span>} {(l.last_order_products || l.product_interest) && <span className="text-[#59615D]"> · {l.last_order_products || l.product_interest}</span>}</span>
+                <span className="text-[#D4A373] whitespace-nowrap">{l.next_relationship_date}{l.last_order_amount > 0 && ` · Rs.${l.last_order_amount}`}</span>
+              </div>
+            ))}</div></div>}
             </>}
           </div></TabsContent>
           <TabsContent value="tasks" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Task Sheets</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTask(true)} data-testid="add-task-btn"><Plus className="w-4 h-4 mr-1"/>Create</Button></div>
@@ -243,7 +312,10 @@ export default function SalesManagerDashboard() {
             <div className="space-y-3">{instructions.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-4"><div className="flex justify-between"><p className="font-heading font-medium">{i.title}</p><Badge variant="outline" className="text-[10px]">{i.category}</Badge></div><p className="text-sm text-[#59615D] mt-2 whitespace-pre-wrap">{i.content}</p><p className="text-xs text-[#A66E4E] mt-1">For: {i.target_role}s | By: {i.created_by_name}</p></div>))}</div>
           </div></TabsContent>
           <TabsContent value="orders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
-            <h3 className="font-heading text-lg font-medium mb-4">Orders ({orders.filter(o=>o.status==="pending").length} pending)</h3>
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+              <h3 className="font-heading text-lg font-medium">Orders ({orders.filter(o=>o.status==="pending").length} pending)</h3>
+              <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowCreateOrder(true)} data-testid="sm-create-order-btn"><Plus className="w-3 h-3 mr-1"/>Create Order</Button>
+            </div>
             <div className="space-y-3">{orders.map(o=>(<div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4">
               <div className="flex flex-col sm:flex-row justify-between gap-2">
                 <div>
@@ -309,6 +381,44 @@ export default function SalesManagerDashboard() {
               <div><Label className="text-xs">Incentive</Label><Input type="number" value={asmForm.incentive} onChange={e=>setAsmForm(f=>({...f,incentive:Number(e.target.value)||0}))} className="rounded-xl"/></div>
             </div>
             <Button onClick={handleEditAsm} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-asm-btn">Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* CREATE ORDER DIALOG (SM direct order) */}
+      <Dialog open={showCreateOrder} onOpenChange={setShowCreateOrder}>
+        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto" data-testid="sm-create-order-dialog">
+          <DialogHeader><DialogTitle className="font-heading">Create Order</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-[11px] text-[#59615D]">Use this when you need to log a sale directly (e.g. walk-in or phone order taken yourself). For team orders, your telecallers should create them from their own dashboard.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div><Label className="text-xs">Customer Name *</Label><Input value={orderForm.customer_name} onChange={e=>setOrderForm(f=>({...f,customer_name:e.target.value}))} className="rounded-xl" data-testid="sm-order-name"/></div>
+              <div><Label className="text-xs">Phone *</Label><Input value={orderForm.customer_phone} onChange={e=>setOrderForm(f=>({...f,customer_phone:e.target.value}))} className="rounded-xl" data-testid="sm-order-phone"/></div>
+            </div>
+            <div><Label className="text-xs">Address *</Label><Textarea value={orderForm.customer_address} onChange={e=>setOrderForm(f=>({...f,customer_address:e.target.value}))} className="rounded-xl" data-testid="sm-order-address"/></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div><Label className="text-xs">City</Label><Input value={orderForm.customer_city} onChange={e=>setOrderForm(f=>({...f,customer_city:e.target.value}))} className="rounded-xl"/></div>
+              <div><Label className="text-xs">Pincode</Label><Input value={orderForm.customer_pincode} onChange={e=>setOrderForm(f=>({...f,customer_pincode:e.target.value}))} className="rounded-xl"/></div>
+            </div>
+            <div className="rounded-xl border border-[#E5E3DB] p-3 bg-[#F9F8F6] space-y-2">
+              <p className="text-[10px] uppercase tracking-wider text-[#59615D] font-semibold">Product</p>
+              <Input placeholder="Product name *" value={orderForm.product_name} onChange={e=>setOrderForm(f=>({...f,product_name:e.target.value}))} className="rounded-xl" data-testid="sm-order-product"/>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-[10px]">Qty</Label><Input type="number" min="1" value={orderForm.quantity} onChange={e=>setOrderForm(f=>({...f,quantity:e.target.value}))} className="rounded-xl"/></div>
+                <div><Label className="text-[10px]">Unit Price (Rs.) *</Label><Input type="number" min="0" value={orderForm.price} onChange={e=>setOrderForm(f=>({...f,price:e.target.value}))} className="rounded-xl" data-testid="sm-order-price"/></div>
+              </div>
+              <p className="text-[11px] text-right font-heading text-[#3B5249]">Total: Rs.{(Number(orderForm.quantity)||1) * (Number(orderForm.price)||0)}</p>
+            </div>
+            <div><Label className="text-xs">Payment Type</Label>
+              <Select value={orderForm.payment_type} onValueChange={v=>setOrderForm(f=>({...f,payment_type:v}))}>
+                <SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cod">Cash on Delivery</SelectItem>
+                  <SelectItem value="prepaid">Prepaid (Online)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={handleCreateOrder} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="sm-submit-order-btn">Create Order</Button>
           </div>
         </DialogContent>
       </Dialog>

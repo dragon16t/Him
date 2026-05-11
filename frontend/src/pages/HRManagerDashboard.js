@@ -654,6 +654,7 @@ export default function HRManagerDashboard() {
                     {(c.experience||c.qualification||c.skills) && <p className="text-[10px] text-[#59615D]">{c.experience&&`Exp: ${c.experience}`}{c.qualification&&` | ${c.qualification}`}{c.skills&&` | Skills: ${c.skills}`}</p>}
                     {c.expected_salary>0 && <p className="text-[10px] text-[#A66E4E]">Expected: Rs.{c.expected_salary}/mo</p>}
                     {c.interview_date && <p className="text-[10px] text-blue-700">📅 Interview: {c.interview_date}</p>}
+                    {c.forwarded_to && <p className="text-[10px] text-pink-700 font-medium bg-pink-50 inline-block px-2 py-0.5 rounded mt-0.5" data-testid={`forwarded-info-${c.id}`}>→ Forwarded to <b>{c.forwarded_to_name}</b>{c.forwarded_role && <span className="font-normal"> ({(c.forwarded_role||'').replace(/_/g,' ')})</span>}{c.forwarded_at && <span className="text-pink-500 font-normal"> · {String(c.forwarded_at).slice(0,10)}</span>}</p>}
                     {c.manager_selected_by_name && <p className="text-[10px] text-emerald-700 font-medium mt-0.5">✓ Recommended by {c.manager_selected_by_name} ({(c.manager_selected_by_role||'').replace(/_/g,' ')}) — awaiting your final hire approval</p>}
                     {c.notes && <p className="text-[10px] text-[#59615D] italic mt-0.5">&quot;{c.notes}&quot;</p>}
                   </div>

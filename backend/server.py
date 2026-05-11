@@ -632,17 +632,24 @@ async def get_follow_up_leads(current_user: dict = Depends(get_current_user)):
     role = current_user['role']
     if role == 'agent':
         user_ids = [current_user['id']]
+    elif role == 'telecaller':
+        user_ids = [current_user['id']]
     elif role == 'district_manager':
-        # Get all agents under this DM
-        agents = await db.agents.find({}, {"_id": 0, "id": 1}).to_list(200)
+        # Only agents reporting to THIS DM
+        agents = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
         user_ids = [a['id'] for a in agents]
-    elif role == 'sales_manager' or role == 'assistant_sales_manager':
-        # Get all telecallers
-        tcs = await db.telecallers.find({}, {"_id": 0, "id": 1}).to_list(200)
-        user_ids = [t['id'] for t in tcs]
     elif role == 'assistant_district_manager':
-        agents = await db.agents.find({}, {"_id": 0, "id": 1}).to_list(200)
+        dm_id = current_user.get('managed_by', '')
+        agents = await db.agents.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(500)
         user_ids = [a['id'] for a in agents]
+    elif role == 'sales_manager':
+        # Only telecallers reporting to THIS SM
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
+        user_ids = [t['id'] for t in tcs]
+    elif role == 'assistant_sales_manager':
+        sm_id = current_user.get('managed_by', '')
+        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(500)
+        user_ids = [t['id'] for t in tcs]
     elif role in ['admin']:
         user_ids = None  # All
     else:
@@ -975,8 +982,15 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
     # Mark lead as delivered + set repeat/relationship windows if not yet set
     if order.get('lead_id'):
         today = date.today()
+        # Persist last order summary so SM/DM dashboards (repeat/relationship) can show
+        # product name(s) and order value without a join.
+        items = order.get('items') or []
+        last_products = ", ".join([(it.get('product_name') or '').strip() for it in items if it.get('product_name')])
         await db.leads.update_one({"id": order['lead_id']}, {"$set": {
             "status": "delivered",
+            "last_order_id": order_id,
+            "last_order_amount": order.get('total_amount', 0),
+            "last_order_products": last_products,
             "last_order_date": today.isoformat(),
             "next_relationship_date": (today + timedelta(days=15)).isoformat(),
             "next_repeat_order_date": (today + timedelta(days=35)).isoformat(),
@@ -3752,6 +3766,36 @@ async def _refresh_employment_terms_cache():
     except Exception as e:
         logger.error(f"Failed to load employment terms override: {e}")
 
+async def _backfill_lead_last_order():
+    """For any lead that has a last_order_date but missing last_order_amount/products,
+    derive them from the most recent delivered order. One-time best-effort hydration so
+    SM/DM repeat & relationship views show product name + order value for legacy data."""
+    try:
+        async for lead in db.leads.find(
+            {"last_order_date": {"$ne": ""},
+             "$or": [{"last_order_amount": {"$exists": False}}, {"last_order_amount": 0}, {"last_order_amount": None}]},
+            {"_id": 0, "id": 1}
+        ):
+            order = await db.orders.find_one(
+                {"lead_id": lead["id"], "status": "delivered"},
+                {"_id": 0, "total_amount": 1, "items": 1, "id": 1},
+                sort=[("delivered_at", -1)]
+            )
+            if not order:
+                continue
+            items = order.get("items") or []
+            last_products = ", ".join([(it.get("product_name") or "").strip() for it in items if it.get("product_name")])
+            await db.leads.update_one(
+                {"id": lead["id"]},
+                {"$set": {
+                    "last_order_id": order.get("id", ""),
+                    "last_order_amount": order.get("total_amount", 0),
+                    "last_order_products": last_products,
+                }},
+            )
+    except Exception as e:
+        logger.error(f"Lead last-order backfill skipped: {e}")
+
 @api_router.get("/hr/employment-terms")
 async def get_employment_terms(current_user: dict = Depends(get_current_user)):
     """Return current effective terms (override if any, else built-in) + the built-in defaults."""
@@ -6351,6 +6395,7 @@ async def startup():
     await write_test_credentials()
     init_storage()
     await _refresh_employment_terms_cache()
+    await _backfill_lead_last_order()
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")

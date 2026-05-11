@@ -262,16 +262,58 @@ export default function ManagerDashboard() {
           <TabsContent value="repeat" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Repeat Orders — Agents ({followUps.repeat_due.length} due)</h3>
             {followUps.repeat_due.length===0&&followUps.repeat_upcoming.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No repeat orders pending</p>:<>
-            {followUps.repeat_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.repeat_due.map(l=>(<div key={l.id} className="border border-orange-200 bg-orange-50 rounded-xl p-3 flex justify-between items-center"><div><p className="font-medium text-sm">{l.name}</p><p className="text-xs text-[#59615D]">{l.phone_number} | Assigned: {l.assigned_to}</p></div><div className="text-right"><Badge className="bg-orange-100 text-orange-800 text-[9px]">REPEAT DUE</Badge><p className="text-[10px] text-[#59615D]">{l.next_repeat_order_date}</p></div></div>))}</div></div>}
-            {followUps.repeat_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.repeat_upcoming.map(l=>(<div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between text-xs"><span>{l.name} - {l.phone_number}</span><span className="text-[#A66E4E]">{l.next_repeat_order_date}</span></div>))}</div></div>}
+            {followUps.repeat_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.repeat_due.map(l=>(
+              <div key={l.id} className="border border-orange-200 bg-orange-50 rounded-xl p-3" data-testid={`dm-repeat-due-${l.id}`}>
+                <div className="flex justify-between gap-2 flex-wrap items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{l.name} <span className="text-[#59615D] text-xs font-normal">· {l.phone_number}</span></p>
+                    <p className="text-[11px] text-[#59615D]">Agent: <b className="text-[#3B5249]">{l.assigned_to_name || l.assigned_to || "—"}</b></p>
+                    {(l.last_order_products || l.product_interest) && <p className="text-[11px] text-[#2C3531]"><b>Product:</b> {l.last_order_products || l.product_interest}</p>}
+                  </div>
+                  <div className="text-right">
+                    <Badge className="bg-orange-100 text-orange-800 text-[9px]">REPEAT DUE</Badge>
+                    <p className="text-[10px] text-[#59615D] mt-1">Due: {l.next_repeat_order_date}</p>
+                    {l.last_order_amount > 0 && <p className="text-[11px] font-heading font-semibold text-[#3B5249]">Last: Rs.{l.last_order_amount}</p>}
+                    {l.callback_by && !l.callback_done && <p className="text-[9px] text-red-700 font-medium">⏰ Call due: {String(l.callback_by).slice(11,16)}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}</div></div>}
+            {followUps.repeat_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.repeat_upcoming.map(l=>(
+              <div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between items-center text-xs gap-2 flex-wrap">
+                <span className="flex-1"><b>{l.name}</b> · {l.phone_number} {l.assigned_to_name && <span className="text-[#59615D]">· Agent: {l.assigned_to_name}</span>} {(l.last_order_products || l.product_interest) && <span className="text-[#59615D]"> · {l.last_order_products || l.product_interest}</span>}</span>
+                <span className="text-[#A66E4E] whitespace-nowrap">{l.next_repeat_order_date}{l.last_order_amount > 0 && ` · Rs.${l.last_order_amount}`}</span>
+              </div>
+            ))}</div></div>}
             </>}
           </div></TabsContent>
           {/* RELATIONSHIP CALLS */}
           <TabsContent value="relationship" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Relationship Calls — Agents ({followUps.relationship_due.length} due)</h3>
             {followUps.relationship_due.length===0&&followUps.relationship_upcoming.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No relationship calls pending</p>:<>
-            {followUps.relationship_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.relationship_due.map(l=>(<div key={l.id} className="border border-pink-200 bg-pink-50 rounded-xl p-3 flex justify-between items-center"><div><p className="font-medium text-sm">{l.name}</p><p className="text-xs text-[#59615D]">{l.phone_number} | Assigned: {l.assigned_to}</p></div><div className="text-right"><Badge className="bg-pink-100 text-pink-800 text-[9px]">RELATIONSHIP DUE</Badge><p className="text-[10px] text-[#59615D]">{l.next_relationship_date}</p></div></div>))}</div></div>}
-            {followUps.relationship_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.relationship_upcoming.map(l=>(<div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between text-xs"><span>{l.name} - {l.phone_number}</span><span className="text-[#D4A373]">{l.next_relationship_date}</span></div>))}</div></div>}
+            {followUps.relationship_due.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#B75D69] mb-2 uppercase">Due Now</p><div className="space-y-2">{followUps.relationship_due.map(l=>(
+              <div key={l.id} className="border border-pink-200 bg-pink-50 rounded-xl p-3" data-testid={`dm-rel-due-${l.id}`}>
+                <div className="flex justify-between gap-2 flex-wrap items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{l.name} <span className="text-[#59615D] text-xs font-normal">· {l.phone_number}</span></p>
+                    <p className="text-[11px] text-[#59615D]">Agent: <b className="text-[#3B5249]">{l.assigned_to_name || l.assigned_to || "—"}</b></p>
+                    {(l.last_order_products || l.product_interest) && <p className="text-[11px] text-[#2C3531]"><b>Product:</b> {l.last_order_products || l.product_interest}</p>}
+                  </div>
+                  <div className="text-right">
+                    <Badge className="bg-pink-100 text-pink-800 text-[9px]">RELATIONSHIP DUE</Badge>
+                    <p className="text-[10px] text-[#59615D] mt-1">Due: {l.next_relationship_date}</p>
+                    {l.last_order_amount > 0 && <p className="text-[11px] font-heading font-semibold text-[#3B5249]">Last: Rs.{l.last_order_amount}</p>}
+                    {l.callback_by && !l.callback_done && <p className="text-[9px] text-red-700 font-medium">⏰ Call due: {String(l.callback_by).slice(11,16)}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}</div></div>}
+            {followUps.relationship_upcoming.length>0&&<div><p className="text-xs font-medium text-[#D4A373] mb-2 uppercase">Upcoming</p><div className="space-y-1">{followUps.relationship_upcoming.map(l=>(
+              <div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between items-center text-xs gap-2 flex-wrap">
+                <span className="flex-1"><b>{l.name}</b> · {l.phone_number} {l.assigned_to_name && <span className="text-[#59615D]">· Agent: {l.assigned_to_name}</span>} {(l.last_order_products || l.product_interest) && <span className="text-[#59615D]"> · {l.last_order_products || l.product_interest}</span>}</span>
+                <span className="text-[#D4A373] whitespace-nowrap">{l.next_relationship_date}{l.last_order_amount > 0 && ` · Rs.${l.last_order_amount}`}</span>
+              </div>
+            ))}</div></div>}
             </>}
           </div></TabsContent>
           {/* NEW HIRING */}
