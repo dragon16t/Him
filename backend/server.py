@@ -41,9 +41,6 @@ COMPANY = {
     "email": "manager@celestaglow.com",
     "website": "www.celestaglow.com",
     "work_hours": "9:30 AM – 5:30 PM (Monday to Saturday)",
-    "lunch_break": "40 minutes (1:00 PM – 1:40 PM)",
-    "tea_breaks": "20 minutes total (Morning & Evening tea)",
-    "friday_extra": "Extra 30 minutes break on Friday",
     "total_break": "1 hour total per day",
     "weekly_off": "Sunday",
     "notice_period": "30 days (as per company policy & Indian labour law)",
@@ -59,8 +56,7 @@ COMPANY = {
 # These can be overridden by HR/Admin via /api/hr/employment-terms — the override is
 # stored in db.company_settings and merged into COMPANY at startup + on every save.
 EMPLOYMENT_TERM_KEYS = [
-    "work_hours", "total_break", "lunch_break", "tea_breaks", "friday_extra",
-    "weekly_off", "probation", "notice_period", "leave_policy",
+    "work_hours", "total_break", "weekly_off", "probation", "notice_period", "leave_policy",
 ]
 
 def _letterhead(title: str, accent: str = None) -> str:
@@ -96,9 +92,6 @@ def _letterhead_footer(signatory: str = "HR Department", show_terms: bool = Fals
 <p style='margin:0 0 6px;font-weight:600;color:{COMPANY['primary_color']};letter-spacing:0.5px;text-transform:uppercase;font-size:10px'>Standard Employment Terms</p>
 <p style='margin:0'>• <b>Work Hours:</b> {COMPANY['work_hours']}</p>
 <p style='margin:0'>• <b>Break Time:</b> {COMPANY['total_break']}</p>
-<p style='margin:0;padding-left:14px'>– Lunch Break: {COMPANY['lunch_break']}</p>
-<p style='margin:0;padding-left:14px'>– Tea Breaks: {COMPANY['tea_breaks']}</p>
-<p style='margin:0'>• <b>Friday:</b> {COMPANY['friday_extra']}</p>
 <p style='margin:0'>• <b>Weekly Off:</b> {COMPANY['weekly_off']}</p>
 <p style='margin:0'>• <b>Probation:</b> {COMPANY['probation']}</p>
 <p style='margin:0'>• <b>Notice Period:</b> {COMPANY['notice_period']}</p>

@@ -24,9 +24,6 @@ const TPL_KEYS = [
 const TERM_FIELDS = [
   { k: "work_hours", l: "Work Hours" },
   { k: "total_break", l: "Total Break" },
-  { k: "lunch_break", l: "Lunch Break" },
-  { k: "tea_breaks", l: "Tea Breaks" },
-  { k: "friday_extra", l: "Friday Extra" },
   { k: "weekly_off", l: "Weekly Off" },
   { k: "probation", l: "Probation" },
   { k: "notice_period", l: "Notice Period" },
