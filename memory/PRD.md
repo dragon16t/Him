@@ -12,7 +12,13 @@ Clone https://github.com/shadnazar/HRM1.git and build a fast, full-featured CRM 
 - Deployed at https://portal.veegal.com (user-managed). Preview is the dev sandbox only.
 
 ## Implemented (latest first)
-- **Feb 2026** — Hiring & profile-card fixes:
+- **Feb 2026** — Five fixes:
+  - **Leaderboard now works**: backend was reading from non-existent `db.crm_orders` → revenue was always 0; also used wrong commission field (`amount` vs `commission_amount`). Fixed to query `db.orders` (delivered status, scoped by `created_by`) with proper month/year filter on both orders + commissions; added `rank` field and tie-break sort (revenue → orders → commission).
+  - **Attendance logout (HR)**: removed the 17:30 IST gate that was blocking HR from setting logout earlier. `can_set_logout` always true now; "Set Logout" / "Update Logout" button is always usable.
+  - **Telecaller dashboard — Order history**: new "📦 Orders (N)" tab showing every order the telecaller created (order #, customer, items, amount, payment type, status, date) in a clean table.
+  - **Edit Telecaller / Edit Agent**: new ✎ button on SM telecaller cards and DM agent cards opening an edit dialog (Name / Phone / Language / Place — and Agent: District / Area). Backed by new `PUT /api/telecallers/{tid}` and `PUT /api/agents/{aid}` endpoints with strict `managed_by` scope (SM can only edit their own TCs, DM only their own agents; assistant managers inherit).
+  - **Bulk multi-select & delete on HR Hiring** already shipped earlier in this session; admins (with role==admin) can hit the same endpoints from the HR view because the bulk endpoint allows both roles.
+- **Feb 2026** — Hiring & profile-card fixes (HR sees inhouse-TC candidates, delete + language/place badges, daily-metrics fix)
   - **HR Hiring no longer misses inhouse-telecaller candidates**: query now includes candidates created by HR themselves + every candidate with `created_by_role == "inhouse_telecaller"` (plus a legacy fallback by id). New candidates also persist `created_by_role` on insert.
   - **HR can delete bad/duplicate candidates**: new `DELETE /api/hiring/candidates/{cid}` (admin + HR only, blocks if already hired) with a 🗑 button per candidate row. Cascades clean any linked HR call-log references.
   - **Telecaller cards (SM)** now show **🗣 language** and **📍 place** badges; Add-Telecaller dialog has a new "Place / Locality" input.

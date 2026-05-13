@@ -4937,15 +4937,8 @@ async def mark_attendance(data: dict, current_user: dict = Depends(get_current_u
     login_time = data.get("login_time", "") or ("09:30" if status in ("present", "half_day") else "")
     logout_time = data.get("logout_time", "")
 
-    # 5:30 PM IST gate for logout_time updates
-    if logout_time:
-        ist_now = _ist_now()
-        cutoff = ist_now.replace(hour=17, minute=30, second=0, microsecond=0)
-        # Only enforce gate when marking TODAY's attendance
-        if att_date == _ist_today_iso() and ist_now < cutoff:
-            mins_left = int((cutoff - ist_now).total_seconds() / 60)
-            raise HTTPException(status_code=400,
-                detail=f"Logout time can only be set after 5:30 PM IST ({mins_left} min remaining)")
+    # NOTE: previous 5:30 PM IST gate removed — HR / Admin record attendance after-the-fact,
+    # so logout_time can be set at any time. Self check-in/out endpoints remain disabled.
 
     hours = _hours_between(login_time, logout_time) if login_time and logout_time else 0
     record = {
@@ -5015,16 +5008,14 @@ async def get_attendance_daily(date_filter: str = "", current_user: dict = Depen
             "att_id": rec.get('id', '') if rec else ''
         })
     rows.sort(key=lambda r: (r['user_role'], r['user_name']))
-    # Compute IST gating info
-    ist_now = _ist_now()
-    cutoff = ist_now.replace(hour=17, minute=30, second=0, microsecond=0)
-    can_set_logout = ist_now >= cutoff or target != _ist_today_iso()
+    # Logout gate removed — HR can set logout any time
+    can_set_logout = True
     return {
         "date": target,
         "rows": rows,
-        "ist_now": ist_now.strftime("%H:%M"),
+        "ist_now": _ist_now().strftime("%H:%M"),
         "can_set_logout": can_set_logout,
-        "logout_unlock_at": "17:30 IST",
+        "logout_unlock_at": "always",
         "summary": {
             "total": len(rows),
             "present": len([r for r in rows if r['status'] == 'present']),
@@ -6065,13 +6056,20 @@ async def get_leaderboard(role: str, month: str = "", year: str = "", current_us
     rows = []
     for u in users:
         oq = {"created_by": u['id'], "status": "delivered"}
-        if month and year: oq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        orders = await db.crm_orders.find(oq, {"_id": 0}).to_list(500)
-        revenue = sum(o.get('total_amount', 0) for o in orders)
-        comm = await db.commissions.find({"user_id": u['id']}, {"_id": 0}).to_list(500)
-        comm_total = sum(c.get('amount', 0) for c in comm)
+        if month and year:
+            oq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
+        orders = await db.orders.find(oq, {"_id": 0, "total_amount": 1}).to_list(500)
+        revenue = round(sum(o.get('total_amount', 0) for o in orders), 2)
+        cq = {"user_id": u['id']}
+        if month and year:
+            cq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
+        comm = await db.commissions.find(cq, {"_id": 0, "commission_amount": 1}).to_list(500)
+        comm_total = round(sum(c.get('commission_amount', 0) for c in comm), 2)
         rows.append({**u, "orders": len(orders), "revenue": revenue, "commission": comm_total})
-    rows.sort(key=lambda x: x['revenue'], reverse=True)
+    rows.sort(key=lambda x: (x['revenue'], x['orders'], x['commission']), reverse=True)
+    # Rank for UI convenience
+    for idx, r in enumerate(rows):
+        r['rank'] = idx + 1
     return {"leaderboard": rows[:20]}
 
 # ----- HR: Generic add-employee (any role) -----
