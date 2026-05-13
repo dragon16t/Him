@@ -243,7 +243,7 @@ export default function ManagerDashboard() {
                   <p className="font-medium text-sm mt-1">{o.customer_name} | {o.customer_phone}</p>
                   <p className="text-xs text-[#59615D]">{o.customer_address}</p>
                   {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
-                  <p className="font-heading font-semibold text-[#3B5249] mt-1">Total: Rs.{o.total_amount} <span className="font-normal text-xs text-[#59615D]">({o.payment_type}) | By: {o.created_by_name}</span></p>
+                  <p className="font-heading font-semibold text-[#3B5249] mt-1">Total: Rs.{o.total_amount} <span className="font-normal text-xs text-[#59615D]">({o.payment_type}) | By: {o.created_by_name || "—"}</span></p>
                 </div>
                 <div className="flex flex-wrap gap-2 items-start">
                   {o.status==="pending"&&<><Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)} data-testid={`approve-${o.id}`}><Check className="w-3 h-3 mr-1"/>Approve</Button><Button size="sm" variant="outline" className="rounded-full text-xs h-7 text-red-500" onClick={()=>rejectOrder(o.id)}><X className="w-3 h-3"/></Button></>}

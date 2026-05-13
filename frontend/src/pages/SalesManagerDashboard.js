@@ -340,7 +340,7 @@ export default function SalesManagerDashboard() {
                   <p className="font-medium text-sm mt-1">{o.customer_name} | {o.customer_phone}</p>
                   <p className="text-xs text-[#59615D]">{o.customer_address}</p>
                   {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
-                  <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount} ({o.payment_type}) | By: {o.created_by_name}</p>
+                  <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount} ({o.payment_type}) | By: {o.created_by_name || "—"}</p>
                 </div>
                 <div className="flex gap-2 items-start">
                   {o.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)}>Approve</Button>}

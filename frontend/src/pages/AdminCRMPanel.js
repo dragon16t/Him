@@ -543,7 +543,7 @@ export default function AdminCRMPanel() {
                     <p className="text-xs text-[#59615D]">{o.customer_phone} | {o.customer_address}</p>
                     {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
                     <p className="font-heading font-semibold text-[#3B5249] mt-1">Total: Rs.{o.total_amount} <span className="font-normal text-xs text-[#59615D]">({o.payment_type})</span></p>
-                    <p className="text-[10px] text-[#59615D] mt-1">By: {o.created_by_name} | {o.created_at?.slice(0,10)}</p>
+                    <p className="text-[10px] text-[#59615D] mt-1">By: {o.created_by_name || o.created_by_role || "—"} | {o.created_at?.slice(0,10)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2 items-start">
                     {!["shipped","delivered","rejected","cancelled"].includes(o.status) && <Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>setEditOrder(o)} data-testid={`edit-order-${o.id}`}>✏️ Edit</Button>}

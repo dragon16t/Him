@@ -2153,7 +2153,8 @@ async def create_content(data: dict, current_user: dict = Depends(get_current_us
     c = {"id": f"cnt-{uuid.uuid4().hex[:8]}", "title": data.get("title",""), "type": data.get("type",""),
          "platform": data.get("platform",""), "status": data.get("status","draft"),
          "assigned_to": data.get("assigned_to",""), "budget": data.get("budget",0),
-         "created_by": current_user['id'], "created_at": datetime.now(timezone.utc).isoformat()}
+         "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
+         "created_at": datetime.now(timezone.utc).isoformat()}
     await db.content_tracker.insert_one(c); c.pop("_id",None)
     return {"content": c}
 
@@ -2166,7 +2167,8 @@ async def create_contact(data: dict, current_user: dict = Depends(get_current_us
     c = {"id": f"con-{uuid.uuid4().hex[:8]}", "name": data.get("name",""), "phone": data.get("phone",""),
          "email": data.get("email",""), "type": data.get("type","influencer"),
          "notes": data.get("notes",""), "last_contact_date": data.get("last_contact_date",""),
-         "created_by": current_user['id'], "created_at": datetime.now(timezone.utc).isoformat()}
+         "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
+         "created_at": datetime.now(timezone.utc).isoformat()}
     await db.contacts.insert_one(c); c.pop("_id",None)
     return {"contact": c}
 
@@ -2186,7 +2188,8 @@ async def create_investment(data: dict, current_user: dict = Depends(get_current
     i = {"id": f"inv-{uuid.uuid4().hex[:8]}", "title": data.get("title",""), "amount": data.get("amount",0),
          "source": data.get("source",""), "partner_type": data.get("partner_type","main"),
          "date": data.get("date",""), "notes": data.get("notes",""),
-         "created_by": current_user['id'], "created_at": datetime.now(timezone.utc).isoformat()}
+         "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
+         "created_at": datetime.now(timezone.utc).isoformat()}
     await db.investments.insert_one(i); i.pop("_id",None)
     await record_transaction("credit", "investment", data.get("amount",0), f"Investment: {data.get('title','')} from {data.get('source','')} ({data.get('partner_type','main')} partner)", reference_id=i["id"], method="bank", created_by=current_user['id'])
     return {"investment": i}
@@ -3835,6 +3838,94 @@ async def _backfill_lead_last_order():
             )
     except Exception as e:
         logger.error(f"Lead last-order backfill skipped: {e}")
+
+# --- name lookup cache used by backfill so we don't hammer the db ---
+_name_cache = {}
+async def _lookup_user_name(uid: str) -> str:
+    """Find a user's display name by their id across every role collection.
+    Returns "" if not found. Caches in-process to keep startup fast."""
+    if not uid:
+        return ""
+    if uid in _name_cache:
+        return _name_cache[uid]
+    for coll in ROLE_COLLECTIONS.values():
+        u = await db[coll].find_one({"id": uid}, {"_id": 0, "name": 1})
+        if u and u.get("name"):
+            _name_cache[uid] = u["name"]
+            return u["name"]
+    _name_cache[uid] = ""
+    return ""
+
+async def _backfill_created_by_names():
+    """One-time hydration: for every collection that stores `created_by` as a raw user id
+    but is missing `created_by_name`, look up the user's name and stamp it. This is what
+    was causing 'tc-3eed7f' / 'sm-1f2…' to show up in the UI instead of the staff member's
+    real name on expense / order / candidate / task / fund-request lists.
+
+    Also fills `paid_to_user_name` / `assigned_to_name` / `requested_by_name` /
+    `approved_by_name` / `forwarded_to_name` / `head_name` / `created_by_role` where
+    blank but the corresponding id is set."""
+    # (collection_name, [(id_field, name_field, role_field_or_None)])
+    targets = [
+        ("expenses", [("created_by", "created_by_name", None), ("approved_by", "approved_by_name", None),
+                      ("paid_to_user_id", "paid_to_name", None)]),
+        ("orders", [("created_by", "created_by_name", "created_by_role"), ("approved_by", "approved_by_name", None),
+                    ("shipped_by", "shipped_by_name", None), ("delivered_by", "delivered_by_name", None),
+                    ("last_edited_by", "last_edited_by_name", "last_edited_by_role")]),
+        ("hiring_candidates", [("created_by", "created_by_name", "created_by_role"),
+                               ("forwarded_to", "forwarded_to_name", "forwarded_role"),
+                               ("manager_selected_by", "manager_selected_by_name", "manager_selected_by_role")]),
+        ("leads", [("assigned_to", "assigned_to_name", None), ("created_by", "created_by_name", None)]),
+        ("tasks", [("assigned_to", "assigned_to_name", None), ("created_by", "created_by_name", None)]),
+        ("fund_requests", [("requested_by", "requested_by_name", None), ("approved_by", "approved_by_name", None)]),
+        ("investments", [("created_by", "created_by_name", None)]),
+        ("commissions", [("user_id", "user_name", "user_role")]),
+        ("payroll", [("user_id", "user_name", "user_role")]),
+        ("notifications", [("user_id", "user_name", None)]),
+        ("attendance", [("user_id", "user_name", None)]),
+        ("team_groups", [("created_by", "created_by_name", "created_by_role"), ("head_id", "head_name", None)]),
+        ("instructions", [("created_by", "created_by_name", None)]),
+        ("tickets", [("user_id", "user_name", None)]),
+        ("complaints", [("user_id", "user_name", None)]),
+        ("leaves", [("user_id", "user_name", None)]),
+        ("audit_logs", [("user_id", "changed_by_name", None)]),
+    ]
+    role_lookup_cache = {}
+    async def _lookup_role(uid):
+        if not uid: return ""
+        if uid in role_lookup_cache: return role_lookup_cache[uid]
+        for role, coll in ROLE_COLLECTIONS.items():
+            u = await db[coll].find_one({"id": uid}, {"_id": 0, "id": 1})
+            if u:
+                role_lookup_cache[uid] = role
+                return role
+        role_lookup_cache[uid] = ""
+        return ""
+
+    total_fixed = 0
+    for coll_name, mappings in targets:
+        try:
+            for id_field, name_field, role_field in mappings:
+                # Find docs that have an id but a missing/blank name
+                async for doc in db[coll_name].find(
+                    {id_field: {"$exists": True, "$ne": "", "$ne": None},
+                     "$or": [{name_field: {"$exists": False}}, {name_field: ""}, {name_field: None}]},
+                    {"_id": 0, "id": 1, id_field: 1}
+                ):
+                    uid = doc.get(id_field)
+                    if not uid: continue
+                    name = await _lookup_user_name(uid)
+                    if not name: continue
+                    update = {name_field: name}
+                    if role_field:
+                        role = await _lookup_role(uid)
+                        if role: update[role_field] = role
+                    await db[coll_name].update_one({"id": doc["id"]}, {"$set": update})
+                    total_fixed += 1
+        except Exception as e:
+            logger.error(f"name backfill on {coll_name} skipped: {e}")
+    if total_fixed:
+        logger.info(f"Hydrated {total_fixed} '_name' fields across legacy records.")
 
 @api_router.get("/hr/employment-terms")
 async def get_employment_terms(current_user: dict = Depends(get_current_user)):
@@ -6481,6 +6572,7 @@ async def startup():
     init_storage()
     await _refresh_employment_terms_cache()
     await _backfill_lead_last_order()
+    await _backfill_created_by_names()
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")
