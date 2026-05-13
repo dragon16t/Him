@@ -80,6 +80,7 @@ export default function HRManagerDashboard() {
   const [showEditEmp, setShowEditEmp] = useState(false);
   const [showDocTemplates, setShowDocTemplates] = useState(false);
   const [hiringFilter, setHiringFilter] = useState("all");
+  const [hiringSelected, setHiringSelected] = useState(new Set());
   // Final Hire flow — pick manager
   const [showFinalHire, setShowFinalHire] = useState(false);
   const [hireCandidate, setHireCandidate] = useState(null);
@@ -639,11 +640,53 @@ export default function HRManagerDashboard() {
               const list = hiringFilter === "all" ? hiringCandidates :
                 hiringFilter === "forwarded" ? hiringCandidates.filter(c=>c.forwarded_to) :
                 hiringCandidates.filter(c=>c.status === hiringFilter);
+              const selectableList = list.filter(c => c.status !== 'hired');
+              const allSelected = selectableList.length > 0 && selectableList.every(c => hiringSelected.has(c.id));
+              const toggleAll = () => {
+                if (allSelected) setHiringSelected(new Set());
+                else setHiringSelected(new Set(selectableList.map(c => c.id)));
+              };
+              const toggleOne = (id) => {
+                setHiringSelected(prev => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id); else next.add(id);
+                  return next;
+                });
+              };
+              const bulkDelete = async () => {
+                const ids = Array.from(hiringSelected);
+                if (!ids.length) return;
+                if (!window.confirm(`Delete ${ids.length} candidate(s)? Already-hired ones will be skipped automatically. This cannot be undone.`)) return;
+                try {
+                  const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids });
+                  toast.success(data.message || `Deleted ${data.deleted}`);
+                  setHiringSelected(new Set());
+                  fetchData();
+                } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+              };
               return list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">{hiringFilter==="all"?"No candidates yet":`No candidates with status "${hiringFilter.replace(/_/g," ")}"`}</p>:
+              <>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap bg-[#F9F8F6] border border-[#E5E3DB] rounded-xl px-3 py-2" data-testid="hr-hiring-bulk-bar">
+                <label className="flex items-center gap-2 cursor-pointer text-xs">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 accent-[#3B5249]" data-testid="hr-hiring-select-all"/>
+                  <span className="text-[#59615D]">Select all {selectableList.length === list.length ? `(${list.length})` : `(${selectableList.length} of ${list.length} eligible)`}</span>
+                </label>
+                {hiringSelected.size > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-[#3B5249]" data-testid="hr-hiring-selected-count">{hiringSelected.size} selected</span>
+                    <Button size="sm" variant="outline" className="rounded-full h-7 text-[10px]" onClick={()=>setHiringSelected(new Set())}>Clear</Button>
+                    <Button size="sm" className="rounded-full h-7 text-[10px] bg-red-600 text-white hover:bg-red-700" onClick={bulkDelete} data-testid="hr-hiring-bulk-delete">🗑 Delete Selected</Button>
+                  </div>
+                )}
+              </div>
               <div className="space-y-2" data-testid="hr-hiring-list">{list.map(c=>(
-              <div key={c.id} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`hr-cand-${c.id}`}>
+              <div key={c.id} className={`border rounded-xl p-3 transition-colors ${hiringSelected.has(c.id) ? 'border-[#3B5249] bg-[#F9F8F6]' : 'border-[#E5E3DB]'}`} data-testid={`hr-cand-${c.id}`}>
                 <div className="flex justify-between items-start gap-2 flex-wrap">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-2 flex-1 min-w-0">
+                    {c.status !== 'hired' && (
+                      <input type="checkbox" checked={hiringSelected.has(c.id)} onChange={()=>toggleOne(c.id)} className="w-4 h-4 mt-1 accent-[#3B5249] flex-shrink-0" data-testid={`hr-cand-select-${c.id}`}/>
+                    )}
+                    <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap"><p className="font-medium text-sm">{c.name}</p>
                       <Badge variant="outline" className="text-[8px] capitalize">{c.position}</Badge>
                       <Badge className={`text-[8px] capitalize ${c.status==='hired'?'bg-green-100 text-green-800':c.status==='rejected'||c.status==='not_interested'?'bg-red-100 text-red-800':c.status==='selected'?'bg-blue-100 text-blue-800':c.status==='interviewed'?'bg-purple-100 text-purple-800':c.status==='not_answering'||c.status==='no_response'?'bg-orange-100 text-orange-800':c.status==='callback'?'bg-cyan-100 text-cyan-800':'bg-yellow-100 text-yellow-800'}`}>{(c.status||"").replace(/_/g," ")}</Badge>
@@ -657,6 +700,7 @@ export default function HRManagerDashboard() {
                     {c.forwarded_to && <p className="text-[10px] text-pink-700 font-medium bg-pink-50 inline-block px-2 py-0.5 rounded mt-0.5" data-testid={`forwarded-info-${c.id}`}>→ Forwarded to <b>{c.forwarded_to_name}</b>{c.forwarded_role && <span className="font-normal"> ({(c.forwarded_role||'').replace(/_/g,' ')})</span>}{c.forwarded_at && <span className="text-pink-500 font-normal"> · {String(c.forwarded_at).slice(0,10)}</span>}</p>}
                     {c.manager_selected_by_name && <p className="text-[10px] text-emerald-700 font-medium mt-0.5">✓ Recommended by {c.manager_selected_by_name} ({(c.manager_selected_by_role||'').replace(/_/g,' ')}) — awaiting your final hire approval</p>}
                     {c.notes && <p className="text-[10px] text-[#59615D] italic mt-0.5">&quot;{c.notes}&quot;</p>}
+                  </div>
                   </div>
                   <div className="flex flex-col gap-1 items-end">
                     <Select value={c.status} onValueChange={async(v)=>{try{await axios.put(`${API}/hiring/candidates/${c.id}`,{status:v});toast.success("Updated");fetchData();}catch{toast.error("Failed");}}}>
@@ -684,7 +728,8 @@ export default function HRManagerDashboard() {
                   </div>
                 </div>
               </div>
-            ))}</div>;
+            ))}</div>
+              </>;
             })()}
           </div></TabsContent>
 

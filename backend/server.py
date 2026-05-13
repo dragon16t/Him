@@ -4670,6 +4670,24 @@ async def delete_hiring_candidate(cid: str, current_user: dict = Depends(get_cur
     await db.hr_call_logs.update_many({"linked_candidate_id": cid}, {"$set": {"linked_candidate_id": "", "linked_candidate_name": ""}})
     return {"message": "Candidate deleted" if r.deleted_count else "Nothing to delete", "name": cand.get("name", "")}
 
+@api_router.post("/hiring/candidates/bulk-delete")
+async def bulk_delete_hiring_candidates(data: dict, current_user: dict = Depends(get_current_user)):
+    """Bulk delete candidates. Admin + HR Manager only. Skips already-hired entries."""
+    if current_user['role'] not in ('admin', 'hr_manager'):
+        raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="ids list is required")
+    # Don't allow deletion of already-hired candidates via bulk path
+    cursor = db.hiring_candidates.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1})
+    deletable = [c["id"] async for c in cursor if c.get("status") != "hired"]
+    skipped = len(ids) - len(deletable)
+    if not deletable:
+        return {"deleted": 0, "skipped": skipped, "message": "Nothing deletable (already-hired candidates are protected)"}
+    r = await db.hiring_candidates.delete_many({"id": {"$in": deletable}})
+    await db.hr_call_logs.update_many({"linked_candidate_id": {"$in": deletable}}, {"$set": {"linked_candidate_id": "", "linked_candidate_name": ""}})
+    return {"deleted": r.deleted_count, "skipped": skipped, "message": f"Deleted {r.deleted_count} candidate(s)" + (f" · {skipped} skipped (hired)" if skipped else "")}
+
 # Forward candidate to a specific manager (SM/DM)
 @api_router.post("/hiring/forward/{cid}")
 async def forward_hire_candidate(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
