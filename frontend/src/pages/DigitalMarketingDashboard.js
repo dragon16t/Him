@@ -329,7 +329,7 @@ export default function DigitalMarketingDashboard() {
                   toast.success("Results logged & manager notified");
                   setResultsForm({date:new Date().toISOString().slice(0,10),leads:0,impressions:0,messages:0,clicks:0,spend:0,conversions:0,notes:""});
                   fetchData();
-                } catch { toast.error("Failed"); }
+                } catch (e) { toast.error(e.response?.data?.detail || e.message || "Failed to save results"); }
               }} className="rounded-full bg-[#3B5249] text-white" data-testid="results-submit">Save Today's Results</Button>
             </div>
           </TabsContent>

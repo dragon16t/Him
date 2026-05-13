@@ -1334,8 +1334,8 @@ def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
         return {"user": u, "message": f"{coll_name} created"}
     return create_user
 
-api_router.add_api_route("/telecallers", _create_user_factory("telecallers","tc","tc123",{"status":"active","commission_earned":0,"total_calls":0,"conversions":0,"language":""}), methods=["POST"])
-api_router.add_api_route("/agents", _create_user_factory("agents","agent","agent123",{"district":"","area":"","region_id":"","phone":"","status":"active","inventory":{},"commission_earned":0,"total_sales":0}), methods=["POST"])
+api_router.add_api_route("/telecallers", _create_user_factory("telecallers","tc","tc123",{"status":"active","commission_earned":0,"total_calls":0,"conversions":0,"language":"","location":""}), methods=["POST"])
+api_router.add_api_route("/agents", _create_user_factory("agents","agent","agent123",{"district":"","area":"","region_id":"","phone":"","status":"active","inventory":{},"commission_earned":0,"total_sales":0,"language":""}), methods=["POST"])
 api_router.add_api_route("/managers", _create_user_factory("managers","mgr","mgr123",{"region_id":"","commission_earned":0,"assigned_districts":[]}), methods=["POST"])
 api_router.add_api_route("/sales-managers", _create_user_factory("sales_managers","sm","sm123",{"commission_earned":0}), methods=["POST"])
 api_router.add_api_route("/finance-managers", _create_user_factory("finance_managers","fin","fin123",{}), methods=["POST"])
@@ -4558,6 +4558,7 @@ async def log_hiring_candidate(data: dict, current_user: dict = Depends(get_curr
              "forwarded_to": data.get("forwarded_to",""), "forwarded_to_name": data.get("forwarded_to_name",""),
              "forwarded_role": data.get("forwarded_role",""), "forwarded_at": "",
              "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
+             "created_by_role": current_user.get('role',''),
              "created_at": datetime.now(timezone.utc).isoformat()}
     await db.hiring_candidates.insert_one(entry); entry.pop("_id", None)
     return {"entry": entry}
@@ -4573,9 +4574,16 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
     if role == 'inhouse_telecaller':
         query["created_by"] = current_user['id']
     elif role == 'hr_manager':
-        # HR sees only candidates THEY added unless show_all=true
+        # HR sees: candidates they created + every candidate added by an in-house telecaller
+        # (whose entire purpose is to feed the HR pipeline). Other HRs' private candidates
+        # remain scoped to them.
         if not show_all:
-            query["created_by"] = current_user['id']
+            ihtc_ids = [u['id'] async for u in db.inhouse_telecallers.find({}, {"_id":0,"id":1})]
+            query = {"$or": [
+                {"created_by": current_user['id']},
+                {"created_by_role": "inhouse_telecaller"},
+                {"created_by": {"$in": ihtc_ids}},  # legacy docs lacking created_by_role
+            ]}
     elif role == 'social_media_manager':
         if not show_all:
             query["created_by"] = current_user['id']
@@ -4606,6 +4614,21 @@ async def update_hiring_candidate(cid: str, data: dict, current_user: dict = Dep
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.hiring_candidates.update_one({"id": cid}, {"$set": update})
     return {"message": "Candidate updated"}
+
+@api_router.delete("/hiring/candidates/{cid}")
+async def delete_hiring_candidate(cid: str, current_user: dict = Depends(get_current_user)):
+    """Remove a duplicate / wrong candidate. Admin + HR Manager only."""
+    if current_user['role'] not in ('admin', 'hr_manager'):
+        raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
+    cand = await db.hiring_candidates.find_one({"id": cid}, {"_id": 0, "status": 1, "name": 1})
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if cand.get("status") == "hired":
+        raise HTTPException(status_code=400, detail="Cannot delete a candidate who is already hired — terminate via Employees tab instead")
+    r = await db.hiring_candidates.delete_one({"id": cid})
+    # Cascade: detach any HR call logs linked to this candidate so they don't reference a ghost
+    await db.hr_call_logs.update_many({"linked_candidate_id": cid}, {"$set": {"linked_candidate_id": "", "linked_candidate_name": ""}})
+    return {"message": "Candidate deleted" if r.deleted_count else "Nothing to delete", "name": cand.get("name", "")}
 
 # Forward candidate to a specific manager (SM/DM)
 @api_router.post("/hiring/forward/{cid}")
@@ -5510,14 +5533,20 @@ async def add_daily_metric(cid: str, data: dict, current_user: dict = Depends(ge
     # Validate campaign exists
     campaign = await db.campaigns.find_one({"id": cid}, {"_id": 0})
     if not campaign: raise HTTPException(status_code=404, detail="Campaign not found")
-    metric_date = data.get("date", date.today().isoformat())
+    metric_date = data.get("date") or date.today().isoformat()
+    def _i(v):  # tolerate empty strings / None coming from the form
+        try: return int(float(v)) if v not in (None, "", "null") else 0
+        except (ValueError, TypeError): return 0
+    def _f(v):
+        try: return float(v) if v not in (None, "", "null") else 0.0
+        except (ValueError, TypeError): return 0.0
     # Upsert per (campaign_id, date)
     rec = {"id": f"dm-{uuid.uuid4().hex[:8]}", "campaign_id": cid,
            "date": metric_date,
-           "leads": int(data.get("leads", 0)), "impressions": int(data.get("impressions", 0)),
-           "messages": int(data.get("messages", 0)), "clicks": int(data.get("clicks", 0)),
-           "spend": float(data.get("spend", 0)), "conversions": int(data.get("conversions", 0)),
-           "reach": int(data.get("reach", 0)), "engagement": int(data.get("engagement", 0)),
+           "leads": _i(data.get("leads")), "impressions": _i(data.get("impressions")),
+           "messages": _i(data.get("messages")), "clicks": _i(data.get("clicks")),
+           "spend": _f(data.get("spend")), "conversions": _i(data.get("conversions")),
+           "reach": _i(data.get("reach")), "engagement": _i(data.get("engagement")),
            "notes": data.get("notes", ""),
            "logged_by": current_user['id'], "logged_by_name": current_user.get('name',''),
            "created_at": datetime.now(timezone.utc).isoformat()}

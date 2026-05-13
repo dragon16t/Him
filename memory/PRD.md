@@ -12,6 +12,12 @@ Clone https://github.com/shadnazar/HRM1.git and build a fast, full-featured CRM 
 - Deployed at https://portal.veegal.com (user-managed). Preview is the dev sandbox only.
 
 ## Implemented (latest first)
+- **Feb 2026** — Hiring & profile-card fixes:
+  - **HR Hiring no longer misses inhouse-telecaller candidates**: query now includes candidates created by HR themselves + every candidate with `created_by_role == "inhouse_telecaller"` (plus a legacy fallback by id). New candidates also persist `created_by_role` on insert.
+  - **HR can delete bad/duplicate candidates**: new `DELETE /api/hiring/candidates/{cid}` (admin + HR only, blocks if already hired) with a 🗑 button per candidate row. Cascades clean any linked HR call-log references.
+  - **Telecaller cards (SM)** now show **🗣 language** and **📍 place** badges; Add-Telecaller dialog has a new "Place / Locality" input.
+  - **Agent cards (DM)** now show **🗣 language** and **📍 locality/location/city** badges; Add-Agent dialog has a new "Language" input. Backend agent factory now stores `language`; telecaller factory now stores `location`.
+  - **Digital Marketing — "Save Today's Results" fix**: `POST /api/campaigns/{cid}/daily-metrics` now tolerates empty-string inputs (no more 500 on partial forms) and the frontend surfaces the real backend error instead of a generic "Failed".
 - **Feb 2026** — Hiring + Repeat/Relationship hardening across SM/DM dashboards:
   - **Manager hiring** is now strictly forward-gated (no status-based leak); HR's hiring list shows a dedicated **"→ Forwarded to &lt;Manager Name&gt; (&lt;role&gt;) · &lt;date&gt;"** info line per candidate.
   - **/api/leads/follow-ups** scoping fixed: SM sees only leads owned by their managed telecallers; DM only by their managed agents; ASM/ADM inherit their manager's team. No more overlap.
