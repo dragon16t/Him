@@ -1175,6 +1175,46 @@ async def log_agent_call(aid: str, data: dict, current_user: dict = Depends(get_
 async def get_agent_call_logs(aid: str, current_user: dict = Depends(get_current_user)):
     return {"call_logs": await db.agent_call_logs.find({"agent_id": aid}, {"_id": 0}).sort("created_at", -1).to_list(50)}
 
+@api_router.put("/telecallers/{tid}")
+async def update_telecaller(tid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """SM (only their TC) / admin can edit telecaller profile fields (language, location, phone, name)."""
+    if current_user['role'] not in ('admin', 'sales_manager', 'assistant_sales_manager'):
+        raise HTTPException(status_code=403)
+    tc = await db.telecallers.find_one({"id": tid}, {"_id": 0, "managed_by": 1})
+    if not tc:
+        raise HTTPException(status_code=404, detail="Telecaller not found")
+    if current_user['role'] == 'sales_manager' and tc.get('managed_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your telecaller")
+    if current_user['role'] == 'assistant_sales_manager' and tc.get('managed_by') != current_user.get('managed_by',''):
+        raise HTTPException(status_code=403, detail="Not in your team")
+    allowed = {"name", "phone", "language", "location"}
+    update = {k: v for k, v in data.items() if k in allowed}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.telecallers.update_one({"id": tid}, {"$set": update})
+    return {"message": "Telecaller updated", "fields": list(update.keys())}
+
+@api_router.put("/agents/{aid}")
+async def update_agent(aid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """DM (only their agent) / admin can edit agent profile fields (language, area, district, phone, name)."""
+    if current_user['role'] not in ('admin', 'district_manager', 'assistant_district_manager'):
+        raise HTTPException(status_code=403)
+    ag = await db.agents.find_one({"id": aid}, {"_id": 0, "managed_by": 1})
+    if not ag:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if current_user['role'] == 'district_manager' and ag.get('managed_by') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your agent")
+    if current_user['role'] == 'assistant_district_manager' and ag.get('managed_by') != current_user.get('managed_by',''):
+        raise HTTPException(status_code=403, detail="Not in your team")
+    allowed = {"name", "phone", "language", "area", "district", "location"}
+    update = {k: v for k, v in data.items() if k in allowed}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.agents.update_one({"id": aid}, {"$set": update})
+    return {"message": "Agent updated", "fields": list(update.keys())}
+
 # ==================== UNIFIED CALL LOG SHEET (HR/SM/DM/Admin) ====================
 @api_router.get("/call-logs/all")
 async def get_all_call_logs(month: str = "", year: str = "", current_user: dict = Depends(get_current_user)):
