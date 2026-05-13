@@ -130,9 +130,13 @@ export default function AssistantManagerDashboard({ type = "district" }) {
           <TabsContent value="team"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">{teamLabel} ({members.length})</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{members.map(m=>(
-              <div key={m.id} className="border border-[#E5E3DB] rounded-xl p-3">
+              <div key={m.id} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`asm-member-${m.id}`}>
                 <div className="flex justify-between items-start"><div><p className="font-heading font-medium text-sm">{m.name}</p><p className="text-xs text-[#59615D]">{m.email}</p>{m.phone&&<p className="text-xs text-[#59615D]">{m.phone}</p>}</div>
                   {m.phone&&<a href={`tel:${m.phone}`}><Button size="sm" variant="outline" className="rounded-full h-7 w-7 p-0 border-[#6B8E6B] text-[#6B8E6B]"><Phone className="w-3 h-3"/></Button></a>}
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {m.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`m-lang-${m.id}`}>🗣 {m.language}</Badge>}
+                  {(m.locality || m.location || m.area || m.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`m-place-${m.id}`}>📍 {m.locality || m.location || m.area || m.city}{m.district && m.district !== (m.locality || m.location || m.area || m.city) ? `, ${m.district}` : ""}</Badge>}
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2 text-center">
                   <div className="bg-[#F9F8F6] rounded-lg p-1"><p className="text-[9px] text-[#59615D]">Salary</p><p className="font-semibold text-xs">Rs.{m.salary||0}</p></div>
