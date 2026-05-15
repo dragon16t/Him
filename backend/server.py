@@ -557,6 +557,7 @@ async def change_password(data: dict, current_user: dict = Depends(get_current_u
 # ==================== LEAD ROUTES ====================
 @api_router.get("/leads")
 async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = None,
+                   created_by: Optional[str] = None,
                    limit: int = 500, skip: int = 0,
                    month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
                    current_user: dict = Depends(get_current_user)):
@@ -564,16 +565,17 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
-        # SM sees only leads assigned to their telecallers
+        # SM sees only leads added by their telecallers (their real contribution)
         tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
         ids = [t['id'] for t in tcs] + [current_user['id']]
         # If a specific telecaller is requested, restrict to that one (but only if in scope)
-        if assigned_to:
-            if assigned_to not in ids:
+        target = created_by or assigned_to
+        if target:
+            if target not in ids:
                 raise HTTPException(status_code=403, detail="Not your telecaller")
-            query['assigned_to'] = assigned_to
+            query['created_by'] = target
         else:
-            query['assigned_to'] = {"$in": ids}
+            query['created_by'] = {"$in": ids}
     elif current_user['role'] == 'assistant_sales_manager':
         sm_id = current_user.get('managed_by','')
         tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
@@ -1206,7 +1208,8 @@ async def get_telecallers(days: Optional[int] = None, current_user: dict = Depen
         tc['total_calls'] = call_count
         conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}})
         tc['conversions'] = conv
-        tc['total_leads'] = await db.leads.count_documents({"assigned_to": tc['id']})
+        # Show leads ADDED BY this telecaller (not just assigned), so SM sees her real contribution
+        tc['total_leads'] = await db.leads.count_documents({"created_by": tc['id']})
         comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(500)
         tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
     # Windowed counts when `days` is provided (3/7/15/30) for the SM tab filter chips
@@ -1227,7 +1230,7 @@ async def get_telecallers(days: Optional[int] = None, current_user: dict = Depen
                 "created_at": {"$gte": cutoff_iso}
             })
             tc['window_leads'] = await db.leads.count_documents({
-                "assigned_to": tc['id'], "created_at": {"$gte": cutoff_iso}
+                "created_by": tc['id'], "created_at": {"$gte": cutoff_iso}
             })
     return {"telecallers": tcs}
 
