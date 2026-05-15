@@ -567,11 +567,42 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
         # SM sees only leads assigned to their telecallers
         tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
         ids = [t['id'] for t in tcs] + [current_user['id']]
-        query['assigned_to'] = {"$in": ids}
+        # If a specific telecaller is requested, restrict to that one (but only if in scope)
+        if assigned_to:
+            if assigned_to not in ids:
+                raise HTTPException(status_code=403, detail="Not your telecaller")
+            query['assigned_to'] = assigned_to
+        else:
+            query['assigned_to'] = {"$in": ids}
+    elif current_user['role'] == 'assistant_sales_manager':
+        sm_id = current_user.get('managed_by','')
+        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
+        ids = [t['id'] for t in tcs] + [sm_id]
+        if assigned_to:
+            if assigned_to not in ids:
+                raise HTTPException(status_code=403, detail="Not in your team")
+            query['assigned_to'] = assigned_to
+        else:
+            query['assigned_to'] = {"$in": ids}
     elif current_user['role'] == 'district_manager':
         ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
         ids = [a['id'] for a in ags] + [current_user['id']]
-        query['assigned_to'] = {"$in": ids}
+        if assigned_to:
+            if assigned_to not in ids:
+                raise HTTPException(status_code=403, detail="Not your agent")
+            query['assigned_to'] = assigned_to
+        else:
+            query['assigned_to'] = {"$in": ids}
+    elif current_user['role'] == 'assistant_district_manager':
+        dm_id = current_user.get('managed_by','')
+        ags = await db.agents.find({"managed_by": dm_id}, {"_id":0,"id":1}).to_list(500)
+        ids = [a['id'] for a in ags] + [dm_id]
+        if assigned_to:
+            if assigned_to not in ids:
+                raise HTTPException(status_code=403, detail="Not in your team")
+            query['assigned_to'] = assigned_to
+        else:
+            query['assigned_to'] = {"$in": ids}
     elif assigned_to: query['assigned_to'] = assigned_to
     if status: query['status'] = status
     else:
