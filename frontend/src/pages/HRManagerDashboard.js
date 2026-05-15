@@ -48,6 +48,12 @@ export default function HRManagerDashboard() {
   const [resignations, setResignations] = useState([]);
   const [hrCalls, setHrCalls] = useState([]);
   const [hrCallToday, setHrCallToday] = useState(0);
+  const [hrCallTotal, setHrCallTotal] = useState(0);
+  const [hrCallByHr, setHrCallByHr] = useState([]);
+  const [hrCallFilter, setHrCallFilter] = useState("");  // caller_id filter
+  const [hrCallPage, setHrCallPage] = useState(1);
+  const [hrTeam, setHrTeam] = useState([]);  // hr_managers w/ stats
+  const HR_CALL_PAGE_SIZE = 50;
   const [forwardManagers, setForwardManagers] = useState({sales_managers:[],district_managers:[]});
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [showHRCall, setShowHRCall] = useState(false);
@@ -134,16 +140,19 @@ export default function HRManagerDashboard() {
         setBirthdays(bd.data); setResignations(rg.data.resignations||[]);
       } catch {}
       try {
-        const [hc, mgrs] = await Promise.all([
-          axios.get(`${API}/hr/call-logs`).catch(()=>({data:{call_logs:[],today_count:0}})),
-          axios.get(`${API}/hr/managers-for-forwarding`).catch(()=>({data:{sales_managers:[],district_managers:[]}}))
+        const [hc, mgrs, hrteam] = await Promise.all([
+          axios.get(`${API}/hr/call-logs`, { params: { caller_id: hrCallFilter || undefined, skip: (hrCallPage-1)*HR_CALL_PAGE_SIZE, limit: HR_CALL_PAGE_SIZE } }).catch(()=>({data:{call_logs:[],today_count:0,total:0,by_hr:[]}})),
+          axios.get(`${API}/hr/managers-for-forwarding`).catch(()=>({data:{sales_managers:[],district_managers:[]}})),
+          axios.get(`${API}/hr-managers`).catch(()=>({data:{hr_managers:[]}}))
         ]);
         setHrCalls(hc.data.call_logs||[]); setHrCallToday(hc.data.today_count||0);
+        setHrCallTotal(hc.data.total||0); setHrCallByHr(hc.data.by_hr||[]);
+        setHrTeam(hrteam.data.hr_managers||[]);
         setForwardManagers(mgrs.data);
       } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
-  }, [hiringIncludeHired]);
+  }, [hiringIncludeHired, hrCallFilter, hrCallPage]);
   // Attendance helpers (declared before the useEffects that depend on them)
   const fetchDailyAtt = useCallback(async (d) => {
     try {
@@ -795,25 +804,58 @@ export default function HRManagerDashboard() {
             })()}
           </div></TabsContent>
 
-          {/* HR CALL LOGS — HR's own calls */}
+          {/* HR CALL LOGS — All HR calls (with per-HR breakdown + pagination) */}
           <TabsContent value="hrcalls"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-3"><h3 className="font-heading text-lg font-medium">My HR Calls ({hrCalls.length} total | Today: {hrCallToday})</h3>
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">HR Calls — Total: {hrCallTotal} | Today: {hrCallToday}</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setHrCallForm({contact_name:"",phone:"",purpose:"candidate_followup",linked_candidate_id:"",duration_min:0,outcome:"contacted",next_action:"",next_action_date:"",notes:""});setShowHRCall(true);}} data-testid="hr-log-call-btn"><Phone className="w-3 h-3 mr-1"/>Log Call</Button>
             </div>
-            {hrCalls.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No calls logged. Use "Log Call" or click 📞 next to a candidate.</p>:
-              <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Contact","Phone","Purpose","Outcome","Duration","Next Action","Notes"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase">{h}</th>)}</tr></thead>
-                <tbody>{hrCalls.map(l=>(
-                  <tr key={l.id} className="border-b border-[#E5E3DB]" data-testid={`hrcall-${l.id}`}>
-                    <td className="p-2">{l.call_date}</td>
-                    <td className="p-2 font-medium">{l.contact_name}</td>
-                    <td className="p-2"><a href={`tel:${l.phone}`} className="text-[#3B5249] underline">{l.phone}</a></td>
-                    <td className="p-2"><Badge variant="outline" className="text-[8px] capitalize">{(l.purpose||"").replace(/_/g," ")}</Badge></td>
-                    <td className="p-2"><Badge className={`text-[8px] capitalize ${l.outcome==='accepted_offer'||l.outcome==='scheduled_interview'?'bg-green-100 text-green-800':l.outcome==='rejected_offer'?'bg-red-100 text-red-800':'bg-yellow-100 text-yellow-800'}`}>{(l.outcome||"").replace(/_/g," ")}</Badge></td>
-                    <td className="p-2">{l.duration_min}min</td>
-                    <td className="p-2 text-[10px]">{l.next_action} {l.next_action_date&&`(${l.next_action_date})`}</td>
-                    <td className="p-2 text-[10px]">{(l.notes||"").slice(0,50)}</td>
-                  </tr>
-                ))}</tbody></table></div>}
+
+            {/* Per-HR stats cards */}
+            {hrTeam.length>0 && <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
+              {hrTeam.map(h=>(
+                <button key={h.id} onClick={()=>{setHrCallFilter(hrCallFilter===h.id?"":h.id); setHrCallPage(1);}} className={`text-left rounded-xl p-3 border transition-all ${hrCallFilter===h.id?"border-[#3B5249] bg-[#F4ECD2]/40":"border-[#E5E3DB] bg-[#F9F8F6] hover:border-[#3B5249]"}`} data-testid={`hr-stat-${h.id}`}>
+                  <p className="font-medium text-sm text-[#3B5249] truncate">{h.name}</p>
+                  <p className="text-[10px] text-[#59615D] truncate">{h.email}</p>
+                  <div className="grid grid-cols-3 gap-1 mt-2">
+                    <div className="bg-white rounded p-1"><p className="text-[8px] text-[#59615D]">Calls</p><p className="font-semibold text-xs">{h.total_calls||0}</p></div>
+                    <div className="bg-white rounded p-1"><p className="text-[8px] text-[#59615D]">Today</p><p className="font-semibold text-xs">{h.today_calls||0}</p></div>
+                    <div className="bg-white rounded p-1"><p className="text-[8px] text-[#59615D]">Added</p><p className="font-semibold text-xs">{h.candidates_added||0}</p></div>
+                  </div>
+                </button>
+              ))}
+            </div>}
+
+            {/* Filter chip */}
+            {hrCallFilter && <div className="mb-2 flex items-center gap-2"><Badge className="bg-[#3B5249] text-white text-[10px]">Showing: {hrTeam.find(x=>x.id===hrCallFilter)?.name || hrCallFilter}</Badge><Button size="sm" variant="outline" className="rounded-full text-[10px] h-6" onClick={()=>{setHrCallFilter(""); setHrCallPage(1);}}>Clear filter</Button></div>}
+
+            {hrCalls.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No calls logged for this view.</p>:
+              <>
+                <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","HR","Contact","Phone","Purpose","Outcome","Duration","Next Action","Notes"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase">{h}</th>)}</tr></thead>
+                  <tbody>{hrCalls.map(l=>(
+                    <tr key={l.id} className="border-b border-[#E5E3DB]" data-testid={`hrcall-${l.id}`}>
+                      <td className="p-2">{l.call_date}</td>
+                      <td className="p-2 font-medium text-[#3B5249]">{l.caller_name||"—"}</td>
+                      <td className="p-2">{l.contact_name}</td>
+                      <td className="p-2"><a href={`tel:${l.phone}`} className="text-[#3B5249] underline">{l.phone}</a></td>
+                      <td className="p-2"><Badge variant="outline" className="text-[8px] capitalize">{(l.purpose||"").replace(/_/g," ")}</Badge></td>
+                      <td className="p-2"><Badge className={`text-[8px] capitalize ${l.outcome==='accepted_offer'||l.outcome==='scheduled_interview'?'bg-green-100 text-green-800':l.outcome==='rejected_offer'?'bg-red-100 text-red-800':'bg-yellow-100 text-yellow-800'}`}>{(l.outcome||"").replace(/_/g," ")}</Badge></td>
+                      <td className="p-2">{l.duration_min}min</td>
+                      <td className="p-2 text-[10px]">{l.next_action} {l.next_action_date&&`(${l.next_action_date})`}</td>
+                      <td className="p-2 text-[10px]">{(l.notes||"").slice(0,50)}</td>
+                    </tr>
+                  ))}</tbody></table></div>
+
+                {/* Pagination */}
+                {hrCallTotal > HR_CALL_PAGE_SIZE && (
+                  <div className="flex items-center justify-between mt-3 text-xs">
+                    <span className="text-[#59615D]">Showing {(hrCallPage-1)*HR_CALL_PAGE_SIZE + 1}-{Math.min(hrCallPage*HR_CALL_PAGE_SIZE, hrCallTotal)} of {hrCallTotal}</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" disabled={hrCallPage<=1} onClick={()=>setHrCallPage(p=>p-1)} data-testid="hr-calls-prev">Prev</Button>
+                      <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" disabled={hrCallPage*HR_CALL_PAGE_SIZE >= hrCallTotal} onClick={()=>setHrCallPage(p=>p+1)} data-testid="hr-calls-next">Next</Button>
+                    </div>
+                  </div>
+                )}
+              </>}
           </div></TabsContent>
 
           {/* CALL LOGS UNIFIED */}

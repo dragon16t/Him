@@ -1399,7 +1399,15 @@ async def get_lead_history(lead_id: str, current_user: dict = Depends(get_curren
 @api_router.get("/hr-managers")
 async def get_hr_managers(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','hr_manager']: raise HTTPException(status_code=403)
-    return {"hr_managers": await db.hr_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    hrs = await db.hr_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    # Enrich with per-HR call counts + candidates added (live)
+    for h in hrs:
+        hid = h.get("id")
+        h['total_calls'] = await db.hr_call_logs.count_documents({"caller_id": hid})
+        h['candidates_added'] = await db.hiring_candidates.count_documents({"created_by": hid})
+        today_iso = date.today().isoformat()
+        h['today_calls'] = await db.hr_call_logs.count_documents({"caller_id": hid, "call_date": today_iso})
+    return {"hr_managers": hrs}
 
 @api_router.get("/social-media-managers")
 async def get_social_media_managers(current_user: dict = Depends(get_current_user)):
@@ -5033,15 +5041,26 @@ async def add_hr_call_log(data: dict, current_user: dict = Depends(get_current_u
     return {"log": log}
 
 @api_router.get("/hr/call-logs")
-async def get_hr_call_logs(month: str = "", year: str = "", candidate_id: str = "", current_user: dict = Depends(get_current_user)):
+async def get_hr_call_logs(month: str = "", year: str = "", candidate_id: str = "",
+                           caller_id: str = "", skip: int = 0, limit: int = 100,
+                           current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'hr_manager']: raise HTTPException(status_code=403)
     q = {}
     if candidate_id: q["linked_candidate_id"] = candidate_id
+    if caller_id: q["caller_id"] = caller_id
     if month and year: q["call_date"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-    logs = await db.hr_call_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total = await db.hr_call_logs.count_documents(q)
+    logs = await db.hr_call_logs.find(q, {"_id": 0}).sort("created_at", -1).skip(int(skip)).to_list(int(limit))
     today_iso = date.today().isoformat()
-    today_count = len([l for l in logs if l.get("call_date") == today_iso])
-    return {"call_logs": logs, "today_count": today_count, "total": len(logs)}
+    today_count = await db.hr_call_logs.count_documents({**q, "call_date": today_iso})
+    # Per-HR breakdown across the whole filtered set (skip/limit ignored)
+    pipeline = [{"$match": q}, {"$group": {"_id": {"id": "$caller_id", "name": "$caller_name"}, "count": {"$sum": 1}}}]
+    by_hr_raw = await db.hr_call_logs.aggregate(pipeline).to_list(50)
+    by_hr = [{"caller_id": r["_id"].get("id",""), "caller_name": r["_id"].get("name","") or "Unknown",
+              "count": r["count"]} for r in by_hr_raw]
+    by_hr.sort(key=lambda x: x["count"], reverse=True)
+    return {"call_logs": logs, "today_count": today_count, "total": total, "by_hr": by_hr,
+            "skip": int(skip), "limit": int(limit)}
 
 
 
