@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -148,8 +149,9 @@ export default function InventoryManagerDashboard() {
                         <p className="text-[10px] text-[#3B5249] truncate" title={o.customer_address}>📍 {o.customer_address || "No address"}</p>
                         <p className="text-[9px] text-[#A66E4E]">{o.created_at?.slice(0,10)} | {o.payment_type?.toUpperCase()}{o.created_by_name?` • by ${o.created_by_name}`:""}</p>
                         {o.tracking_link && <a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[9px] text-purple-700 underline block truncate">📦 {o.courier_name||"Track"}</a>}
-                        <div className="flex gap-1 mt-2" onClick={e=>e.stopPropagation()}>
-                          {status==="confirmed"&&<Button size="sm" className="rounded-full text-[9px] bg-purple-600 text-white h-6" onClick={()=>markShipped(o)} data-testid={`ship-${o.id}`}><Truck className="w-3 h-3 mr-1"/>Ship</Button>}
+                        <div className="flex gap-1 mt-2 flex-wrap" onClick={e=>e.stopPropagation()}>
+                          <DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact />
+                          {status==="confirmed"&&!o.awb_number&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>markShipped(o)} data-testid={`ship-${o.id}`}><Truck className="w-3 h-3 mr-1"/>Manual</Button>}
                           {status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-6" onClick={()=>markDelivered(o.id)} data-testid={`deliver-${o.id}`}><Check className="w-3 h-3 mr-1"/>Deliver</Button>}
                         </div>
                       </div>
@@ -168,7 +170,7 @@ export default function InventoryManagerDashboard() {
               <tbody>{filtered.map(o=>(
                 <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
-                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1">{o.status==="confirmed"&&<Button size="sm" className="rounded-full text-[9px] bg-purple-600 text-white h-5 px-2" onClick={()=>markShipped(o)}>Ship</Button>}{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}</div></td></tr>
+                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}</div></td></tr>
               ))}</tbody></table></div>}
             </div>
           </TabsContent>

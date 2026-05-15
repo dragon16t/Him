@@ -12,7 +12,14 @@ Clone https://github.com/shadnazar/HRM1.git and build a fast, full-featured CRM 
 - Deployed at https://portal.veegal.com (user-managed). Preview is the dev sandbox only.
 
 ## Implemented (latest first)
-- **Feb 2026** — SM telecaller call viewer + HR hiring pagination:
+- **Feb 2026** — Delhivery shipping integration (production):
+  - **3 endpoints**: `POST /api/shipping/delhivery/ship/{oid}` (creates waybill, stores AWB + tracking URL + sets order.status=shipped), `GET /api/shipping/delhivery/track/{awb}` (live tracking JSON), `POST /api/shipping/delhivery/cancel/{oid}` (cancel a waybill).
+  - **Auth**: ship allowed for Admin / Inventory / Sales Manager; cancel only for Admin / Inventory; tracking link visible to all roles.
+  - **Config**: env vars `DELHIVERY_API_KEY`, `DELHIVERY_BASE_URL` (defaults to https://track.delhivery.com — production), `DELHIVERY_PICKUP_LOCATION=Parakkal`, `DELHIVERY_PACKAGE_LENGTH/BREADTH/HEIGHT_CM=20`, `DELHIVERY_PACKAGE_WEIGHT_GRAMS=500`.
+  - **Auto-flow on Ship click**: validates 6-digit pincode → calls `POST /api/cmu/create.json` with shipments array + pickup_location → extracts waybill from `packages[0]` → saves AWB + public tracking URL (`https://www.delhivery.com/tracking?awb=…`) onto the order → marks shipped.
+  - **UI**: new `DelhiveryShipActions` reusable component plugged into the order rows of Admin (`AdminCRMPanel`), Sales Manager (`SalesManagerDashboard`), Inventory Manager (`InventoryManagerDashboard`) — shows "🚚 Ship via Delhivery" button when not yet shipped, replaced by AWB tracking link + "Cancel" (admin/inventory only) once shipped. The existing manual-tracking dialog on Inventory is retained as "Manual" fallback when AWB isn't set. DM dashboard shows the tracking link read-only.
+  - **Route registration fix**: moved `app.include_router(api_router)` to the very end (after the new endpoints) — otherwise FastAPI returned 404 on the new routes.
+- **Feb 2026** — TC stats: live `total_calls / total_leads / conversions / commission_earned` on `/telecallers` + `?days=` chip filter (3/7/15/30) and 4th "Leads" tile
   - **SM Telecaller cards**: new 📞 button opens a "Call Logs" dialog showing every call the telecaller logged, with a date-range chip selector — **Last 3 / 7 / 15 / 30 days**. Each row shows customer, phone, status / outcome badge, full notes block, duration and timestamp. Backed by `GET /api/team-activity?user_id=…&days=N` (new `days` query param added).
   - **HR Hiring pagination + "Show hired"**: list is now paginated **50 per page, latest-first**, with prev/next buttons and "Showing X-Y of Z" indicator. Pagination resets to page 1 whenever filter changes. A "Show hired" checkbox refetches with `include_hired=true` — fixes the "morning showed 64 / now only 40" complaint (the 24 missing ones were hidden after being marked hired). When a filter is applied, pagination operates on the filtered subset.
 - **Feb 2026** — HR Employee Library multi-select + bulk delete + "By: tc-3eed7f…" raw-id hydration backfill

@@ -19,6 +19,7 @@ import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
+import DelhiveryShipActions from "../components/DelhiveryShipActions";
 
 const API = "/api";
 
@@ -376,9 +377,9 @@ export default function SalesManagerDashboard() {
                   {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
                   <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount} ({o.payment_type}) | By: {o.created_by_name || "—"}</p>
                 </div>
-                <div className="flex gap-2 items-start">
+                <div className="flex gap-2 items-start flex-wrap">
                   {o.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)}>Approve</Button>}
-                  {o.status==="confirmed"&&<Button size="sm" className="rounded-full text-xs bg-blue-600 text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/ship`);toast.success("Shipped!");fetchData();}catch{toast.error("Failed");}}}>Ship</Button>}
+                  <DelhiveryShipActions order={o} role="sales_manager" onChange={fetchData} compact />
                 </div>
               </div>
             </div>))}</div>

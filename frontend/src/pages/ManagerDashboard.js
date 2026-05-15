@@ -19,6 +19,7 @@ import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
+import DelhiveryShipActions from "../components/DelhiveryShipActions";
 
 const API = "/api";
 
@@ -261,7 +262,7 @@ export default function ManagerDashboard() {
                 </div>
                 <div className="flex flex-wrap gap-2 items-start">
                   {o.status==="pending"&&<><Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)} data-testid={`approve-${o.id}`}><Check className="w-3 h-3 mr-1"/>Approve</Button><Button size="sm" variant="outline" className="rounded-full text-xs h-7 text-red-500" onClick={()=>rejectOrder(o.id)}><X className="w-3 h-3"/></Button></>}
-                  {o.status==="confirmed"&&<Button size="sm" className="rounded-full text-xs bg-blue-600 text-white h-7" onClick={async()=>{const tl=window.prompt("Enter tracking link (e.g. https://shiprocket.in/track/XYZ):"); if(!tl||!tl.trim()) return toast.error("Tracking link is required"); const cn=window.prompt("Courier (Shiprocket/Delhivery/Bluedart/DTDC):","Shiprocket")||""; const tn=window.prompt("Tracking number (optional):","")||"";try{await axios.put(`${API}/orders/${o.id}/ship`,{tracking_link:tl.trim(),courier_name:cn,tracking_number:tn});toast.success("Shipped! Tracking saved.");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`ship-${o.id}`}><Package className="w-3 h-3 mr-1"/>Ship Today</Button>}
+                  <DelhiveryShipActions order={o} role="district_manager" onChange={fetchData} compact />
                 </div>
               </div>
             </div>))}</div>}

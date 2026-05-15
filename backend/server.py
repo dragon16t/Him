@@ -6683,8 +6683,153 @@ async def list_ai_usage(current_user: dict = Depends(get_current_user)):
         by_purpose[it.get("purpose", "generic")] = by_purpose.get(it.get("purpose", "generic"), 0) + 1
     return {"usage": items, "totals": by_purpose, "count": len(items)}
 
-app.include_router(api_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS','*').split(','), allow_methods=["*"], allow_headers=["*"])
+
+# ==================== DELHIVERY SHIPPING INTEGRATION ====================
+DELHIVERY_API_KEY = os.environ.get("DELHIVERY_API_KEY", "")
+DELHIVERY_BASE_URL = os.environ.get("DELHIVERY_BASE_URL", "https://track.delhivery.com").rstrip("/")
+DELHIVERY_PICKUP_LOCATION = os.environ.get("DELHIVERY_PICKUP_LOCATION", "")
+DELHIVERY_PACKAGE_LENGTH_CM = int(os.environ.get("DELHIVERY_PACKAGE_LENGTH_CM", "20") or 20)
+DELHIVERY_PACKAGE_BREADTH_CM = int(os.environ.get("DELHIVERY_PACKAGE_BREADTH_CM", "20") or 20)
+DELHIVERY_PACKAGE_HEIGHT_CM = int(os.environ.get("DELHIVERY_PACKAGE_HEIGHT_CM", "20") or 20)
+DELHIVERY_PACKAGE_WEIGHT_GRAMS = int(os.environ.get("DELHIVERY_PACKAGE_WEIGHT_GRAMS", "500") or 500)
+PUBLIC_TRACKING_URL = "https://www.delhivery.com/tracking?awb={awb}"
+
+def _delhivery_headers():
+    return {
+        "Authorization": f"Token {DELHIVERY_API_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+@api_router.post("/shipping/delhivery/ship/{oid}")
+async def delhivery_ship_order(oid: str, current_user: dict = Depends(get_current_user)):
+    """Create a Delhivery waybill for an order. Admin / Inventory Manager / Sales Manager only.
+    Saves the AWB + tracking URL onto the order and marks it shipped."""
+    if current_user['role'] not in ('admin', 'inventory_manager', 'sales_manager'):
+        raise HTTPException(status_code=403, detail="Only Admin / Inventory / Sales Manager can ship")
+    if not DELHIVERY_API_KEY:
+        raise HTTPException(status_code=500, detail="DELHIVERY_API_KEY not configured on the server")
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("awb_number"):
+        return {"awb_number": order["awb_number"], "tracking_url": order.get("tracking_url"), "message": "Already shipped via Delhivery"}
+    if order.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot ship a cancelled order")
+
+    # Build payload — Delhivery accepts `format=json&data=<json>` form-encoded
+    payment_mode = "COD" if (order.get("payment_type") or "cod").lower() == "cod" else "Prepaid"
+    items = order.get("items") or []
+    product_desc = ", ".join([f"{(it.get('product_name') or '').strip()} x{it.get('quantity',1)}" for it in items if it.get('product_name')]) or "Beauty / Wellness products"
+    total_amount = order.get("total_amount", 0)
+    cod_amount = total_amount if payment_mode == "COD" else 0
+    pin_raw = str(order.get("customer_pincode") or "").strip()
+    if not pin_raw.isdigit() or len(pin_raw) != 6:
+        raise HTTPException(status_code=400, detail=f"Invalid delivery pincode '{pin_raw}' — must be 6 digits")
+
+    shipment_payload = {
+        "name": order.get("customer_name") or "Customer",
+        "add": order.get("customer_address") or "",
+        "city": order.get("customer_city") or "",
+        "state": order.get("customer_state") or "",
+        "country": "India",
+        "pin": pin_raw,
+        "phone": order.get("customer_phone") or "",
+        "order": order.get("order_number") or oid,
+        "payment_mode": payment_mode,
+        "products_desc": product_desc[:200],
+        "cod_amount": cod_amount,
+        "total_amount": total_amount,
+        "quantity": str(sum(int(it.get("quantity", 1) or 1) for it in items) or 1),
+        "weight": DELHIVERY_PACKAGE_WEIGHT_GRAMS,  # grams
+        "shipment_width": DELHIVERY_PACKAGE_BREADTH_CM,
+        "shipment_height": DELHIVERY_PACKAGE_HEIGHT_CM,
+        "shipment_length": DELHIVERY_PACKAGE_LENGTH_CM,
+        "seller_name": COMPANY.get("name", "Celesta Glow"),
+        "seller_add": f"{COMPANY.get('address_line1','')}, {COMPANY.get('address_line2','')}",
+    }
+    payload = {
+        "shipments": [shipment_payload],
+        "pickup_location": {"name": DELHIVERY_PICKUP_LOCATION},
+    }
+    body = "format=json&data=" + json.dumps(payload)
+
+    try:
+        r = requests.post(f"{DELHIVERY_BASE_URL}/api/cmu/create.json", headers=_delhivery_headers(), data=body, timeout=20)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Delhivery API error: {e}")
+    if r.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail=f"Delhivery returned {r.status_code}: {r.text[:500]}")
+    try:
+        resp_json = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=f"Invalid Delhivery response: {r.text[:500]}")
+    pkgs = resp_json.get("packages") or []
+    if not pkgs or not pkgs[0].get("waybill"):
+        raise HTTPException(status_code=502, detail=f"Delhivery did not return a waybill: {json.dumps(resp_json)[:500]}")
+    awb = pkgs[0]["waybill"]
+    tracking_url = PUBLIC_TRACKING_URL.format(awb=awb)
+
+    await db.orders.update_one({"id": oid}, {"$set": {
+        "awb_number": awb,
+        "tracking_url": tracking_url,
+        "courier": "delhivery",
+        "shipped_at": datetime.now(timezone.utc).isoformat(),
+        "shipped_by": current_user['id'],
+        "shipped_by_name": current_user.get('name', ''),
+        "status": "shipped",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    await log_audit("ship_order", "order", oid, current_user['id'], current_user.get('name', ''), f"Shipped via Delhivery, AWB {awb}")
+    return {"awb_number": awb, "tracking_url": tracking_url, "message": "Shipment created"}
+
+@api_router.get("/shipping/delhivery/track/{awb}")
+async def delhivery_track(awb: str, current_user: dict = Depends(get_current_user)):
+    """Live tracking status from Delhivery. Any authenticated user can view."""
+    if not DELHIVERY_API_KEY:
+        raise HTTPException(status_code=500, detail="DELHIVERY_API_KEY not configured")
+    try:
+        r = requests.get(f"{DELHIVERY_BASE_URL}/api/v1/packages/json/", headers=_delhivery_headers(), params={"waybill": awb}, timeout=15)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Delhivery tracking error: {e}")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Delhivery returned {r.status_code}: {r.text[:500]}")
+    return {"awb": awb, "tracking_url": PUBLIC_TRACKING_URL.format(awb=awb), "data": r.json()}
+
+@api_router.post("/shipping/delhivery/cancel/{oid}")
+async def delhivery_cancel(oid: str, current_user: dict = Depends(get_current_user)):
+    """Cancel a Delhivery shipment for an order. Admin + Inventory Manager only."""
+    if current_user['role'] not in ('admin', 'inventory_manager'):
+        raise HTTPException(status_code=403, detail="Only Admin or Inventory Manager can cancel a shipment")
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    awb = order.get("awb_number")
+    if not awb:
+        raise HTTPException(status_code=400, detail="No Delhivery AWB on this order")
+    payload = {"waybill": awb, "cancellation": "true"}
+    try:
+        r = requests.post(f"{DELHIVERY_BASE_URL}/api/p/edit", headers={**_delhivery_headers(), "Content-Type": "application/json"}, json=payload, timeout=15)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Delhivery API error: {e}")
+    if r.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Delhivery returned {r.status_code}: {r.text[:500]}")
+    await db.orders.update_one({"id": oid}, {"$set": {
+        "shipment_cancelled": True,
+        "shipment_cancelled_at": datetime.now(timezone.utc).isoformat(),
+        "shipment_cancelled_by": current_user['id'],
+        "shipment_cancelled_by_name": current_user.get('name', ''),
+        "status": "cancelled",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    await log_audit("cancel_shipment", "order", oid, current_user['id'], current_user.get('name', ''), f"Cancelled Delhivery AWB {awb}")
+    return {"message": "Shipment cancelled", "awb": awb}
+
+
+# Register all routes (must be after every @api_router decorator above)
+app.include_router(api_router)
+
 
 @app.on_event("startup")
 async def startup():

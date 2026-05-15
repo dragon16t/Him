@@ -16,6 +16,7 @@ import GlobalSearch from "../components/GlobalSearch";
 import AdminCallLogs from "../components/AdminCallLogs";
 import OrderEditDialog from "../components/OrderEditDialog";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
+import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 const API = "/api";
@@ -549,6 +550,7 @@ export default function AdminCRMPanel() {
                     {!["shipped","delivered","rejected","cancelled"].includes(o.status) && <Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>setEditOrder(o)} data-testid={`edit-order-${o.id}`}>✏️ Edit</Button>}
                     {o.status==="pending"&&<><Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/approve`);toast.success("Approved!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`approve-order-${o.id}`}><Check className="w-3 h-3 mr-1"/>Approve</Button><Button size="sm" variant="outline" className="rounded-full text-xs h-7 text-red-500" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/reject`,{reason:"Rejected"});toast.success("Rejected");fetchData();}catch{toast.error("Failed");}}}><X className="w-3 h-3"/></Button></>}
                     {o.status==="confirmed"&&<Button size="sm" className="rounded-full text-xs bg-[#3B5249] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/ship-and-deliver`);toast.success("Delivered! Commission credited");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`deliver-${o.id}`}><Check className="w-3 h-3 mr-1"/>Delivered</Button>}
+                    <DelhiveryShipActions order={o} role="admin" onChange={fetchData} compact />
                     {o.status==="shipped"&&<Button size="sm" className="rounded-full text-xs bg-[#3B5249] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/deliver`);toast.success("Delivered! Commission credited");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`deliver-order-${o.id}`}><Check className="w-3 h-3 mr-1"/>Delivered</Button>}
                     <Button size="sm" variant="ghost" className="rounded-full text-[10px] text-red-400 h-7" onClick={async()=>{const pw=prompt("Enter master password to delete order:");if(!pw)return;try{await axios.delete(`${API}/orders/${o.id}`,{data:{password:pw}});toast.success("Order deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-order-${o.id}`}><X className="w-3 h-3"/></Button>
                   </div>
