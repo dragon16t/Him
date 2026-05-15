@@ -20,6 +20,7 @@ import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
+import CollaborationContactsPanel from "../components/CollaborationContactsPanel";
 
 const API = "/api";
 
@@ -49,6 +50,9 @@ export default function SalesManagerDashboard() {
   const [callViewerDays, setCallViewerDays] = useState(7);
   const [callViewerLoading, setCallViewerLoading] = useState(false);
   const [callViewerLogs, setCallViewerLogs] = useState([]);
+  const [callViewerSection, setCallViewerSection] = useState("calls"); // "calls" | "leads"
+  const [callViewerLeads, setCallViewerLeads] = useState([]);
+  const [callViewerLeadsTodayOnly, setCallViewerLeadsTodayOnly] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddInstruction, setShowAddInstruction] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -86,14 +90,17 @@ export default function SalesManagerDashboard() {
 
   const handleAddTC = async () => { if (!tcForm.name||!tcForm.email) return toast.error("Fill fields"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
   const openEditTC = (tc) => { setEditingTC(tc); setTcEditForm({ name: tc.name || "", phone: tc.phone || "", language: tc.language || "", location: tc.locality || tc.location || tc.city || "" }); };
-  const openCallViewer = (tc) => { setCallViewerTC(tc); setCallViewerDays(7); };
+  const openCallViewer = (tc) => { setCallViewerTC(tc); setCallViewerDays(7); setCallViewerSection("calls"); setCallViewerLeadsTodayOnly(false); };
   useEffect(() => {
-    if (!callViewerTC) { setCallViewerLogs([]); return; }
+    if (!callViewerTC) { setCallViewerLogs([]); setCallViewerLeads([]); return; }
     setCallViewerLoading(true);
-    axios.get(`${API}/team-activity`, { params: { user_id: callViewerTC.id, days: callViewerDays, limit: 500 } })
-      .then(r => setCallViewerLogs(r.data.activities || []))
-      .catch(() => setCallViewerLogs([]))
-      .finally(() => setCallViewerLoading(false));
+    Promise.all([
+      axios.get(`${API}/team-activity`, { params: { user_id: callViewerTC.id, days: callViewerDays, limit: 500 } }).catch(()=>({data:{activities:[]}})),
+      axios.get(`${API}/leads`, { params: { assigned_to: callViewerTC.id, limit: 500 } }).catch(()=>({data:{leads:[]}}))
+    ]).then(([a, l]) => {
+      setCallViewerLogs(a.data.activities || []);
+      setCallViewerLeads(l.data.leads || []);
+    }).finally(() => setCallViewerLoading(false));
   }, [callViewerTC, callViewerDays]);
   const handleEditTC = async () => {
     if (!editingTC) return;
@@ -236,11 +243,12 @@ export default function SalesManagerDashboard() {
         </div>
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"telecallers",l:"Telecallers"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"telecallers",l:"Telecallers"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
+          <TabsContent value="salescollab" className="animate-fade-in"><CollaborationContactsPanel title="Sales Collaboration Contact Book" allowedTypes={["sales_opportunity"]} /></TabsContent>
           <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={telecallers} candidateLabel="Telecallers" /></TabsContent>
           <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <div className="flex justify-between mb-3 flex-wrap gap-2">
@@ -413,47 +421,87 @@ export default function SalesManagerDashboard() {
       <Dialog open={!!callViewerTC} onOpenChange={(o)=>{ if (!o) setCallViewerTC(null); }}>
         <DialogContent className="rounded-2xl max-w-3xl max-h-[88vh] overflow-y-auto" data-testid="tc-calls-dialog">
           <DialogHeader>
-            <DialogTitle className="font-heading">📞 {callViewerTC?.name} — Call Logs</DialogTitle>
-            <p className="text-xs text-[#59615D]">Calls done by this telecaller, with status & notes.</p>
+            <DialogTitle className="font-heading">📞 {callViewerTC?.name}</DialogTitle>
+            <p className="text-xs text-[#59615D]">Calls + leads owned by this telecaller.</p>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="flex gap-2 flex-wrap" data-testid="tc-calls-range">
-              {[{d:3,l:"Last 3 days"},{d:7,l:"Last 7 days"},{d:15,l:"Last 15 days"},{d:30,l:"Last 30 days"}].map(opt=>(
-                <Button key={opt.d} size="sm" variant={callViewerDays===opt.d?"default":"outline"}
-                  onClick={()=>setCallViewerDays(opt.d)}
-                  className={`rounded-full text-xs h-7 ${callViewerDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
-                  data-testid={`tc-calls-range-${opt.d}`}
-                >{opt.l}</Button>
-              ))}
-              <span className="text-xs text-[#59615D] flex items-center ml-auto" data-testid="tc-calls-count">
-                {callViewerLoading ? "Loading…" : `${callViewerLogs.length} call(s)`}
-              </span>
+            {/* Section toggle */}
+            <div className="flex gap-2 border-b border-[#E5E3DB]" data-testid="tc-viewer-section">
+              <button onClick={()=>setCallViewerSection("calls")} className={`text-xs font-semibold px-4 py-2 -mb-px border-b-2 transition-all ${callViewerSection==="calls"?"border-[#3B5249] text-[#3B5249]":"border-transparent text-[#59615D]"}`} data-testid="section-calls">Calls ({callViewerLogs.length})</button>
+              <button onClick={()=>setCallViewerSection("leads")} className={`text-xs font-semibold px-4 py-2 -mb-px border-b-2 transition-all ${callViewerSection==="leads"?"border-[#3B5249] text-[#3B5249]":"border-transparent text-[#59615D]"}`} data-testid="section-leads">Leads ({callViewerLeads.length})</button>
             </div>
-            {!callViewerLoading && callViewerLogs.length === 0 && (
-              <p className="text-center py-8 text-sm text-[#59615D]">No calls logged in this window.</p>
-            )}
-            <div className="space-y-2">
-              {callViewerLogs.map((c, i) => (
-                <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`tc-call-row-${i}`}>
-                  <div className="flex justify-between gap-2 flex-wrap items-start">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-sm">{c.customer_name || "—"} <span className="text-[#59615D] text-xs font-normal">· {c.customer_phone || "—"}</span></p>
-                      {c.product_interest && <p className="text-[10px] text-[#A66E4E]">Interested: {c.product_interest}</p>}
-                      {c.notes ? (
-                        <p className="text-[11px] text-[#2C3531] mt-1 bg-[#F9F8F6] rounded p-2 whitespace-pre-wrap">{c.notes}</p>
-                      ) : (
-                        <p className="text-[10px] text-[#59615D] italic mt-1">No notes</p>
-                      )}
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      {c.outcome && <Badge className="text-[9px] capitalize bg-[#F9F8F6] text-[#3B5249] border border-[#E5E3DB]">{String(c.outcome).replace(/_/g," ")}</Badge>}
-                      <p className="text-[10px] text-[#59615D] mt-1">{String(c.timestamp || "").slice(0,16).replace("T"," ")}</p>
-                      {c.duration && <p className="text-[10px] text-[#59615D]">{c.duration}s</p>}
+
+            {callViewerSection === "calls" && (<>
+              <div className="flex gap-2 flex-wrap" data-testid="tc-calls-range">
+                {[{d:3,l:"Last 3 days"},{d:7,l:"Last 7 days"},{d:15,l:"Last 15 days"},{d:30,l:"Last 30 days"}].map(opt=>(
+                  <Button key={opt.d} size="sm" variant={callViewerDays===opt.d?"default":"outline"}
+                    onClick={()=>setCallViewerDays(opt.d)}
+                    className={`rounded-full text-xs h-7 ${callViewerDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
+                    data-testid={`tc-calls-range-${opt.d}`}
+                  >{opt.l}</Button>
+                ))}
+                <span className="text-xs text-[#59615D] flex items-center ml-auto" data-testid="tc-calls-count">
+                  {callViewerLoading ? "Loading…" : `${callViewerLogs.length} call(s)`}
+                </span>
+              </div>
+              {!callViewerLoading && callViewerLogs.length === 0 && (
+                <p className="text-center py-8 text-sm text-[#59615D]">No calls logged in this window.</p>
+              )}
+              <div className="space-y-2">
+                {callViewerLogs.map((c, i) => (
+                  <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`tc-call-row-${i}`}>
+                    <div className="flex justify-between gap-2 flex-wrap items-start">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm">{c.customer_name || "—"} <span className="text-[#59615D] text-xs font-normal">· {c.customer_phone || "—"}</span></p>
+                        {c.product_interest && <p className="text-[10px] text-[#A66E4E]">Interested: {c.product_interest}</p>}
+                        {c.notes ? (
+                          <p className="text-[11px] text-[#2C3531] mt-1 bg-[#F9F8F6] rounded p-2 whitespace-pre-wrap">{c.notes}</p>
+                        ) : (
+                          <p className="text-[10px] text-[#59615D] italic mt-1">No notes</p>
+                        )}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        {c.outcome && <Badge className="text-[9px] capitalize bg-[#F9F8F6] text-[#3B5249] border border-[#E5E3DB]">{String(c.outcome).replace(/_/g," ")}</Badge>}
+                        <p className="text-[10px] text-[#59615D] mt-1">{String(c.timestamp || "").slice(0,16).replace("T"," ")}</p>
+                        {c.duration && <p className="text-[10px] text-[#59615D]">{c.duration}s</p>}
+                      </div>
                     </div>
                   </div>
+                ))}
+              </div>
+            </>)}
+
+            {callViewerSection === "leads" && (() => {
+              const today = new Date().toISOString().slice(0,10);
+              const visible = callViewerLeadsTodayOnly
+                ? callViewerLeads.filter(l => (l.created_at || "").slice(0,10) === today)
+                : callViewerLeads;
+              return (<>
+                <div className="flex gap-2 flex-wrap items-center" data-testid="tc-leads-toolbar">
+                  <Button size="sm" variant={!callViewerLeadsTodayOnly?"default":"outline"} onClick={()=>setCallViewerLeadsTodayOnly(false)} className={`rounded-full text-xs h-7 ${!callViewerLeadsTodayOnly?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}>All ({callViewerLeads.length})</Button>
+                  <Button size="sm" variant={callViewerLeadsTodayOnly?"default":"outline"} onClick={()=>setCallViewerLeadsTodayOnly(true)} className={`rounded-full text-xs h-7 ${callViewerLeadsTodayOnly?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`} data-testid="tc-leads-today">Today only</Button>
+                  <span className="text-xs text-[#59615D] ml-auto">{visible.length} lead(s)</span>
                 </div>
-              ))}
-            </div>
+                {!callViewerLoading && visible.length === 0 && (
+                  <p className="text-center py-8 text-sm text-[#59615D]">{callViewerLeadsTodayOnly ? "No leads added today." : "No leads yet."}</p>
+                )}
+                <div className="space-y-1">
+                  {visible.map(l => (
+                    <div key={l.id} className="border border-[#E5E3DB] rounded-xl p-2 flex justify-between items-center text-xs gap-2 flex-wrap" data-testid={`tc-lead-${l.id}`}>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">{l.name || "—"} <span className="text-[#59615D] font-normal">· {l.phone_number}</span></p>
+                        {l.product_interest && <p className="text-[10px] text-[#A66E4E]">{l.product_interest}</p>}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <Badge variant="outline" className="text-[9px] capitalize">{String(l.status||"").replace(/_/g," ")}</Badge>
+                        <p className="text-[10px] text-[#59615D] mt-0.5">{(l.created_at||"").slice(0,10)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>);
+            })()}
+
             <Button variant="outline" onClick={()=>setCallViewerTC(null)} className="w-full rounded-full">Close</Button>
           </div>
         </DialogContent>

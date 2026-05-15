@@ -42,7 +42,7 @@ export default function TelecallerDashboard() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
-  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", next_follow_up_date: "", next_follow_up_time: "" });
+  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "" });
   const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
   const [fundForm, setFundForm] = useState({ amount: 0, reason: "", category: "travel" });
 
@@ -77,11 +77,11 @@ export default function TelecallerDashboard() {
   });
 
   const handleAddLead = async () => {
-    if (!leadForm.phone_number || !leadForm.name) return toast.error("Name and phone required");
-    const payload = { ...leadForm, product_interest: leadForm.interested_products.join(", ") };
+    if (!leadForm.phone_number) return toast.error("Phone number required");
+    const payload = { ...leadForm, name: (leadForm.name || "").trim() || "Unknown", product_interest: leadForm.interested_products.join(", ") };
     try {
       await axios.post(`${API}/leads`, payload);
-      toast.success("Lead added! First call logged.");
+      toast.success("Lead added!");
       setShowAddLead(false);
       setLeadForm({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
       fetchData();
@@ -90,13 +90,33 @@ export default function TelecallerDashboard() {
 
   const handleCallLog = async () => {
     if (!callForm.status) return toast.error("Select status");
+    const isOrder = callForm.enquiry_type === "orders";
+    const payload = {
+      status: callForm.status,
+      customer_remarks: callForm.customer_remarks,
+      ...(isOrder ? {
+        next_follow_up_date: callForm.next_follow_up_date,
+        next_follow_up_time: callForm.next_follow_up_time,
+      } : {}),
+      call_log: {
+        status: callForm.status,
+        remarks: callForm.customer_remarks,
+        customer_name: callForm.customer_name,
+        enquiry_type: callForm.enquiry_type,
+      },
+    };
     try {
-      await axios.put(`${API}/leads/${selectedLead.id}`, { status: callForm.status, customer_remarks: callForm.customer_remarks, next_follow_up_date: callForm.next_follow_up_date, next_follow_up_time: callForm.next_follow_up_time, call_log: { status: callForm.status, remarks: callForm.customer_remarks } });
-      toast.success("Call logged!");
+      await axios.put(`${API}/leads/${selectedLead.id}`, payload);
+      if (!isOrder) {
+        const dest = callForm.enquiry_type === "sales_opportunity" ? "Sales Manager's Sales Collab book" : "Social Media Manager's Collaborations book";
+        toast.success(`Routed to ${dest}`);
+      } else {
+        toast.success("Call logged!");
+      }
       setShowCallLog(false);
-      if (callForm.status === "interested") {
-        setSelectedLead({...selectedLead, status: "interested"});
-        setOrderForm({ customer_name: selectedLead.name, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
+      if (isOrder && callForm.status === "interested") {
+        setSelectedLead({...selectedLead, status: "interested", name: callForm.customer_name || selectedLead.name});
+        setOrderForm({ customer_name: callForm.customer_name || selectedLead.name, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
         setShowOrder(true);
       }
       fetchData();
@@ -303,7 +323,7 @@ export default function TelecallerDashboard() {
                 </div>
                 {lead.remarks && <p className="text-xs text-[#59615D] mb-2">{lead.remarks}</p>}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",next_follow_up_date:"",next_follow_up_time:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:"",next_follow_up_time:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
                   {lead.status === "interested" && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name,customer_phone:lead.phone_number,items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
                 </div>
               </div>
@@ -315,7 +335,7 @@ export default function TelecallerDashboard() {
       {/* ADD LEAD DIALOG */}
       <Dialog open={showAddLead} onOpenChange={setShowAddLead}><DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Add New Lead</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div><Label className="text-xs font-medium">Customer Name *</Label><Input value={leadForm.name} onChange={e=>setLeadForm(f=>({...f,name:e.target.value}))} placeholder="Full name" className="rounded-xl" data-testid="lead-name-input"/></div>
+          <p className="text-[10px] text-[#59615D]">Just save the phone number — the customer's name will be captured when you log the first call.</p>
           <div><Label className="text-xs font-medium">Mobile Number *</Label><Input value={leadForm.phone_number} onChange={e=>setLeadForm(f=>({...f,phone_number:e.target.value}))} placeholder="Phone number" className="rounded-xl" data-testid="lead-phone-input"/></div>
           <div><Label className="text-xs font-medium">Source</Label><Select value={leadForm.source} onValueChange={v=>setLeadForm(f=>({...f,source:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="manual">Manual</SelectItem><SelectItem value="website">Website</SelectItem><SelectItem value="social_media">Social Media</SelectItem><SelectItem value="referral">Referral</SelectItem><SelectItem value="campaign">Campaign</SelectItem></SelectContent></Select></div>
           <div><Label className="text-xs font-medium">Interested Products</Label>
@@ -330,13 +350,31 @@ export default function TelecallerDashboard() {
       </DialogContent></Dialog>
 
       {/* CALL LOG DIALOG */}
-      <Dialog open={showCallLog} onOpenChange={setShowCallLog}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Log Call — {selectedLead?.name}</DialogTitle></DialogHeader>
+      <Dialog open={showCallLog} onOpenChange={setShowCallLog}><DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Log Call — {selectedLead?.phone_number}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="ordered">Order Created</SelectItem></SelectContent></Select></div>
-          <div><Label className="text-xs">Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl"/></div>
-          <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
-          <Button onClick={handleCallLog} className="w-full rounded-full bg-[#3B5249] text-white">Log Call</Button>
-          {callForm.status === "interested" && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging</p>}
+          <div><Label className="text-xs font-medium">Customer Name</Label><Input value={callForm.customer_name} onChange={e=>setCallForm(f=>({...f,customer_name:e.target.value}))} placeholder="Capture the customer's name now" className="rounded-xl" data-testid="call-customer-name"/></div>
+          <div>
+            <Label className="text-xs font-medium">Enquiry Type *</Label>
+            <Select value={callForm.enquiry_type} onValueChange={v=>setCallForm(f=>({...f,enquiry_type:v}))}>
+              <SelectTrigger className="rounded-xl" data-testid="call-enquiry-type"><SelectValue/></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="orders">Enquiry for Orders</SelectItem>
+                <SelectItem value="business_collaboration">Business Collaboration</SelectItem>
+                <SelectItem value="influencer">Influencer</SelectItem>
+                <SelectItem value="sales_opportunity">Sales Opportunity</SelectItem>
+              </SelectContent>
+            </Select>
+            {callForm.enquiry_type !== "orders" && (
+              <p className="text-[10px] text-[#A66E4E] mt-1">⤳ This contact will be moved to the {callForm.enquiry_type === "sales_opportunity" ? "Sales Manager's Sales Collab book" : "Social Media Manager's Collaborations book"} after you save. No follow-up will be scheduled on your side.</p>
+            )}
+          </div>
+          <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent>{callForm.enquiry_type === "orders" ? <><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="ordered">Order Created</SelectItem></> : <><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="no_response">No Response</SelectItem></>}</SelectContent></Select></div>
+          <div><Label className="text-xs">Notes / Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did they say? Any context for the manager…"/></div>
+          {callForm.enquiry_type === "orders" && (
+            <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
+          )}
+          <Button onClick={handleCallLog} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-call-log">{callForm.enquiry_type === "orders" ? "Log Call" : "Route Contact"}</Button>
+          {callForm.enquiry_type === "orders" && callForm.status === "interested" && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging</p>}
         </div>
       </DialogContent></Dialog>
 

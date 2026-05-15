@@ -22,6 +22,7 @@ import {
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import CollaborationContactsPanel from "../components/CollaborationContactsPanel";
 
 const API = "/api";
 
@@ -465,6 +466,7 @@ export default function SocialMediaDashboard() {
               { v: "publish",    l: `Publish (${readyToPost.length})`,                   i: ArrowUpRight },
               { v: "calendar",   l: "Calendar",                                          i: CalendarDays },
               { v: "influencer", l: "Influencer",                                        i: Megaphone },
+              { v: "collabs",    l: "📇 Collaborations",                                  i: Megaphone },
               { v: "mysheet",    l: "My Tasks",                                          i: ListChecks },
             ].map(t => (
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3 py-1.5 flex items-center gap-1.5" data-testid={`smm-tab-${t.v}`}>
@@ -868,6 +870,7 @@ export default function SocialMediaDashboard() {
             </div>
           </TabsContent>
 
+          <TabsContent value="collabs"><CollaborationContactsPanel title="Collaborations & Influencer Contacts" allowedTypes={["business_collaboration","influencer"]} /></TabsContent>
           <TabsContent value="mysheet"><DailyTaskSheet titleSuffix="Social Media Manager" /></TabsContent>
         </Tabs>
       </div>

@@ -12,7 +12,15 @@ Clone https://github.com/shadnazar/HRM1.git and build a fast, full-featured CRM 
 - Deployed at https://portal.veegal.com (user-managed). Preview is the dev sandbox only.
 
 ## Implemented (latest first)
-- **Feb 2026** — Delhivery shipping integration (production):
+- **Feb 2026** — Enquiry-type routing (Orders / Business Collab / Influencer / Sales Opportunity):
+  - **TC Add-Lead** dialog now stores **phone only** (customer name moved to first call). Lead defaults to name `"Unknown"` until captured.
+  - **TC Log-Call** dialog gained: **Customer Name** field, **Enquiry Type** dropdown (Orders / Business Collaboration / Influencer / Sales Opportunity), notes textarea. Follow-up date/time only shown when type is Orders.
+  - **Backend `PUT /api/leads/{id}`**: when call_log includes `enquiry_type != "orders"`, the lead is parked (`status="routed_to_collab"`, follow-ups cleared) AND mirrored into a new `collaboration_contacts` collection with the right `routed_to_role`. Lead listings now exclude `routed_to_collab` by default so they vanish from TC pipeline.
+  - **3 new endpoints**: `GET/PUT/DELETE /api/collaboration-contacts` — role-scoped (SMM → business_collab + influencer; SM → sales_opportunity; Admin → everything).
+  - **New `CollaborationContactsPanel`** reusable component with filter chips (All / Today / Last 7d) + per-type filter + inline status & notes editor.
+  - **SM dashboard**: new **"📇 Sales Collab"** tab. **SMM dashboard**: new **"📇 Collaborations"** tab.
+  - **SM TC call viewer** now has a **Calls / Leads** sub-tab; Leads sub-tab has a **"Today only"** toggle.
+- **Feb 2026** — Delhivery shipping integration (production)
   - **3 endpoints**: `POST /api/shipping/delhivery/ship/{oid}` (creates waybill, stores AWB + tracking URL + sets order.status=shipped), `GET /api/shipping/delhivery/track/{awb}` (live tracking JSON), `POST /api/shipping/delhivery/cancel/{oid}` (cancel a waybill).
   - **Auth**: ship allowed for Admin / Inventory / Sales Manager; cancel only for Admin / Inventory; tracking link visible to all roles.
   - **Config**: env vars `DELHIVERY_API_KEY`, `DELHIVERY_BASE_URL` (defaults to https://track.delhivery.com — production), `DELHIVERY_PICKUP_LOCATION=Parakkal`, `DELHIVERY_PACKAGE_LENGTH/BREADTH/HEIGHT_CM=20`, `DELHIVERY_PACKAGE_WEIGHT_GRAMS=500`.

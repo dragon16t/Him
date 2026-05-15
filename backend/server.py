@@ -574,6 +574,9 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
         query['assigned_to'] = {"$in": ids}
     elif assigned_to: query['assigned_to'] = assigned_to
     if status: query['status'] = status
+    else:
+        # Hide leads routed to collaboration / sales-opportunity contact books
+        query['status'] = {"$ne": "routed_to_collab"}
     if year and month and day and month != "all":
         prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
         query['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
@@ -728,14 +731,49 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
         cl = data["call_log"]
         cl["logged_at"] = datetime.now(timezone.utc).isoformat()
         cl["logged_by"] = current_user['id']
+        # Stamp customer_name onto the lead the first time it's captured at call time
+        if cl.get("customer_name") and not (await db.leads.find_one({"id": lead_id}, {"_id": 0, "name": 1}) or {}).get("name"):
+            update_data["name"] = cl["customer_name"]
         await db.leads.update_one({"id": lead_id}, {"$push": {"call_logs": cl}, "$set": update_data})
         # Increment the caller's total_calls counter — supports both telecaller and inhouse_telecaller
         if current_user['role'] == 'telecaller':
             await db.telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
         elif current_user['role'] == 'inhouse_telecaller':
             await db.inhouse_telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
-        # NOTE: conversions are incremented ONLY when an actual order is created (see /orders endpoint).
-        # Marking a lead as "interested" no longer counts as a conversion.
+
+        # ROUTING: if enquiry_type is not for orders, the contact gets moved to the
+        # appropriate manager's collaboration / sales-opportunity contact book and
+        # disappears from the telecaller's active pipeline (no follow-up scheduled).
+        etype = (cl.get("enquiry_type") or "orders").strip()
+        if etype != "orders":
+            target_role = "social_media_manager" if etype in ("business_collaboration", "influencer") else "sales_manager" if etype == "sales_opportunity" else "admin"
+            lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+            contact = {
+                "id": f"colcon-{uuid.uuid4().hex[:8]}",
+                "enquiry_type": etype,
+                "name": cl.get("customer_name") or (lead.get("name") if lead else "") or "",
+                "phone": lead.get("phone_number") if lead else "",
+                "notes": cl.get("remarks") or "",
+                "source_lead_id": lead_id,
+                "source_tc_id": current_user['id'],
+                "source_tc_name": current_user.get('name', ''),
+                "routed_to_role": target_role,
+                "status": "new",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.collaboration_contacts.insert_one(contact); contact.pop("_id", None)
+            # Park the lead so it stops appearing in TC's repeat / follow-up lists.
+            await db.leads.update_one({"id": lead_id}, {"$set": {
+                "status": "routed_to_collab",
+                "routed_to_role": target_role,
+                "enquiry_type": etype,
+                "callback_done": True,
+                "callback_by": "",
+                "next_follow_up_date": "",
+                "next_follow_up_time": "",
+                "next_relationship_date": "",
+                "next_repeat_order_date": "",
+            }})
     else:
         await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     # Send follow-up email notification if time is set
@@ -6825,6 +6863,47 @@ async def delhivery_cancel(oid: str, current_user: dict = Depends(get_current_us
     }})
     await log_audit("cancel_shipment", "order", oid, current_user['id'], current_user.get('name', ''), f"Cancelled Delhivery AWB {awb}")
     return {"message": "Shipment cancelled", "awb": awb}
+
+# ==================== COLLABORATION / SALES-OPPORTUNITY CONTACT BOOK ====================
+@api_router.get("/collaboration-contacts")
+async def list_collab_contacts(type: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """List routed contacts.
+    - SMM: business_collaboration + influencer
+    - SM: sales_opportunity
+    - Admin: everything (or filter by `type` query)"""
+    role = current_user['role']
+    q = {}
+    if role == 'admin':
+        if type:
+            q["enquiry_type"] = type
+    elif role in ('social_media_manager',):
+        q["enquiry_type"] = {"$in": ["business_collaboration", "influencer"]}
+    elif role in ('sales_manager', 'assistant_sales_manager'):
+        q["enquiry_type"] = "sales_opportunity"
+    else:
+        raise HTTPException(status_code=403)
+    items = await db.collaboration_contacts.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return {"contacts": items, "total": len(items)}
+
+@api_router.put("/collaboration-contacts/{cid}")
+async def update_collab_contact(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ('admin', 'social_media_manager', 'sales_manager', 'assistant_sales_manager'):
+        raise HTTPException(status_code=403)
+    allowed = {"name", "phone", "notes", "status", "follow_up_date", "follow_up_done"}
+    update = {k: v for k, v in data.items() if k in allowed}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    update["updated_by_name"] = current_user.get('name', '')
+    await db.collaboration_contacts.update_one({"id": cid}, {"$set": update})
+    return {"message": "Updated"}
+
+@api_router.delete("/collaboration-contacts/{cid}")
+async def delete_collab_contact(cid: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ('admin', 'social_media_manager', 'sales_manager'):
+        raise HTTPException(status_code=403)
+    await db.collaboration_contacts.delete_one({"id": cid})
+    return {"message": "Deleted"}
 
 
 # Register all routes (must be after every @api_router decorator above)
