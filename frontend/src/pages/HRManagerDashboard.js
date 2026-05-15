@@ -81,6 +81,10 @@ export default function HRManagerDashboard() {
   const [showDocTemplates, setShowDocTemplates] = useState(false);
   const [hiringFilter, setHiringFilter] = useState("all");
   const [hiringSelected, setHiringSelected] = useState(new Set());
+  const [hiringPage, setHiringPage] = useState(1);
+  const [hiringIncludeHired, setHiringIncludeHired] = useState(false);
+  const HIRING_PAGE_SIZE = 50;
+  const [empSelected, setEmpSelected] = useState(new Set());
   // Final Hire flow — pick manager
   const [showFinalHire, setShowFinalHire] = useState(false);
   const [hireCandidate, setHireCandidate] = useState(null);
@@ -108,7 +112,7 @@ export default function HRManagerDashboard() {
         axios.get(`${API}/advances`).catch(()=>({data:{advances:[]}})),
         axios.get(`${API}/hr/communications`).catch(()=>({data:{communications:[]}})),
         axios.get(`${API}/attendance`).catch(()=>({data:{records:[]}})),
-        axios.get(`${API}/hiring/candidates`).catch(()=>({data:{entries:[]}})),
+        axios.get(`${API}/hiring/candidates`, { params: { include_hired: hiringIncludeHired ? 'true' : 'false' } }).catch(()=>({data:{entries:[]}})),
         axios.get(`${API}/employee-tasks`).catch(()=>({data:{tasks:[]}})),
         axios.get(`${API}/call-logs/all`).catch(()=>({data:{call_logs:[]}})),
         axios.get(`${API}/sales-managers`).catch(()=>({data:{sales_managers:[]}})),
@@ -139,7 +143,7 @@ export default function HRManagerDashboard() {
       } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
-  }, []);
+  }, [hiringIncludeHired]);
   // Attendance helpers (declared before the useEffects that depend on them)
   const fetchDailyAtt = useCallback(async (d) => {
     try {
@@ -411,34 +415,71 @@ export default function HRManagerDashboard() {
                 <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEmpForm({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""}); setShowAddEmp(true);}} data-testid="hr-add-emp-btn"><Plus className="w-3 h-3 mr-1"/>Add Employee</Button>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {employees.filter(e=>{
+            {(() => {
+              const filtered = employees.filter(e=>{
                 if (empRoleFilter!=="all" && e.role!==empRoleFilter) return false;
                 if (empSearch && !((e.name||"").toLowerCase().includes(empSearch.toLowerCase())||(e.email||"").toLowerCase().includes(empSearch.toLowerCase()))) return false;
                 return true;
-              }).map(e => (
-                <div key={e.id} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`emp-${e.id}`}>
-                  <div className="flex justify-between items-start">
-                    <div className="min-w-0 flex-1"><p className="font-heading font-medium text-sm truncate">{e.name}</p><p className="text-xs text-[#59615D] truncate">{e.email}</p>
-                      {e.phone ? <a href={`tel:${e.phone}`} className="text-xs text-[#3B5249] underline inline-flex items-center gap-1 mt-0.5" data-testid={`emp-phone-${e.id}`}><Phone className="w-3 h-3"/>{e.phone}</a> : <p className="text-[10px] text-red-500 mt-0.5">⚠ No phone</p>}
+              });
+              const selectable = filtered.filter(e => !(e.id||"").startsWith("admin"));
+              const allSelected = selectable.length > 0 && selectable.every(e => empSelected.has(e.id));
+              const toggleAll = () => { if (allSelected) setEmpSelected(new Set()); else setEmpSelected(new Set(selectable.map(e=>e.id))); };
+              const toggleOne = (id) => setEmpSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+              const bulkDelete = async () => {
+                const ids = Array.from(empSelected);
+                if (!ids.length) return;
+                const password = window.prompt(`Delete ${ids.length} employee(s)?\nThis cascades all their orders / leads / commissions / etc. and cannot be undone.\n\nEnter your password to confirm:`);
+                if (!password) return;
+                try {
+                  const { data } = await axios.post(`${API}/users/bulk-delete`, { ids, password });
+                  toast.success(data.message || `Deleted ${data.deleted}`);
+                  setEmpSelected(new Set());
+                  fetchData();
+                } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+              };
+              return <>
+                <div className="flex items-center justify-between gap-2 mb-2 flex-wrap bg-[#F9F8F6] border border-[#E5E3DB] rounded-xl px-3 py-2" data-testid="hr-emp-bulk-bar">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 accent-[#3B5249]" data-testid="hr-emp-select-all"/>
+                    <span className="text-[#59615D]">Select all ({selectable.length}{selectable.length !== filtered.length ? ` of ${filtered.length} eligible` : ""})</span>
+                  </label>
+                  {empSelected.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-[#3B5249]" data-testid="hr-emp-selected-count">{empSelected.size} selected</span>
+                      <Button size="sm" variant="outline" className="rounded-full h-7 text-[10px]" onClick={()=>setEmpSelected(new Set())}>Clear</Button>
+                      <Button size="sm" className="rounded-full h-7 text-[10px] bg-red-600 text-white hover:bg-red-700" onClick={bulkDelete} data-testid="hr-emp-bulk-delete">🗑 Delete Selected</Button>
                     </div>
-                    <div className="flex gap-1 items-center shrink-0">
-                      <Badge variant="outline" className="text-[9px] capitalize">{e.role?.replace(/_/g, " ")}</Badge>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 mt-2 text-center">
-                    <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[9px] text-[#59615D]">Salary</p><p className="font-semibold text-xs">Rs.{e.salary||0}</p></div>
-                    <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[9px] text-[#59615D]">Incentive</p><p className="font-semibold text-xs">Rs.{e.incentive||0}</p></div>
-                  </div>
-                  {e.district && <p className="text-[10px] text-[#A66E4E] mt-1">{e.area ? `${e.area}, ` : ""}{e.district}</p>}
-                  <div className="flex gap-1 mt-2 flex-wrap">
-                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setSelectedEmp(e);setSalaryForm({salary:e.salary||0,incentive:e.incentive||0});setShowEditSalary(true);}} data-testid={`edit-salary-${e.id}`}><IndianRupee className="w-3 h-3 mr-0.5"/>Salary</Button>
-                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:e.email||"",password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
-                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>handleDeleteEmp(e)} data-testid={`delete-emp-${e.id}`}>Delete</Button>
-                  </div>
+                  )}
                 </div>
-              ))}
-            </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filtered.map(e => (
+                  <div key={e.id} className={`border rounded-xl p-3 transition-colors ${empSelected.has(e.id) ? 'border-[#3B5249] bg-[#F9F8F6]' : 'border-[#E5E3DB]'}`} data-testid={`emp-${e.id}`}>
+                    <div className="flex justify-between items-start gap-2">
+                      {!(e.id||"").startsWith("admin") && (
+                        <input type="checkbox" checked={empSelected.has(e.id)} onChange={()=>toggleOne(e.id)} className="w-4 h-4 mt-1 accent-[#3B5249] flex-shrink-0" data-testid={`emp-select-${e.id}`}/>
+                      )}
+                      <div className="min-w-0 flex-1"><p className="font-heading font-medium text-sm truncate">{e.name}</p><p className="text-xs text-[#59615D] truncate">{e.email}</p>
+                        {e.phone ? <a href={`tel:${e.phone}`} className="text-xs text-[#3B5249] underline inline-flex items-center gap-1 mt-0.5" data-testid={`emp-phone-${e.id}`}><Phone className="w-3 h-3"/>{e.phone}</a> : <p className="text-[10px] text-red-500 mt-0.5">⚠ No phone</p>}
+                      </div>
+                      <div className="flex gap-1 items-center shrink-0">
+                        <Badge variant="outline" className="text-[9px] capitalize">{e.role?.replace(/_/g, " ")}</Badge>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2 text-center">
+                      <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[9px] text-[#59615D]">Salary</p><p className="font-semibold text-xs">Rs.{e.salary||0}</p></div>
+                      <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[9px] text-[#59615D]">Incentive</p><p className="font-semibold text-xs">Rs.{e.incentive||0}</p></div>
+                    </div>
+                    {e.district && <p className="text-[10px] text-[#A66E4E] mt-1">{e.area ? `${e.area}, ` : ""}{e.district}</p>}
+                    <div className="flex gap-1 mt-2 flex-wrap">
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setSelectedEmp(e);setSalaryForm({salary:e.salary||0,incentive:e.incentive||0});setShowEditSalary(true);}} data-testid={`edit-salary-${e.id}`}><IndianRupee className="w-3 h-3 mr-0.5"/>Salary</Button>
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:e.email||"",password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>handleDeleteEmp(e)} data-testid={`delete-emp-${e.id}`}>Delete</Button>
+                    </div>
+                  </div>
+                ))}
+                </div>
+              </>;
+            })()}
           </div></TabsContent>
 
           {/* PAYROLL */}
@@ -612,12 +653,12 @@ export default function HRManagerDashboard() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">
               {[{l:"Total",v:hiringCandidates.length,k:"all"},{l:"Contacted",v:hiringCandidates.filter(c=>c.status==='contacted').length,k:"contacted"},{l:"Not Answering",v:hiringCandidates.filter(c=>c.status==='not_answering').length,k:"not_answering"},{l:"Interested",v:hiringCandidates.filter(c=>c.status==='interested').length,k:"interested"},{l:"Interviewed",v:hiringCandidates.filter(c=>c.status==='interviewed').length,k:"interviewed"},{l:"Selected",v:hiringCandidates.filter(c=>c.status==='selected').length,k:"selected"},{l:"Forwarded",v:hiringCandidates.filter(c=>c.forwarded_to).length,k:"forwarded"}].map(s=>(
-                <button key={s.l} onClick={()=>setHiringFilter(s.k)} data-testid={`hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hiringFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hiringFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-lg font-bold">{s.v}</p></button>
+                <button key={s.l} onClick={()=>{setHiringFilter(s.k); setHiringPage(1);}} data-testid={`hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hiringFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hiringFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-lg font-bold">{s.v}</p></button>
               ))}
             </div>
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <span className="text-[10px] text-[#59615D] font-medium uppercase">Filter by Status:</span>
-              <Select value={hiringFilter} onValueChange={setHiringFilter}>
+              <Select value={hiringFilter} onValueChange={v=>{setHiringFilter(v); setHiringPage(1);}}>
                 <SelectTrigger className="w-44 h-8 text-xs rounded-full" data-testid="hiring-status-filter"><SelectValue/></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Candidates</SelectItem>
@@ -634,12 +675,17 @@ export default function HRManagerDashboard() {
                   <SelectItem value="hired">Hired</SelectItem>
                 </SelectContent>
               </Select>
-              {hiringFilter !== "all" && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>setHiringFilter("all")}>Clear</Button>}
+              {hiringFilter !== "all" && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>{setHiringFilter("all"); setHiringPage(1);}}>Clear</Button>}
             </div>
             {(() => {
-              const list = hiringFilter === "all" ? hiringCandidates :
+              const fullList = hiringFilter === "all" ? hiringCandidates :
                 hiringFilter === "forwarded" ? hiringCandidates.filter(c=>c.forwarded_to) :
                 hiringCandidates.filter(c=>c.status === hiringFilter);
+              const totalCount = fullList.length;
+              const totalPages = Math.max(1, Math.ceil(totalCount / HIRING_PAGE_SIZE));
+              const safePage = Math.min(hiringPage, totalPages);
+              const pageStart = (safePage - 1) * HIRING_PAGE_SIZE;
+              const list = fullList.slice(pageStart, pageStart + HIRING_PAGE_SIZE);
               const selectableList = list.filter(c => c.status !== 'hired');
               const allSelected = selectableList.length > 0 && selectableList.every(c => hiringSelected.has(c.id));
               const toggleAll = () => {
@@ -664,8 +710,24 @@ export default function HRManagerDashboard() {
                   fetchData();
                 } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
               };
-              return list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">{hiringFilter==="all"?"No candidates yet":`No candidates with status "${hiringFilter.replace(/_/g," ")}"`}</p>:
+              return list.length===0 && totalCount===0 ?<p className="text-center py-6 text-[#59615D] text-sm">{hiringFilter==="all"?"No candidates yet":`No candidates with status "${hiringFilter.replace(/_/g," ")}"`}</p>:
               <>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap text-xs">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-[#59615D]">Showing <b className="text-[#3B5249]">{totalCount === 0 ? 0 : pageStart + 1}-{Math.min(pageStart + HIRING_PAGE_SIZE, totalCount)}</b> of <b className="text-[#3B5249]">{totalCount}</b></span>
+                  <label className="flex items-center gap-1 cursor-pointer" title="Show hired candidates too">
+                    <input type="checkbox" checked={hiringIncludeHired} onChange={e=>{setHiringIncludeHired(e.target.checked); setHiringPage(1);}} className="w-3.5 h-3.5 accent-[#3B5249]" data-testid="hr-show-hired"/>
+                    <span className="text-[#59615D]">Show hired</span>
+                  </label>
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-1" data-testid="hr-hiring-pager">
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] rounded-full" disabled={safePage<=1} onClick={()=>setHiringPage(p=>Math.max(1,p-1))} data-testid="hr-hiring-prev">← Prev</Button>
+                    <span className="px-2 text-[#59615D]">Page {safePage} / {totalPages}</span>
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] rounded-full" disabled={safePage>=totalPages} onClick={()=>setHiringPage(p=>Math.min(totalPages,p+1))} data-testid="hr-hiring-next">Next →</Button>
+                  </div>
+                )}
+              </div>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap bg-[#F9F8F6] border border-[#E5E3DB] rounded-xl px-3 py-2" data-testid="hr-hiring-bulk-bar">
                 <label className="flex items-center gap-2 cursor-pointer text-xs">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 accent-[#3B5249]" data-testid="hr-hiring-select-all"/>

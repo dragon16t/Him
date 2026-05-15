@@ -1526,6 +1526,7 @@ async def _get_cc_assistants(target_user_id: str, target_role: str) -> list:
 async def get_team_activity(
     month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
     user_id: Optional[str] = None, activity_type: Optional[str] = None,
+    days: Optional[int] = None,
     limit: int = 500, skip: int = 0,
     current_user: dict = Depends(get_current_user)
 ):
@@ -1620,6 +1621,11 @@ async def get_team_activity(
             })
     # Sort by timestamp desc
     activities.sort(key=lambda x: str(x.get("timestamp","")), reverse=True)
+    # Optional "last N days" filter (frontend uses this for the 3/7/15/30 selector)
+    if days and int(days) > 0:
+        from datetime import timedelta as _td
+        cutoff = (datetime.now(timezone.utc) - _td(days=int(days))).isoformat()
+        activities = [a for a in activities if str(a.get("timestamp","")) >= cutoff]
     total = len(activities)
     items = activities[skip: skip + max(1, min(int(limit or 500), 2000))]
     # Summary
@@ -3269,6 +3275,47 @@ async def delete_user(uid: str, data: dict, current_user: dict = Depends(get_cur
     await log_audit("delete_user_cascade", "user", uid, current_user['id'], current_user.get('name', ''),
                     f"Deleted user {uid} ({deleted_email}) + cascade: {counts}")
     return {"message": f"User {uid} deleted with full cascade", "deleted_email": deleted_email, "cascade_counts": counts}
+
+@api_router.post("/users/bulk-delete")
+async def bulk_delete_users(data: dict, current_user: dict = Depends(get_current_user)):
+    """Bulk delete users. Admin + HR Manager only. Skips admins. Same cascade as single delete.
+    Requires admin/hr password in `password` for safety."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    await check_delete_password(data.get("password", ""), current_user)
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="ids list is required")
+    deleted, skipped, errors = 0, 0, []
+    for uid in ids:
+        if uid.startswith("admin"):
+            skipped += 1; continue
+        deleted_role, deleted_email = None, None
+        for role, coll_name in ROLE_COLLECTIONS.items():
+            existing = await db[coll_name].find_one({"id": uid}, {"_id": 0, "email": 1})
+            if existing:
+                deleted_email = (existing.get("email") or "").lower()
+                deleted_role = role
+                break
+        if not deleted_role:
+            errors.append(f"{uid}: not found"); continue
+        try:
+            await _cascade_delete_user_data(uid, deleted_role, current_user)
+            await db[ROLE_COLLECTIONS[deleted_role]].delete_one({"id": uid})
+            if deleted_email:
+                await db.deleted_seed_emails.update_one(
+                    {"email": deleted_email},
+                    {"$set": {"email": deleted_email, "deleted_at": datetime.now(timezone.utc).isoformat(),
+                              "deleted_by": current_user['id'], "deleted_by_name": current_user.get('name', '')}},
+                    upsert=True,
+                )
+            deleted += 1
+        except Exception as e:
+            errors.append(f"{uid}: {e}")
+    await log_audit("bulk_delete_users", "user", "multi", current_user['id'], current_user.get('name', ''),
+                    f"Bulk deleted {deleted} user(s), skipped {skipped}, errors: {len(errors)}")
+    return {"deleted": deleted, "skipped": skipped, "errors": errors,
+            "message": f"Deleted {deleted} user(s)" + (f" · {skipped} admin protected" if skipped else "") + (f" · {len(errors)} errors" if errors else "")}
 
 @api_router.get("/users/{uid}/cascade-preview")
 async def cascade_preview(uid: str, current_user: dict = Depends(get_current_user)):

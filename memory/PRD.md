@@ -12,7 +12,10 @@ Clone https://github.com/shadnazar/HRM1.git and build a fast, full-featured CRM 
 - Deployed at https://portal.veegal.com (user-managed). Preview is the dev sandbox only.
 
 ## Implemented (latest first)
-- **Feb 2026** — Five fixes:
+- **Feb 2026** — SM telecaller call viewer + HR hiring pagination:
+  - **SM Telecaller cards**: new 📞 button opens a "Call Logs" dialog showing every call the telecaller logged, with a date-range chip selector — **Last 3 / 7 / 15 / 30 days**. Each row shows customer, phone, status / outcome badge, full notes block, duration and timestamp. Backed by `GET /api/team-activity?user_id=…&days=N` (new `days` query param added).
+  - **HR Hiring pagination + "Show hired"**: list is now paginated **50 per page, latest-first**, with prev/next buttons and "Showing X-Y of Z" indicator. Pagination resets to page 1 whenever filter changes. A "Show hired" checkbox refetches with `include_hired=true` — fixes the "morning showed 64 / now only 40" complaint (the 24 missing ones were hidden after being marked hired). When a filter is applied, pagination operates on the filtered subset.
+- **Feb 2026** — HR Employee Library multi-select + bulk delete + "By: tc-3eed7f…" raw-id hydration backfill
   - **Leaderboard now works**: backend was reading from non-existent `db.crm_orders` → revenue was always 0; also used wrong commission field (`amount` vs `commission_amount`). Fixed to query `db.orders` (delivered status, scoped by `created_by`) with proper month/year filter on both orders + commissions; added `rank` field and tie-break sort (revenue → orders → commission).
   - **Attendance logout (HR)**: removed the 17:30 IST gate that was blocking HR from setting logout earlier. `can_set_logout` always true now; "Set Logout" / "Update Logout" button is always usable.
   - **Telecaller dashboard — Order history**: new "📦 Orders (N)" tab showing every order the telecaller created (order #, customer, items, amount, payment type, status, date) in a clean table.

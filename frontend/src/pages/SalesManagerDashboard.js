@@ -42,6 +42,11 @@ export default function SalesManagerDashboard() {
   const [showAddTC, setShowAddTC] = useState(false);
   const [editingTC, setEditingTC] = useState(null);
   const [tcEditForm, setTcEditForm] = useState({ name: "", phone: "", language: "", location: "" });
+  // Per-telecaller call log viewer
+  const [callViewerTC, setCallViewerTC] = useState(null);
+  const [callViewerDays, setCallViewerDays] = useState(7);
+  const [callViewerLoading, setCallViewerLoading] = useState(false);
+  const [callViewerLogs, setCallViewerLogs] = useState([]);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddInstruction, setShowAddInstruction] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -79,6 +84,15 @@ export default function SalesManagerDashboard() {
 
   const handleAddTC = async () => { if (!tcForm.name||!tcForm.email) return toast.error("Fill fields"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
   const openEditTC = (tc) => { setEditingTC(tc); setTcEditForm({ name: tc.name || "", phone: tc.phone || "", language: tc.language || "", location: tc.locality || tc.location || tc.city || "" }); };
+  const openCallViewer = (tc) => { setCallViewerTC(tc); setCallViewerDays(7); };
+  useEffect(() => {
+    if (!callViewerTC) { setCallViewerLogs([]); return; }
+    setCallViewerLoading(true);
+    axios.get(`${API}/team-activity`, { params: { user_id: callViewerTC.id, days: callViewerDays, limit: 500 } })
+      .then(r => setCallViewerLogs(r.data.activities || []))
+      .catch(() => setCallViewerLogs([]))
+      .finally(() => setCallViewerLoading(false));
+  }, [callViewerTC, callViewerDays]);
   const handleEditTC = async () => {
     if (!editingTC) return;
     try {
@@ -227,7 +241,7 @@ export default function SalesManagerDashboard() {
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
           <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={telecallers} candidateLabel="Telecallers" /></TabsContent>
           <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Telecallers</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTC(true)} data-testid="add-tc-btn"><Plus className="w-4 h-4 mr-1"/>Add</Button></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p><p className="text-xs text-[#59615D]">{tc.email}</p>{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p><p className="text-xs text-[#59615D]">{tc.email}</p>{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {tc.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-lang-${tc.id}`}>🗣 {tc.language}</Badge>}
                 {(tc.locality || tc.location || tc.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-place-${tc.id}`}>📍 {tc.locality || tc.location || tc.city}</Badge>}
@@ -370,6 +384,56 @@ export default function SalesManagerDashboard() {
             <div><Label className="text-xs">Language</Label><Input value={tcEditForm.language} onChange={e=>setTcEditForm(f=>({...f,language:e.target.value}))} placeholder="Malayalam / Hindi / English…" className="rounded-xl" data-testid="edit-tc-language"/></div>
             <div><Label className="text-xs">Place / Locality</Label><Input value={tcEditForm.location} onChange={e=>setTcEditForm(f=>({...f,location:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl" data-testid="edit-tc-location"/></div>
             <Button onClick={handleEditTC} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-tc">Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* TELECALLER CALL LOG VIEWER */}
+      <Dialog open={!!callViewerTC} onOpenChange={(o)=>{ if (!o) setCallViewerTC(null); }}>
+        <DialogContent className="rounded-2xl max-w-3xl max-h-[88vh] overflow-y-auto" data-testid="tc-calls-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">📞 {callViewerTC?.name} — Call Logs</DialogTitle>
+            <p className="text-xs text-[#59615D]">Calls done by this telecaller, with status & notes.</p>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex gap-2 flex-wrap" data-testid="tc-calls-range">
+              {[{d:3,l:"Last 3 days"},{d:7,l:"Last 7 days"},{d:15,l:"Last 15 days"},{d:30,l:"Last 30 days"}].map(opt=>(
+                <Button key={opt.d} size="sm" variant={callViewerDays===opt.d?"default":"outline"}
+                  onClick={()=>setCallViewerDays(opt.d)}
+                  className={`rounded-full text-xs h-7 ${callViewerDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
+                  data-testid={`tc-calls-range-${opt.d}`}
+                >{opt.l}</Button>
+              ))}
+              <span className="text-xs text-[#59615D] flex items-center ml-auto" data-testid="tc-calls-count">
+                {callViewerLoading ? "Loading…" : `${callViewerLogs.length} call(s)`}
+              </span>
+            </div>
+            {!callViewerLoading && callViewerLogs.length === 0 && (
+              <p className="text-center py-8 text-sm text-[#59615D]">No calls logged in this window.</p>
+            )}
+            <div className="space-y-2">
+              {callViewerLogs.map((c, i) => (
+                <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`tc-call-row-${i}`}>
+                  <div className="flex justify-between gap-2 flex-wrap items-start">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm">{c.customer_name || "—"} <span className="text-[#59615D] text-xs font-normal">· {c.customer_phone || "—"}</span></p>
+                      {c.product_interest && <p className="text-[10px] text-[#A66E4E]">Interested: {c.product_interest}</p>}
+                      {c.notes ? (
+                        <p className="text-[11px] text-[#2C3531] mt-1 bg-[#F9F8F6] rounded p-2 whitespace-pre-wrap">{c.notes}</p>
+                      ) : (
+                        <p className="text-[10px] text-[#59615D] italic mt-1">No notes</p>
+                      )}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {c.outcome && <Badge className="text-[9px] capitalize bg-[#F9F8F6] text-[#3B5249] border border-[#E5E3DB]">{String(c.outcome).replace(/_/g," ")}</Badge>}
+                      <p className="text-[10px] text-[#59615D] mt-1">{String(c.timestamp || "").slice(0,16).replace("T"," ")}</p>
+                      {c.duration && <p className="text-[10px] text-[#59615D]">{c.duration}s</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Button variant="outline" onClick={()=>setCallViewerTC(null)} className="w-full rounded-full">Close</Button>
           </div>
         </DialogContent>
       </Dialog>
