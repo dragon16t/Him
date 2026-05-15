@@ -1124,7 +1124,22 @@ async def get_telecallers(current_user: dict = Depends(get_current_user)):
         q['managed_by'] = current_user['id']
     elif current_user['role'] == 'assistant_sales_manager':
         q['managed_by'] = current_user.get('managed_by','')
-    return {"telecallers": await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)}
+    tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
+    # Compute live total_calls + conversions so the stat tile is always accurate.
+    # Sources: lead.call_logs entries + delivered/confirmed orders assigned to TC.
+    for tc in tcs:
+        call_count = 0
+        async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
+            call_count += len(lead.get("call_logs") or [])
+        # also count inhouse call logs in case TC was promoted from inhouse role
+        call_count += await db.inhouse_call_logs.count_documents({"caller_id": tc['id']})
+        tc['total_calls'] = call_count
+        conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}})
+        tc['conversions'] = conv
+        # Commission_earned: only paid commissions
+        comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(500)
+        tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
+    return {"telecallers": tcs}
 
 @api_router.get("/managers")
 async def get_managers(current_user: dict = Depends(get_current_user)):
@@ -1156,8 +1171,10 @@ async def get_agents(current_user: dict = Depends(get_current_user)):
         comms = await db.commissions.find({"user_id": a['id']}, {"_id": 0}).to_list(100)
         a['commission_total'] = round(sum(c.get('commission_amount',0) for c in comms), 2)
         a['commission_pending'] = round(sum(c.get('commission_amount',0) for c in comms if c['status']=='pending'), 2)
-        call_logs = await db.agent_call_logs.find({"agent_id": a['id']}, {"_id": 0}).sort("created_at", -1).to_list(10)
-        a['call_logs'] = call_logs
+        # Live counts (so DM dashboard never shows stale 0)
+        a['total_calls'] = await db.agent_call_logs.count_documents({"agent_id": a['id']})
+        # Recent samples for inline preview
+        a['call_logs'] = await db.agent_call_logs.find({"agent_id": a['id']}, {"_id": 0}).sort("created_at", -1).to_list(10)
     return {"agents": agents}
 
 # ==================== AGENT CALL LOGS (DM → Agent calls) ====================

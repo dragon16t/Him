@@ -50,6 +50,11 @@ export default function ManagerDashboard() {
   const [agentForm, setAgentForm] = useState({ name: "", email: "", password: "", district: "", area: "", region_id: "", phone: "", language: "" });
   const [editingAgent, setEditingAgent] = useState(null);
   const [agentEditForm, setAgentEditForm] = useState({ name: "", phone: "", language: "", area: "", district: "" });
+  // Per-agent call/visit viewer
+  const [callViewerAgent, setCallViewerAgent] = useState(null);
+  const [callViewerDays, setCallViewerDays] = useState(7);
+  const [callViewerLoading, setCallViewerLoading] = useState(false);
+  const [callViewerLogs, setCallViewerLogs] = useState([]);
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assigned_to: "", assigned_to_name: "", assigned_to_role: "agent", priority: "medium", due_date: "" });
   // Assistant District Managers (ADMs)
   const [adms, setAdms] = useState([]);
@@ -88,6 +93,15 @@ export default function ManagerDashboard() {
   const handleAddRegion = async () => { if (!regionForm.name) return toast.error("Name required"); try { await axios.post(`${API}/regions`, {...regionForm,state:"Kerala",areas:regionForm.areas.split(",").map(a=>a.trim()).filter(Boolean)}); toast.success("Added"); setShowAddRegion(false); fetchData(); } catch { toast.error("Failed"); } };
   const handleAddAgent = async () => { if (!agentForm.name || !agentForm.email) return toast.error("Fill required fields"); if (!agentForm.phone) return toast.error("Phone number is mandatory"); try { await axios.post(`${API}/agents`, agentForm); toast.success("Agent added"); setShowAddAgent(false); setAgentForm({name:"",email:"",password:"",district:"",area:"",region_id:"",phone:"",language:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const openEditAgent = (a) => { setEditingAgent(a); setAgentEditForm({ name: a.name || "", phone: a.phone || "", language: a.language || "", area: a.area || "", district: a.district || "" }); };
+  const openCallViewer = (a) => { setCallViewerAgent(a); setCallViewerDays(7); };
+  useEffect(() => {
+    if (!callViewerAgent) { setCallViewerLogs([]); return; }
+    setCallViewerLoading(true);
+    axios.get(`${API}/team-activity`, { params: { user_id: callViewerAgent.id, days: callViewerDays, limit: 500 } })
+      .then(r => setCallViewerLogs(r.data.activities || []))
+      .catch(() => setCallViewerLogs([]))
+      .finally(() => setCallViewerLoading(false));
+  }, [callViewerAgent, callViewerDays]);
   const handleEditAgent = async () => {
     if (!editingAgent) return;
     try {
@@ -257,6 +271,7 @@ export default function ManagerDashboard() {
               <div className="flex justify-between items-start">
                 <div><p className="font-heading font-medium">{a.name}</p><p className="text-xs text-[#59615D]">{a.email} {a.phone&&<span>| {a.phone}</span>}</p><p className="text-xs text-[#A66E4E] mt-0.5"><MapPin className="w-3 h-3 inline mr-1"/>{a.area}, {a.district}</p></div>
                 <div className="flex gap-1 flex-shrink-0">
+                  <Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(a)} data-testid={`view-calls-agent-${a.id}`} title="View call & visit logs">📞</Button>
                   <Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditAgent(a)} data-testid={`edit-agent-${a.id}`}>✎</Button>
                   {a.phone&&<a href={`tel:${a.phone}`}><Button size="sm" variant="outline" className="rounded-full h-8 text-xs"><Phone className="w-3 h-3 mr-1"/>Call</Button></a>}
                 </div>
@@ -428,6 +443,59 @@ export default function ManagerDashboard() {
               <div><Label className="text-xs">Area / Locality</Label><Input value={agentEditForm.area} onChange={e=>setAgentEditForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl" data-testid="edit-agent-area"/></div>
             </div>
             <Button onClick={handleEditAgent} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-agent">Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* AGENT CALL / VISIT LOG VIEWER */}
+      <Dialog open={!!callViewerAgent} onOpenChange={(o)=>{ if (!o) setCallViewerAgent(null); }}>
+        <DialogContent className="rounded-2xl max-w-3xl max-h-[88vh] overflow-y-auto" data-testid="agent-calls-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">📞 {callViewerAgent?.name} — Calls & Home Visits</DialogTitle>
+            <p className="text-xs text-[#59615D]">Calls and home visits done by this agent, with status & notes.</p>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex gap-2 flex-wrap" data-testid="agent-calls-range">
+              {[{d:3,l:"Last 3 days"},{d:7,l:"Last 7 days"},{d:15,l:"Last 15 days"},{d:30,l:"Last 30 days"}].map(opt=>(
+                <Button key={opt.d} size="sm" variant={callViewerDays===opt.d?"default":"outline"}
+                  onClick={()=>setCallViewerDays(opt.d)}
+                  className={`rounded-full text-xs h-7 ${callViewerDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
+                  data-testid={`agent-calls-range-${opt.d}`}
+                >{opt.l}</Button>
+              ))}
+              <span className="text-xs text-[#59615D] flex items-center ml-auto" data-testid="agent-calls-count">
+                {callViewerLoading ? "Loading…" : `${callViewerLogs.length} entry(ies)`}
+              </span>
+            </div>
+            {!callViewerLoading && callViewerLogs.length === 0 && (
+              <p className="text-center py-8 text-sm text-[#59615D]">No calls or visits logged in this window.</p>
+            )}
+            <div className="space-y-2">
+              {callViewerLogs.map((c, i) => (
+                <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`agent-call-row-${i}`}>
+                  <div className="flex justify-between gap-2 flex-wrap items-start">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm">
+                        {c.type === 'home_visit' && <Badge className="text-[9px] bg-blue-100 text-blue-800 mr-1">HOME VISIT</Badge>}
+                        {c.customer_name || "—"} <span className="text-[#59615D] text-xs font-normal">· {c.customer_phone || "—"}</span>
+                      </p>
+                      {c.address && <p className="text-[10px] text-[#A66E4E]"><MapPin className="w-3 h-3 inline mr-1"/>{c.address}</p>}
+                      {c.notes ? (
+                        <p className="text-[11px] text-[#2C3531] mt-1 bg-[#F9F8F6] rounded p-2 whitespace-pre-wrap">{c.notes}</p>
+                      ) : (
+                        <p className="text-[10px] text-[#59615D] italic mt-1">No notes</p>
+                      )}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {c.outcome && <Badge className="text-[9px] capitalize bg-[#F9F8F6] text-[#3B5249] border border-[#E5E3DB]">{String(c.outcome).replace(/_/g," ")}</Badge>}
+                      <p className="text-[10px] text-[#59615D] mt-1">{String(c.timestamp || "").slice(0,16).replace("T"," ")}</p>
+                      {c.duration && <p className="text-[10px] text-[#59615D]">{c.duration}s</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Button variant="outline" onClick={()=>setCallViewerAgent(null)} className="w-full rounded-full">Close</Button>
           </div>
         </DialogContent>
       </Dialog>
