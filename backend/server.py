@@ -1120,7 +1120,7 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
 
 # ==================== USER MANAGEMENT ====================
 @api_router.get("/telecallers")
-async def get_telecallers(current_user: dict = Depends(get_current_user)):
+async def get_telecallers(days: Optional[int] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager']: raise HTTPException(status_code=403)
     q = {}
     if current_user['role'] == 'sales_manager':
@@ -1128,20 +1128,38 @@ async def get_telecallers(current_user: dict = Depends(get_current_user)):
     elif current_user['role'] == 'assistant_sales_manager':
         q['managed_by'] = current_user.get('managed_by','')
     tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
-    # Compute live total_calls + conversions so the stat tile is always accurate.
-    # Sources: lead.call_logs entries + delivered/confirmed orders assigned to TC.
+    # All-time totals
     for tc in tcs:
         call_count = 0
         async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
             call_count += len(lead.get("call_logs") or [])
-        # also count inhouse call logs in case TC was promoted from inhouse role
         call_count += await db.inhouse_call_logs.count_documents({"caller_id": tc['id']})
         tc['total_calls'] = call_count
         conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}})
         tc['conversions'] = conv
-        # Commission_earned: only paid commissions
+        tc['total_leads'] = await db.leads.count_documents({"assigned_to": tc['id']})
         comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(500)
         tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
+    # Windowed counts when `days` is provided (3/7/15/30) for the SM tab filter chips
+    if days and int(days) > 0:
+        from datetime import timedelta as _td
+        cutoff_iso = (datetime.now(timezone.utc) - _td(days=int(days))).isoformat()
+        for tc in tcs:
+            w_calls = 0
+            async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
+                for cl in (lead.get("call_logs") or []):
+                    ts = cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or ""
+                    if str(ts) >= cutoff_iso:
+                        w_calls += 1
+            w_calls += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "created_at": {"$gte": cutoff_iso}})
+            tc['window_calls'] = w_calls
+            tc['window_conv'] = await db.orders.count_documents({
+                "created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]},
+                "created_at": {"$gte": cutoff_iso}
+            })
+            tc['window_leads'] = await db.leads.count_documents({
+                "assigned_to": tc['id'], "created_at": {"$gte": cutoff_iso}
+            })
     return {"telecallers": tcs}
 
 @api_router.get("/managers")
@@ -1590,7 +1608,7 @@ async def get_team_activity(
         lead_q = {} if allowed_ids is None else {"assigned_to": {"$in": allowed_ids}}
         async for lead in db.leads.find(lead_q, {"_id":0, "id":1, "name":1, "phone_number":1, "assigned_to":1, "assigned_to_name":1, "call_logs":1, "status":1, "product_interest":1}):
             for cl in (lead.get("call_logs") or []):
-                ts = (cl.get("timestamp") or cl.get("date") or cl.get("created_at") or "")
+                ts = (cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or "")
                 if date_prefix and not str(ts).startswith(date_prefix): continue
                 activities.append({
                     "type": "call",

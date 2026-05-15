@@ -27,6 +27,7 @@ export default function SalesManagerDashboard() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [telecallers, setTelecallers] = useState([]);
+  const [tcWindowDays, setTcWindowDays] = useState(0); // 0 = all time; 3/7/15/30 = last N days
   const [agents, setAgents] = useState([]);
   const [orders, setOrders] = useState([]);
   const [commissions, setCommissions] = useState([]);
@@ -67,7 +68,7 @@ export default function SalesManagerDashboard() {
   const fetchData = useCallback(async () => {
     try {
       const [s, tc, o, c, t, i, co] = await Promise.all([
-        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/telecallers`), axios.get(`${API}/orders`),
+        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/telecallers`, { params: tcWindowDays ? { days: tcWindowDays } : {} }), axios.get(`${API}/orders`),
         axios.get(`${API}/commissions/all`), axios.get(`${API}/tasks`), axios.get(`${API}/instructions`), axios.get(`${API}/contacts`)
       ]);
       setStats(s.data.stats); setTelecallers(tc.data.telecallers); setOrders(o.data.orders);
@@ -79,7 +80,7 @@ export default function SalesManagerDashboard() {
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tcWindowDays]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleAddTC = async () => { if (!tcForm.name||!tcForm.email) return toast.error("Fill fields"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
@@ -240,13 +241,32 @@ export default function SalesManagerDashboard() {
           </TabsList>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
           <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={telecallers} candidateLabel="Telecallers" /></TabsContent>
-          <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Telecallers</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTC(true)} data-testid="add-tc-btn"><Plus className="w-4 h-4 mr-1"/>Add</Button></div>
+          <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
+            <div className="flex justify-between mb-3 flex-wrap gap-2">
+              <h3 className="font-heading text-lg font-medium">Telecallers</h3>
+              <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTC(true)} data-testid="add-tc-btn"><Plus className="w-4 h-4 mr-1"/>Add</Button>
+            </div>
+            <div className="flex gap-1.5 flex-wrap mb-4" data-testid="tc-window-chips">
+              {[{d:0,l:"All time"},{d:3,l:"Last 3d"},{d:7,l:"Last 7d"},{d:15,l:"Last 15d"},{d:30,l:"Last 30d"}].map(opt=>(
+                <Button key={opt.d} size="sm" variant={tcWindowDays===opt.d?"default":"outline"}
+                  onClick={()=>setTcWindowDays(opt.d)}
+                  className={`rounded-full text-[10px] h-6 px-2 ${tcWindowDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
+                  data-testid={`tc-window-${opt.d}`}
+                >{opt.l}</Button>
+              ))}
+              <span className="text-[10px] text-[#59615D] flex items-center ml-2">{tcWindowDays?`Showing activity from the last ${tcWindowDays} day(s)`:"All-time totals"}</span>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p><p className="text-xs text-[#59615D]">{tc.email}</p>{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {tc.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-lang-${tc.id}`}>🗣 {tc.language}</Badge>}
                 {(tc.locality || tc.location || tc.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-place-${tc.id}`}>📍 {tc.locality || tc.location || tc.city}</Badge>}
               </div>
-              <div className="grid grid-cols-3 gap-2 mt-2 text-center">{[{l:"Calls",v:tc.total_calls||0},{l:"Conv.",v:tc.conversions||0},{l:"Comm.",v:`Rs.${tc.commission_earned||0}`}].map((s,i)=>(<div key={i} className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">{s.l}</p><p className="font-semibold text-xs">{s.v}</p></div>))}</div>
+              <div className="grid grid-cols-4 gap-1.5 mt-2 text-center">
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Leads</p><p className="font-semibold text-xs" data-testid={`tc-leads-${tc.id}`}>{tcWindowDays ? (tc.window_leads||0) : (tc.total_leads||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Calls</p><p className="font-semibold text-xs" data-testid={`tc-calls-${tc.id}`}>{tcWindowDays ? (tc.window_calls||0) : (tc.total_calls||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Conv.</p><p className="font-semibold text-xs" data-testid={`tc-conv-${tc.id}`}>{tcWindowDays ? (tc.window_conv||0) : (tc.conversions||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Comm.</p><p className="font-semibold text-xs">Rs.{tc.commission_earned||0}</p></div>
+              </div>
               <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if(!window.confirm(`Promote ${tc.name} to Asst Sales Manager?`))return;try{await axios.post(`${API}/promote/tc-to-asm`,{telecaller_id:tc.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-tc-${tc.id}`}>Promote to Asst SM</Button>
             </div>))}</div>
             {/* End of Telecaller Cards */}
