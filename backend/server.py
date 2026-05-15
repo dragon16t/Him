@@ -5540,9 +5540,25 @@ async def get_relationship_calls(current_user: dict = Depends(get_current_user))
                   "staff": l.get('assigned_to',''), "type": "relationship" if l.get('next_relationship_date','') <= today else "repeat",
                   "due_date": l.get('next_relationship_date','') or l.get('next_repeat_order_date',''),
                   "status": "called" if l.get('callback_done') else "pending"} for l in leads]
-    stats = {"pending": len([c for c in rel_calls if c['status']=='pending']),
-             "called": len([c for c in rel_calls if c['status']=='called']),
-             "total": len(rel_calls)}
+    # Compute "pending_calls" (leads with NO call logged yet) and "called_today"
+    # (leads with at least one call_log dated today) from the TC/agent's full assigned list
+    pending_calls = 0
+    called_today = 0
+    if role in ('telecaller', 'agent'):
+        async for lead in db.leads.find({"assigned_to": current_user['id']}, {"_id": 0, "call_logs": 1}):
+            cls = lead.get("call_logs") or []
+            if not cls:
+                pending_calls += 1
+            else:
+                if any(str(cl.get("logged_at") or cl.get("timestamp") or "").startswith(today) for cl in cls):
+                    called_today += 1
+    stats = {
+        "pending": pending_calls,  # leads not yet called — matches the "Pending Calls" card
+        "called": called_today,    # leads called today — matches the "Called Today" card
+        "callbacks_pending": len([c for c in rel_calls if c['status']=='pending']),
+        "callbacks_called": len([c for c in rel_calls if c['status']=='called']),
+        "total": len(rel_calls),
+    }
     return {"calls": rel_calls, "stats": stats}
 
 @api_router.put("/relationship-calls/{lid}/mark-called")
