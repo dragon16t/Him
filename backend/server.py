@@ -729,12 +729,15 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
         cl["logged_at"] = datetime.now(timezone.utc).isoformat()
         cl["logged_by"] = current_user['id']
         await db.leads.update_one({"id": lead_id}, {"$push": {"call_logs": cl}, "$set": update_data})
-    else:
-        await db.leads.update_one({"id": lead_id}, {"$set": update_data})
-    if current_user['role'] == 'telecaller':
-        await db.telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
+        # Increment the caller's total_calls counter — supports both telecaller and inhouse_telecaller
+        if current_user['role'] == 'telecaller':
+            await db.telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
+        elif current_user['role'] == 'inhouse_telecaller':
+            await db.inhouse_telecallers.update_one({"id": current_user['id']}, {"$inc": {"total_calls": 1}})
         # NOTE: conversions are incremented ONLY when an actual order is created (see /orders endpoint).
         # Marking a lead as "interested" no longer counts as a conversion.
+    else:
+        await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     # Send follow-up email notification if time is set
     if data.get("next_follow_up_date") and data.get("next_follow_up_time") and SMTP_EMAIL and SMTP_PASSWORD:
         try:
@@ -3873,6 +3876,27 @@ async def _refresh_employment_terms_cache():
     except Exception as e:
         logger.error(f"Failed to load employment terms override: {e}")
 
+async def _backfill_telecaller_counts():
+    """Hydrate stale total_calls / conversions on legacy telecaller + inhouse_telecaller
+    rows. Idempotent — recomputes from real lead.call_logs + inhouse_call_logs + delivered
+    orders on every boot so SMs always see the true count even if past PUTs missed the
+    $inc (e.g. inhouse_telecaller role wasn't covered before)."""
+    try:
+        for coll_name in ("telecallers", "inhouse_telecallers"):
+            async for u in db[coll_name].find({}, {"_id": 0, "id": 1}):
+                uid = u.get("id")
+                if not uid:
+                    continue
+                cnt = 0
+                async for lead in db.leads.find({"assigned_to": uid}, {"_id": 0, "call_logs": 1}):
+                    cnt += len(lead.get("call_logs") or [])
+                cnt += await db.inhouse_call_logs.count_documents({"caller_id": uid})
+                conv = await db.orders.count_documents({"created_by": uid, "status": {"$in": ["confirmed", "shipped", "delivered"]}})
+                await db[coll_name].update_one({"id": uid}, {"$set": {"total_calls": cnt, "conversions": conv}})
+    except Exception as e:
+        logger.error(f"telecaller counters backfill skipped: {e}")
+
+
 async def _backfill_lead_last_order():
     """For any lead that has a last_order_date but missing last_order_amount/products,
     derive them from the most recent delivered order. One-time best-effort hydration so
@@ -6636,6 +6660,7 @@ async def startup():
     init_storage()
     await _refresh_employment_terms_cache()
     await _backfill_lead_last_order()
+    await _backfill_telecaller_counts()
     await _backfill_created_by_names()
     # Performance: Create indexes
     await db.orders.create_index("status")
