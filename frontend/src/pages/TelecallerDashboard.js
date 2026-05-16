@@ -78,7 +78,8 @@ export default function TelecallerDashboard() {
 
   const handleAddLead = async () => {
     if (!leadForm.phone_number) return toast.error("Phone number required");
-    const payload = { ...leadForm, name: (leadForm.name || "").trim() || "Unknown", product_interest: leadForm.interested_products.join(", ") };
+    // Leave name blank when not provided — it gets captured on the first call log.
+    const payload = { ...leadForm, name: (leadForm.name || "").trim(), product_interest: leadForm.interested_products.join(", ") };
     try {
       await axios.post(`${API}/leads`, payload);
       toast.success("Lead added!");
@@ -114,9 +115,11 @@ export default function TelecallerDashboard() {
         toast.success("Call logged!");
       }
       setShowCallLog(false);
-      if (isOrder && callForm.status === "interested") {
-        setSelectedLead({...selectedLead, status: "interested", name: callForm.customer_name || selectedLead.name});
-        setOrderForm({ customer_name: callForm.customer_name || selectedLead.name, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
+      // Open Create Order dialog automatically when the call resulted in interest or an order
+      if (isOrder && (callForm.status === "interested" || callForm.status === "ordered")) {
+        const finalName = callForm.customer_name || (selectedLead.name && selectedLead.name !== "Unknown" ? selectedLead.name : "");
+        setSelectedLead({...selectedLead, status: callForm.status, name: finalName});
+        setOrderForm({ customer_name: finalName, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
         setShowOrder(true);
       }
       fetchData();
@@ -310,7 +313,7 @@ export default function TelecallerDashboard() {
             filteredLeads.map(lead => (
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
                 <div className="flex justify-between items-start mb-1">
-                  <div><p className="font-heading font-medium text-sm">{lead.name || lead.phone_number}</p><p className="text-xs text-[#59615D]">{lead.phone_number}{lead.source ? ` | ${lead.source}` : ""}</p>
+                  <div><p className="font-heading font-medium text-sm">{(lead.name && lead.name !== "Unknown") ? lead.name : lead.phone_number}</p><p className="text-xs text-[#59615D]">{lead.phone_number}{lead.source ? ` | ${lead.source}` : ""}</p>
                     {lead.product_interest && lead.product_interest !== "general" && <p className="text-[10px] text-[#A66E4E]">Products: {lead.product_interest}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -324,7 +327,7 @@ export default function TelecallerDashboard() {
                 {lead.remarks && <p className="text-xs text-[#59615D] mb-2">{lead.remarks}</p>}
                 <div className="flex gap-2 flex-wrap">
                   <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:"",next_follow_up_time:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
-                  {lead.status === "interested" && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name,customer_phone:lead.phone_number,items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
+                  {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
                 </div>
               </div>
             ))}
@@ -350,9 +353,13 @@ export default function TelecallerDashboard() {
       </DialogContent></Dialog>
 
       {/* CALL LOG DIALOG */}
-      <Dialog open={showCallLog} onOpenChange={setShowCallLog}><DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Log Call — {selectedLead?.phone_number}</DialogTitle></DialogHeader>
+      <Dialog open={showCallLog} onOpenChange={setShowCallLog}><DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Log Call — {selectedLead?.name && selectedLead.name!=="Unknown" ? `${selectedLead.name} · ` : ""}{selectedLead?.phone_number}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div><Label className="text-xs font-medium">Customer Name</Label><Input value={callForm.customer_name} onChange={e=>setCallForm(f=>({...f,customer_name:e.target.value}))} placeholder="Capture the customer's name now" className="rounded-xl" data-testid="call-customer-name"/></div>
+          {(!selectedLead?.name || selectedLead.name === "Unknown") ? (
+            <div><Label className="text-xs font-medium">Customer Name *</Label><Input value={callForm.customer_name} onChange={e=>setCallForm(f=>({...f,customer_name:e.target.value}))} placeholder="Capture the customer's name now" className="rounded-xl" data-testid="call-customer-name"/></div>
+          ) : (
+            <div className="bg-[#F9F8F6] border border-[#E5E3DB] rounded-lg px-3 py-2 text-xs"><span className="text-[#59615D]">Customer:</span> <b className="text-[#3B5249]">{selectedLead.name}</b></div>
+          )}
           <div>
             <Label className="text-xs font-medium">Enquiry Type *</Label>
             <Select value={callForm.enquiry_type} onValueChange={v=>setCallForm(f=>({...f,enquiry_type:v}))}>
@@ -374,7 +381,7 @@ export default function TelecallerDashboard() {
             <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
           )}
           <Button onClick={handleCallLog} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-call-log">{callForm.enquiry_type === "orders" ? "Log Call" : "Route Contact"}</Button>
-          {callForm.enquiry_type === "orders" && callForm.status === "interested" && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging</p>}
+          {callForm.enquiry_type === "orders" && (callForm.status === "interested" || callForm.status === "ordered") && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging — please add delivery address</p>}
         </div>
       </DialogContent></Dialog>
 

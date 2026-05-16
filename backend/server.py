@@ -765,8 +765,11 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
         cl["logged_at"] = datetime.now(timezone.utc).isoformat()
         cl["logged_by"] = current_user['id']
         # Stamp customer_name onto the lead the first time it's captured at call time
-        if cl.get("customer_name") and not (await db.leads.find_one({"id": lead_id}, {"_id": 0, "name": 1}) or {}).get("name"):
-            update_data["name"] = cl["customer_name"]
+        # Also overwrite the placeholder "Unknown" name with the real customer name.
+        if cl.get("customer_name"):
+            existing = (await db.leads.find_one({"id": lead_id}, {"_id": 0, "name": 1}) or {}).get("name", "")
+            if not existing or existing.strip().lower() in ("unknown", "—", "-"):
+                update_data["name"] = cl["customer_name"]
         await db.leads.update_one({"id": lead_id}, {"$push": {"call_logs": cl}, "$set": update_data})
         # Increment the caller's total_calls counter — supports both telecaller and inhouse_telecaller
         if current_user['role'] == 'telecaller':
