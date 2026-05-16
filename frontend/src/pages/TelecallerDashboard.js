@@ -67,13 +67,21 @@ export default function TelecallerDashboard() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const today = new Date().toISOString().split("T")[0];
+  // Leads that still need conversion (interested or marked ordered but no order in the system yet)
+  const orderedLeadIds = new Set((orders || []).map(o => o.lead_id).filter(Boolean));
+  const isPendingConversion = (l) => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id);
   const filteredLeads = leads.filter(l => {
-    if (tab === "today") return l.status === "new" || l.next_follow_up_date === today || l.next_relationship_date === today || l.next_repeat_order_date === today;
+    if (tab === "today") return l.status === "new" || l.next_follow_up_date === today || l.next_relationship_date === today || l.next_repeat_order_date === today || isPendingConversion(l);
     if (tab === "repeat") return l.next_repeat_order_date && l.next_repeat_order_date <= today;
     if (tab === "relationship") return l.next_relationship_date && l.next_relationship_date <= today;
     if (tab === "interested") return l.status === "interested";
     if (tab === "all") return true;
     return true;
+  }).sort((a, b) => {
+    // Pending-conversion leads stay pinned at the top; everything else keeps natural order
+    const pa = isPendingConversion(a) ? 0 : 1;
+    const pb = isPendingConversion(b) ? 0 : 1;
+    return pa - pb;
   });
 
   const handleAddLead = async () => {
@@ -289,12 +297,13 @@ export default function TelecallerDashboard() {
             <h3 className="font-heading text-base font-medium mb-3">📦 My Order History ({orders.length})</h3>
             {orders.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No orders yet. Orders you create from converted leads will appear here.</p> :
             <div className="overflow-x-auto"><table className="w-full text-xs">
-              <thead><tr className="border-b bg-[#F9F8F6]">{["Order #","Customer","Phone","Items","Amount","Payment","Status","Date"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
+              <thead><tr className="border-b bg-[#F9F8F6]">{["Order #","Customer","Phone","Address","Items","Amount","Payment","Status","Date"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
               <tbody>{orders.map(o=>(
                 <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6]" data-testid={`tc-order-row-${o.id}`}>
                   <td className="p-2 font-mono text-[10px]">{o.order_number || o.id}</td>
                   <td className="p-2 font-medium">{o.customer_name}</td>
                   <td className="p-2">{o.customer_phone}</td>
+                  <td className="p-2 text-[10px] max-w-[220px]"><span title={[o.customer_address,o.customer_city,o.customer_pincode].filter(Boolean).join(", ")}>{[o.customer_address,o.customer_city,o.customer_pincode].filter(Boolean).join(", ").slice(0,60)||"-"}</span></td>
                   <td className="p-2 text-[10px] max-w-[180px] truncate">{(o.items||[]).map(it=>`${it.product_name} ×${it.quantity}`).join(", ") || "-"}</td>
                   <td className="p-2 font-bold text-[#3B5249]">Rs.{o.total_amount || 0}</td>
                   <td className="p-2"><Badge variant="outline" className="text-[8px] uppercase">{o.payment_type || "cod"}</Badge></td>
@@ -318,6 +327,7 @@ export default function TelecallerDashboard() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <Badge className={`${STATUS_COLORS[lead.status] || "bg-gray-100"} text-[10px]`}>{lead.status?.replace("_", " ")}</Badge>
+                    {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
                     {lead.last_order_date && <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">REPEAT CUSTOMER</Badge>}
                     {lead.next_repeat_order_date && lead.next_repeat_order_date <= today && <Badge className="bg-orange-100 text-orange-800 text-[10px]">REPEAT DUE</Badge>}
                     {lead.next_relationship_date && lead.next_relationship_date <= today && <Badge className="bg-pink-100 text-pink-800 text-[10px]">RELATION CALL</Badge>}
