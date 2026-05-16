@@ -1448,11 +1448,11 @@ def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
     async def create_user(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
         email = data.get("email","").lower().strip()
         phone = (data.get("phone") or "").strip()
-        if not email: raise HTTPException(status_code=400, detail="Email is required")
         if not phone: raise HTTPException(status_code=400, detail="Phone number is required")
         if len(phone.replace("+","").replace(" ","").replace("-","")) < 7:
             raise HTTPException(status_code=400, detail="Invalid phone number")
-        if await db[coll_name].find_one({"email": email}): raise HTTPException(status_code=400, detail="Email exists")
+        # Email is OPTIONAL — only enforce uniqueness when actually provided
+        if email and await db[coll_name].find_one({"email": email}): raise HTTPException(status_code=400, detail="Email exists")
         pw = data.get("password", default_pw)
         u = {"id": f"{id_prefix}-{uuid.uuid4().hex[:6]}", "email": email, "name": data.get("name",""),
              "phone": phone,
@@ -1478,8 +1478,8 @@ def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
         await db[coll_name].insert_one(u); u.pop("_id",None); u.pop("password_hash",None)
         # If this email was previously tombstoned, clear the tombstone (user is being re-added intentionally)
         await db.deleted_seed_emails.delete_one({"email": email})
-        # Send welcome email in background (non-blocking)
-        if SMTP_EMAIL and SMTP_PASSWORD:
+        # Send welcome email in background (non-blocking) — only when an actual email is provided
+        if email and SMTP_EMAIL and SMTP_PASSWORD:
             def _send_welcome(to_email, name, plain_pw):
                 try:
                     msg = MIMEMultipart()
@@ -5594,7 +5594,7 @@ async def approve_hire(cid: str, data: dict, current_user: dict = Depends(get_cu
                     "district_manager": ("managers", "mgr", "mgr123"), "sales_manager": ("sales_managers", "sm", "sm123")}
         coll, prefix, default_pw = role_map.get(position, ("telecallers", "tc", "tc123"))
         new_id = f"{prefix}-{uuid.uuid4().hex[:6]}"
-        new_email = candidate.get('email') or f"{candidate.get('phone','')}@celestaglow.com"
+        new_email = (candidate.get('email') or '').strip()  # leave empty if not provided — no fake emails
         new_user = {"id": new_id, "name": candidate['name'], "email": new_email,
                     "password_hash": hash_password(default_pw), "phone": candidate.get('phone',''),
                     "salary": data.get('salary', candidate.get('expected_salary', 0)) or 0,
@@ -6455,10 +6455,15 @@ async def mark_posted(aid: str, data: dict, current_user: dict = Depends(get_cur
 async def search_customers(q: str = "", current_user: dict = Depends(get_current_user)):
     if not q or len(q) < 2: return {"results": []}
     rgx = {"$regex": q, "$options": "i"}
-    leads = await db.leads.find({"$or": [{"name": rgx}, {"phone_number": rgx}, {"email": rgx}]},
-                                {"_id": 0}).limit(30).to_list(30)
-    orders = await db.crm_orders.find({"$or": [{"customer_name": rgx}, {"phone_number": rgx}]},
-                                       {"_id": 0}).limit(30).to_list(30)
+    lead_q = {"$or": [{"name": rgx}, {"phone_number": rgx}, {"email": rgx}]}
+    order_q = {"$or": [{"customer_name": rgx}, {"phone_number": rgx}]}
+    # Telecaller / agent only see their own customers — never the global pool
+    if current_user['role'] in ('telecaller', 'agent'):
+        uid = current_user['id']
+        lead_q = {"$and": [lead_q, {"$or": [{"created_by": uid}, {"assigned_to": uid}]}]}
+        order_q = {"$and": [order_q, {"created_by": uid}]}
+    leads = await db.leads.find(lead_q, {"_id": 0}).limit(30).to_list(30)
+    orders = await db.crm_orders.find(order_q, {"_id": 0}).limit(30).to_list(30)
     return {"leads": leads, "orders": orders}
 
 # ----- NOTIFICATIONS -----

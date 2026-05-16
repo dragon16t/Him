@@ -24,6 +24,14 @@ import CollaborationContactsPanel from "../components/CollaborationContactsPanel
 
 const API = "/api";
 
+// Hide auto-generated placeholder emails (e.g. 9876543210@celestaglow.com)
+const cleanEmail = (e) => {
+  if (!e) return "";
+  const s = String(e).trim();
+  if (/^\d+@celestaglow\.com$/i.test(s)) return "";
+  return s;
+};
+
 export default function SalesManagerDashboard() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -56,7 +64,7 @@ export default function SalesManagerDashboard() {
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddInstruction, setShowAddInstruction] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
-  const [tcForm, setTcForm] = useState({ name: "", email: "", password: "", language: "", location: "" });
+  const [tcForm, setTcForm] = useState({ name: "", email: "", phone: "", password: "", language: "", location: "" });
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assigned_to: "", assigned_to_name: "", assigned_to_role: "telecaller", priority: "medium", due_date: "" });
   const [instForm, setInstForm] = useState({ title: "", content: "", category: "calling", target_role: "telecaller" });
   const [contactForm, setContactForm] = useState({ name: "", phone: "", email: "", type: "influencer", notes: "" });
@@ -88,7 +96,7 @@ export default function SalesManagerDashboard() {
   }, [tcWindowDays]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleAddTC = async () => { if (!tcForm.name||!tcForm.email) return toast.error("Fill fields"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
+  const handleAddTC = async () => { if (!tcForm.name) return toast.error("Name required"); if (!tcForm.phone || tcForm.phone.trim().length < 7) return toast.error("Valid phone number required"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",phone:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
   const openEditTC = (tc) => { setEditingTC(tc); setTcEditForm({ name: tc.name || "", phone: tc.phone || "", language: tc.language || "", location: tc.locality || tc.location || tc.city || "" }); };
   const openCallViewer = (tc) => { setCallViewerTC(tc); setCallViewerDays(7); setCallViewerSection("calls"); setCallViewerLeadsTodayOnly(false); };
   useEffect(() => {
@@ -227,7 +235,7 @@ export default function SalesManagerDashboard() {
                     <Button size="sm" variant="outline" className="h-7 text-[10px] rounded-full" onClick={()=>openEditAsm(a)} data-testid={`asm-edit-${a.id}`}>Edit</Button>
                   </div>
                   <div className="space-y-1 text-xs text-[#59615D]">
-                    <p className="flex items-center gap-1.5"><MessageSquare className="w-3 h-3"/>{a.email}</p>
+                    <p className="flex items-center gap-1.5"><MessageSquare className="w-3 h-3"/>{cleanEmail(a.email)}</p>
                     {a.phone && (
                       <p className="flex items-center justify-between gap-1.5">
                         <span className="flex items-center gap-1.5"><PhoneCall className="w-3 h-3"/>{a.phone}</span>
@@ -265,7 +273,7 @@ export default function SalesManagerDashboard() {
               ))}
               <span className="text-[10px] text-[#59615D] flex items-center ml-2">{tcWindowDays?`Showing activity from the last ${tcWindowDays} day(s)`:"All-time totals"}</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p><p className="text-xs text-[#59615D]">{tc.email}</p>{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p>{cleanEmail(tc.email)&&<p className="text-xs text-[#59615D]">{cleanEmail(tc.email)}</p>}{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {tc.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-lang-${tc.id}`}>🗣 {tc.language}</Badge>}
                 {(tc.locality || tc.location || tc.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-place-${tc.id}`}>📍 {tc.locality || tc.location || tc.city}</Badge>}
@@ -403,7 +411,7 @@ export default function SalesManagerDashboard() {
         </Tabs>
       </div>
       {/* Dialogs */}
-      <Dialog open={showAddTC} onOpenChange={setShowAddTC}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Telecaller</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Name" value={tcForm.name} onChange={e=>setTcForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="tc-name-input"/><Input placeholder="Email" value={tcForm.email} onChange={e=>setTcForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="tc-email-input"/><Input placeholder="Password" value={tcForm.password} onChange={e=>setTcForm(f=>({...f,password:e.target.value}))} className="rounded-xl"/><Input placeholder="Language (Malayalam, Hindi, English...)" value={tcForm.language} onChange={e=>setTcForm(f=>({...f,language:e.target.value}))} className="rounded-xl" data-testid="tc-language-input"/><Input placeholder="Place / Locality (e.g. Kakkanad)" value={tcForm.location} onChange={e=>setTcForm(f=>({...f,location:e.target.value}))} className="rounded-xl" data-testid="tc-location-input"/><Button onClick={handleAddTC} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-tc-btn">Add</Button></div></DialogContent></Dialog>
+      <Dialog open={showAddTC} onOpenChange={setShowAddTC}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Telecaller</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Name *" value={tcForm.name} onChange={e=>setTcForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="tc-name-input"/><Input placeholder="Phone *" value={tcForm.phone||""} onChange={e=>setTcForm(f=>({...f,phone:e.target.value}))} className="rounded-xl" data-testid="tc-phone-input"/><Input placeholder="Email (optional)" value={tcForm.email} onChange={e=>setTcForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="tc-email-input"/><Input placeholder="Password" value={tcForm.password} onChange={e=>setTcForm(f=>({...f,password:e.target.value}))} className="rounded-xl"/><Input placeholder="Language (Malayalam, Hindi, English...)" value={tcForm.language} onChange={e=>setTcForm(f=>({...f,language:e.target.value}))} className="rounded-xl" data-testid="tc-language-input"/><Input placeholder="Place / Locality (e.g. Kakkanad)" value={tcForm.location} onChange={e=>setTcForm(f=>({...f,location:e.target.value}))} className="rounded-xl" data-testid="tc-location-input"/><Button onClick={handleAddTC} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-tc-btn">Add</Button></div></DialogContent></Dialog>
       <Dialog open={!!editingTC} onOpenChange={(o)=>{ if (!o) setEditingTC(null); }}>
         <DialogContent className="rounded-2xl" data-testid="edit-tc-dialog">
           <DialogHeader><DialogTitle className="font-heading">Edit Telecaller — {editingTC?.name}</DialogTitle></DialogHeader>

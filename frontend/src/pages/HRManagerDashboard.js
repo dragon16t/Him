@@ -21,6 +21,13 @@ import DocumentTemplatesEditor from "../components/DocumentTemplatesEditor";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
+// Hide auto-generated placeholder emails (e.g. 9876543210@celestaglow.com)
+const cleanEmail = (e) => {
+  if (!e) return "";
+  const s = String(e).trim();
+  if (/^\d+@celestaglow\.com$/i.test(s)) return "";
+  return s;
+};
 
 export default function HRManagerDashboard() {
   const navigate = useNavigate();
@@ -232,13 +239,13 @@ export default function HRManagerDashboard() {
   };
 
   const handleAddEmp = async () => {
-    if (!empForm.name || !empForm.email) return toast.error("Name & email required");
+    if (!empForm.name) return toast.error("Name required");
     if (!empForm.phone || empForm.phone.trim().length < 7) return toast.error("Valid phone number required");
     const path = ROLE_CREATE_PATH[empForm.role];
     if (!path) return toast.error("Invalid role");
     try {
       const payload = {
-        name: empForm.name, email: empForm.email,
+        name: empForm.name, email: (empForm.email || "").trim(),  // optional
         password: empForm.password || undefined,
         salary: Number(empForm.salary)||0, incentive: Number(empForm.incentive)||0,
         phone: empForm.phone, district: empForm.district, area: empForm.area,
@@ -260,7 +267,7 @@ export default function HRManagerDashboard() {
     if (!editingEmp) return;
     try {
       const payload = {
-        name: empForm.name, email: empForm.email,
+        name: empForm.name, email: (empForm.email || "").trim(),
         salary: Number(empForm.salary)||0, incentive: Number(empForm.incentive)||0,
         phone: empForm.phone, district: empForm.district, area: empForm.area,
         bank_account_name: empForm.bank_account_name, bank_account_number: empForm.bank_account_number,
@@ -467,7 +474,7 @@ export default function HRManagerDashboard() {
                       {!(e.id||"").startsWith("admin") && (
                         <input type="checkbox" checked={empSelected.has(e.id)} onChange={()=>toggleOne(e.id)} className="w-4 h-4 mt-1 accent-[#3B5249] flex-shrink-0" data-testid={`emp-select-${e.id}`}/>
                       )}
-                      <div className="min-w-0 flex-1"><p className="font-heading font-medium text-sm truncate">{e.name}</p><p className="text-xs text-[#59615D] truncate">{e.email}</p>
+                      <div className="min-w-0 flex-1"><p className="font-heading font-medium text-sm truncate">{e.name}</p><p className="text-xs text-[#59615D] truncate">{cleanEmail(e.email)}</p>
                         {e.phone ? <a href={`tel:${e.phone}`} className="text-xs text-[#3B5249] underline inline-flex items-center gap-1 mt-0.5" data-testid={`emp-phone-${e.id}`}><Phone className="w-3 h-3"/>{e.phone}</a> : <p className="text-[10px] text-red-500 mt-0.5">⚠ No phone</p>}
                       </div>
                       <div className="flex gap-1 items-center shrink-0">
@@ -481,7 +488,7 @@ export default function HRManagerDashboard() {
                     {e.district && <p className="text-[10px] text-[#A66E4E] mt-1">{e.area ? `${e.area}, ` : ""}{e.district}</p>}
                     <div className="flex gap-1 mt-2 flex-wrap">
                       <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setSelectedEmp(e);setSalaryForm({salary:e.salary||0,incentive:e.incentive||0});setShowEditSalary(true);}} data-testid={`edit-salary-${e.id}`}><IndianRupee className="w-3 h-3 mr-0.5"/>Salary</Button>
-                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:e.email||"",password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:cleanEmail(e.email),password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>handleDeleteEmp(e)} data-testid={`delete-emp-${e.id}`}>Delete</Button>
                     </div>
                   </div>
@@ -815,7 +822,7 @@ export default function HRManagerDashboard() {
               {hrTeam.map(h=>(
                 <button key={h.id} onClick={()=>{setHrCallFilter(hrCallFilter===h.id?"":h.id); setHrCallPage(1);}} className={`text-left rounded-xl p-3 border transition-all ${hrCallFilter===h.id?"border-[#3B5249] bg-[#F4ECD2]/40":"border-[#E5E3DB] bg-[#F9F8F6] hover:border-[#3B5249]"}`} data-testid={`hr-stat-${h.id}`}>
                   <p className="font-medium text-sm text-[#3B5249] truncate">{h.name}</p>
-                  <p className="text-[10px] text-[#59615D] truncate">{h.email}</p>
+                  <p className="text-[10px] text-[#59615D] truncate">{cleanEmail(h.email)}</p>
                   <div className="grid grid-cols-3 gap-1 mt-2">
                     <div className="bg-white rounded p-1"><p className="text-[8px] text-[#59615D]">Calls</p><p className="font-semibold text-xs">{h.total_calls||0}</p></div>
                     <div className="bg-white rounded p-1"><p className="text-[8px] text-[#59615D]">Today</p><p className="font-semibold text-xs">{h.today_calls||0}</p></div>
@@ -1337,7 +1344,7 @@ export default function HRManagerDashboard() {
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Input placeholder="Full Name *" value={empForm.name} onChange={e=>setEmpForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="emp-name-input"/>
-            <Input placeholder="Email *" value={empForm.email} onChange={e=>setEmpForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="emp-email-input"/>
+            <Input placeholder="Email (optional)" value={empForm.email} onChange={e=>setEmpForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="emp-email-input"/>
           </div>
           <div><Label className="text-xs">Role</Label><Select value={empForm.role} onValueChange={v=>setEmpForm(f=>({...f,role:v}))}><SelectTrigger className="rounded-xl" data-testid="emp-role-select"><SelectValue/></SelectTrigger><SelectContent>{Object.keys({telecaller:1,agent:1,district_manager:1,sales_manager:1,finance_manager:1,hr_manager:1,social_media_manager:1,inhouse_telecaller:1,content_strategist:1,content_developer:1,assistant_sales_manager:1,assistant_district_manager:1,inventory_manager:1,digital_marketing_manager:1}).map(r=><SelectItem key={r} value={r} className="capitalize">{r.replace(/_/g," ")}</SelectItem>)}</SelectContent></Select></div>
           <Input placeholder="Password (leave blank for default)" value={empForm.password} onChange={e=>setEmpForm(f=>({...f,password:e.target.value}))} className="rounded-xl"/>

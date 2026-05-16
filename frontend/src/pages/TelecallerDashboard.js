@@ -67,21 +67,68 @@ export default function TelecallerDashboard() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const today = new Date().toISOString().split("T")[0];
+  const nowIso = new Date().toISOString();
   // Leads that still need conversion (interested or marked ordered but no order in the system yet)
   const orderedLeadIds = new Set((orders || []).map(o => o.lead_id).filter(Boolean));
   const isPendingConversion = (l) => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id);
+
+  // Smart priority — lower number = higher in the list
+  //  0  Newly added (status="new" and not yet contacted)
+  //  1  Pending order conversion (interested / ordered without an order created)
+  //  2  Follow-up due NOW (date+time has arrived)
+  //  3  Repeat order due
+  //  4  Relationship call due
+  //  5  Interested (still needs follow-up)
+  //  6  Future follow-up (not yet due)
+  //  7  No response / busy / callback
+  //  8  Not interested
+  //  9  Order created within 30 days  →  hidden (returns to top automatically once 30d window passes)
+  const isFollowUpDueNow = (l) => {
+    if (!l.next_follow_up_date) return false;
+    if (l.next_follow_up_date < today) return true;
+    if (l.next_follow_up_date > today) return false;
+    if (!l.next_follow_up_time) return true;  // date matches today, no time → due
+    // date matches today and time provided → due once that time has arrived
+    return `${l.next_follow_up_date}T${l.next_follow_up_time}` <= nowIso.slice(0,16);
+  };
+
+  const isRecentlyOrdered = (l) => {
+    // Hide leads whose order was created within the last 30 days
+    if (l.status !== "order_created" && l.status !== "converted") return false;
+    const ref = l.last_order_date || (l.updated_at || "").slice(0,10);
+    if (!ref) return false;
+    const ageMs = new Date(today) - new Date(ref);
+    return ageMs >= 0 && ageMs < 30 * 24 * 60 * 60 * 1000;
+  };
+
+  const leadPriority = (l) => {
+    if (l.status === "new" && (!l.call_logs || l.call_logs.length === 0)) return 0;
+    if (isPendingConversion(l)) return 1;
+    if (isFollowUpDueNow(l)) return 2;
+    if (l.next_repeat_order_date && l.next_repeat_order_date <= today) return 3;
+    if (l.next_relationship_date && l.next_relationship_date <= today) return 4;
+    if (l.status === "interested") return 5;
+    if (l.next_follow_up_date && l.next_follow_up_date > today) return 6;
+    if (l.status === "no_response" || l.status === "busy" || l.status === "follow_up") return 7;
+    if (l.status === "not_interested") return 8;
+    return 5;
+  };
+
   const filteredLeads = leads.filter(l => {
-    if (tab === "today") return l.status === "new" || l.next_follow_up_date === today || l.next_relationship_date === today || l.next_repeat_order_date === today || isPendingConversion(l);
+    // Hide leads routed to collab and recently-ordered leads from active views
+    if (l.status === "routed_to_collab") return false;
+    if (isRecentlyOrdered(l)) return false;
+    if (tab === "today") return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     if (tab === "repeat") return l.next_repeat_order_date && l.next_repeat_order_date <= today;
     if (tab === "relationship") return l.next_relationship_date && l.next_relationship_date <= today;
-    if (tab === "interested") return l.status === "interested";
+    if (tab === "interested") return l.status === "interested" || isPendingConversion(l);
     if (tab === "all") return true;
     return true;
   }).sort((a, b) => {
-    // Pending-conversion leads stay pinned at the top; everything else keeps natural order
-    const pa = isPendingConversion(a) ? 0 : 1;
-    const pb = isPendingConversion(b) ? 0 : 1;
-    return pa - pb;
+    const pa = leadPriority(a), pb = leadPriority(b);
+    if (pa !== pb) return pa - pb;
+    // Within the same priority, newer leads first (created_at desc)
+    return (b.created_at || "").localeCompare(a.created_at || "");
   });
 
   const handleAddLead = async () => {
