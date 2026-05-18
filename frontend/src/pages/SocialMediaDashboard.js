@@ -1137,6 +1137,15 @@ export default function SocialMediaDashboard() {
             <div><Label className="text-xs">Assigned To (name)</Label><Input placeholder="Content developer / shoot person" value={calForm.assigned_to_name} onChange={e => setCalForm(f => ({ ...f, assigned_to_name: e.target.value }))} className="rounded-xl" /></div>
             <div><Label className="text-xs">Notes</Label><Textarea placeholder="Brief, props, location, caption draft…" value={calForm.notes} onChange={e => setCalForm(f => ({ ...f, notes: e.target.value }))} className="rounded-xl" rows={3}/></div>
             <Button onClick={submitCal} className="w-full rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white" data-testid="cal-submit">{editingCal ? "Update" : "Schedule"}</Button>
+            {editingCal && (
+              <Button variant="outline" onClick={async () => {
+                if (!window.confirm(`Delete this scheduled entry?`)) return;
+                try { await axios.delete(`${API}/content-calendar/${editingCal.id}`); toast.success("Deleted"); setShowCal(false); setEditingCal(null); fetchData(); }
+                catch { toast.error("Failed to delete"); }
+              }} className="w-full rounded-full border-red-300 text-red-600 hover:bg-red-50" data-testid="cal-delete-btn">
+                <Trash2 className="w-3.5 h-3.5 mr-1.5"/>Delete this entry
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
