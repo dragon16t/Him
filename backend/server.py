@@ -5588,6 +5588,21 @@ async def approve_hire(cid: str, data: dict, current_user: dict = Depends(get_cu
         # FINAL HIRE — only HR / Admin
         if current_user['role'] not in ['admin', 'hr_manager']:
             raise HTTPException(status_code=403, detail="Only HR can complete the final hire")
+        # Idempotency: if this candidate is already hired, return the existing record instead of creating a duplicate
+        if candidate.get("status") == "hired" and candidate.get("hired_as_id"):
+            return {"message": f"{candidate['name']} is already hired", "user": {"id": candidate.get("hired_as_id")}, "already_hired": True}
+        # Also guard against duplicate user record by phone (same candidate clicked twice fast)
+        phone_key = (candidate.get('phone') or '').strip()
+        if phone_key:
+            for _coll in ("telecallers","agents","managers","sales_managers","content_developers"):
+                existing = await db[_coll].find_one({"phone": phone_key}, {"_id":0,"id":1,"name":1})
+                if existing:
+                    await db.hiring_candidates.update_one({"id": cid}, {"$set": {
+                        "status": "hired", "hired_as_id": existing["id"],
+                        "hired_by": current_user['id'], "hired_by_name": current_user.get('name',''),
+                        "hired_at": datetime.now(timezone.utc).isoformat()
+                    }})
+                    return {"message": f"{candidate['name']} was already hired earlier", "user": existing, "already_hired": True}
         position = candidate.get("position", "telecaller")
         role_map = {"telecaller": ("telecallers", "tc", "tc123"), "agent": ("agents", "agent", "agent123"),
                     "telesales": ("telecallers", "tc", "tc123"), "content_developer": ("content_developers", "cd", "cd123"),
@@ -6267,8 +6282,11 @@ async def add_calendar(data: dict, current_user: dict = Depends(get_current_user
     if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist']: raise HTTPException(status_code=403)
     e = {"id": f"cal-{uuid.uuid4().hex[:8]}", "title": data.get("title",""),
          "platform": data.get("platform", "instagram"), "content_type": data.get("content_type", "post"),
+         "shoot_type": data.get("shoot_type", ""),  # e.g. UGC Reel, Cinematic Product, Product Showcase, Myth & Fact Reel
+         "shoot_time": data.get("shoot_time", ""),  # HH:MM optional
          "scheduled_date": data.get("scheduled_date", ""), "status": data.get("status", "scheduled"),
-         "assigned_to": data.get("assigned_to", ""), "notes": data.get("notes", ""),
+         "assigned_to": data.get("assigned_to", ""), "assigned_to_name": data.get("assigned_to_name", ""),
+         "notes": data.get("notes", ""),
          "created_at": datetime.now(timezone.utc).isoformat()}
     await db.content_calendar.insert_one(e); e.pop("_id", None)
     return {"entry": e}

@@ -97,7 +97,10 @@ export default function SocialMediaDashboard() {
   const [pillarForm, setPillarForm] = useState({ title: "", description: "", color: "#3B5249" });
   const [scriptForm, setScriptForm] = useState({ pillar_id: "", title: "", content_type: "reel", platform: "instagram", script_text: "", priority: "P2", deadline: "" });
   const [assignForm, setAssignForm] = useState({ content_developer_id: "" });
-  const [calForm, setCalForm] = useState({ title: "", platform: "instagram", content_type: "post", scheduled_date: "", notes: "" });
+  const [calForm, setCalForm] = useState({ title: "", platform: "instagram", content_type: "post", shoot_type: "UGC Awareness Reel", shoot_time: "", scheduled_date: "", assigned_to_name: "", notes: "" });
+  const [calMonth, setCalMonth] = useState(new Date().getMonth());
+  const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [editingCal, setEditingCal] = useState(null);
   const [infForm, setInfForm] = useState({ influencer_name: "", contact: "", phone: "", platform: "instagram", followers: "", category: "beauty", barter_type: "", status: "pending", notes: "" });
   const [convertTarget, setConvertTarget] = useState(null);
   const [convertPostLink, setConvertPostLink] = useState("");
@@ -228,9 +231,30 @@ export default function SocialMediaDashboard() {
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const submitCal = async () => {
-    if (!calForm.title) return toast.error("Title required");
-    try { await axios.post(`${API}/content-calendar`, calForm); toast.success("Scheduled"); setShowCal(false); setCalForm({ title: "", platform: "instagram", content_type: "post", scheduled_date: "", notes: "" }); fetchData(); }
-    catch { toast.error("Failed"); }
+    if (!calForm.title && !calForm.shoot_type) return toast.error("Title or shoot type required");
+    if (!calForm.scheduled_date) return toast.error("Pick a date");
+    try {
+      if (editingCal) {
+        await axios.put(`${API}/content-calendar/${editingCal.id}`, calForm);
+        toast.success("Updated");
+      } else {
+        await axios.post(`${API}/content-calendar`, calForm);
+        toast.success("Scheduled");
+      }
+      setShowCal(false); setEditingCal(null);
+      setCalForm({ title: "", platform: "instagram", content_type: "post", shoot_type: "UGC Awareness Reel", shoot_time: "", scheduled_date: "", assigned_to_name: "", notes: "" });
+      fetchData();
+    } catch { toast.error("Failed"); }
+  };
+  const openCalDay = (dateStr) => {
+    setEditingCal(null);
+    setCalForm({ title: "", platform: "instagram", content_type: "post", shoot_type: "UGC Awareness Reel", shoot_time: "", scheduled_date: dateStr, assigned_to_name: "", notes: "" });
+    setShowCal(true);
+  };
+  const openEditCal = (c) => {
+    setEditingCal(c);
+    setCalForm({ title: c.title || "", platform: c.platform || "instagram", content_type: c.content_type || "post", shoot_type: c.shoot_type || "", shoot_time: c.shoot_time || "", scheduled_date: c.scheduled_date || "", assigned_to_name: c.assigned_to_name || "", notes: c.notes || "" });
+    setShowCal(true);
   };
   const submitInf = async () => {
     if (!infForm.influencer_name) return toast.error("Name required");
@@ -738,39 +762,103 @@ export default function SocialMediaDashboard() {
               <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
                 <div>
                   <h3 className="font-heading text-lg font-medium text-[#2C3531]">Content Calendar <span className="text-sm text-[#59615D]">({calendar.length})</span></h3>
-                  <p className="text-[11px] text-[#59615D]">Schedule what goes live, when, and on which platform.</p>
+                  <p className="text-[11px] text-[#59615D]">Plan daily shoots, reels, and posts month-by-month. Click any day to add or edit.</p>
                 </div>
-                <Button size="sm" className="rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white text-xs" onClick={() => setShowCal(true)} data-testid="add-calendar-btn"><Plus className="w-3.5 h-3.5 mr-1" />Schedule Post</Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" className="rounded-full text-xs h-8" onClick={() => { const d = new Date(calYear, calMonth - 1, 1); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }} data-testid="cal-prev-month">←</Button>
+                  <div className="font-heading text-sm font-medium min-w-[140px] text-center" data-testid="cal-month-label">
+                    {new Date(calYear, calMonth, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                  </div>
+                  <Button size="sm" variant="outline" className="rounded-full text-xs h-8" onClick={() => { const d = new Date(calYear, calMonth + 1, 1); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }} data-testid="cal-next-month">→</Button>
+                  <Button size="sm" className="rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white text-xs h-8" onClick={() => { setEditingCal(null); setCalForm({ title: "", platform: "instagram", content_type: "post", shoot_type: "UGC Awareness Reel", shoot_time: "", scheduled_date: new Date().toISOString().slice(0,10), assigned_to_name: "", notes: "" }); setShowCal(true); }} data-testid="add-calendar-btn"><Plus className="w-3.5 h-3.5 mr-1" />Add</Button>
+                </div>
               </div>
-              {calendar.length === 0 ? (
-                <div className="text-center py-10 text-[#59615D]">
-                  <CalendarDays className="w-10 h-10 mx-auto text-[#D4A373] mb-2" />
-                  <p className="text-sm">No scheduled posts yet</p>
-                </div>
-              ) : (
-                <div className="space-y-2">{calendar.map(c => (
-                  <div key={c.id} className="border border-[#E5E3DB] rounded-xl p-3 flex justify-between items-center hover:bg-[#FAF8F3] transition" data-testid={`cal-${c.id}`}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-[#3B5249]/10 flex items-center justify-center flex-shrink-0"><CalendarDays className="w-4 h-4 text-[#3B5249]" /></div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-medium text-sm text-[#2C3531] truncate">{c.title}</p>
-                          <PlatformPill platform={c.platform} />
-                          <Badge variant="outline" className="text-[9px] capitalize">{c.content_type}</Badge>
+
+              {/* Monthly grid */}
+              {(() => {
+                const firstDay = new Date(calYear, calMonth, 1);
+                const lastDay = new Date(calYear, calMonth + 1, 0);
+                const daysInMonth = lastDay.getDate();
+                const startWeekDay = firstDay.getDay(); // 0=Sun
+                const cells = [];
+                for (let i = 0; i < startWeekDay; i++) cells.push(null);
+                for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                const todayStr = new Date().toISOString().slice(0,10);
+                const monthPad = (calMonth+1).toString().padStart(2,'0');
+                const byDay = {};
+                (calendar || []).forEach(c => {
+                  if (!c.scheduled_date) return;
+                  if (!c.scheduled_date.startsWith(`${calYear}-${monthPad}`)) return;
+                  const day = parseInt(c.scheduled_date.slice(8,10), 10);
+                  (byDay[day] = byDay[day] || []).push(c);
+                });
+                return (
+                  <>
+                    <div className="grid grid-cols-7 gap-1 mb-1 text-[10px] uppercase tracking-wide text-[#59615D] font-medium">
+                      {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <div key={d} className="text-center py-1">{d}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                      {cells.map((d, idx) => {
+                        if (d === null) return <div key={`e${idx}`} className="min-h-[90px] rounded-lg bg-[#FAF8F3]/40" />;
+                        const dateStr = `${calYear}-${monthPad}-${d.toString().padStart(2,'0')}`;
+                        const items = byDay[d] || [];
+                        const isToday = dateStr === todayStr;
+                        return (
+                          <div key={dateStr} className={`min-h-[90px] rounded-lg border ${isToday ? 'border-[#3B5249] bg-[#F4ECD2]/30' : 'border-[#E5E3DB] bg-white'} p-1.5 hover:bg-[#FAF8F3] transition cursor-pointer flex flex-col`} onClick={() => openCalDay(dateStr)} data-testid={`cal-day-${dateStr}`}>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className={`text-[11px] font-semibold ${isToday ? 'text-[#3B5249]' : 'text-[#2C3531]'}`}>{d}</span>
+                              {items.length > 0 && <span className="text-[8px] bg-[#3B5249] text-white rounded-full px-1.5 py-0.5">{items.length}</span>}
+                            </div>
+                            <div className="space-y-0.5 overflow-hidden">
+                              {items.slice(0,3).map(c => (
+                                <button key={c.id} onClick={(ev) => { ev.stopPropagation(); openEditCal(c); }} className="w-full text-left text-[9px] truncate px-1 py-0.5 rounded bg-[#3B5249]/10 text-[#2C3531] hover:bg-[#3B5249]/20" title={`${c.shoot_type || c.title}${c.shoot_time ? ` · ${c.shoot_time}` : ''}`}>
+                                  {c.shoot_time && <b className="text-[#A66E4E]">{c.shoot_time} </b>}
+                                  {c.shoot_type || c.title}
+                                </button>
+                              ))}
+                              {items.length > 3 && <span className="text-[8px] text-[#59615D] pl-1">+{items.length - 3} more</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* This-month list view below the grid */}
+              <div className="mt-6">
+                <h4 className="text-xs font-semibold text-[#2C3531] mb-2">All entries this month</h4>
+                {(() => {
+                  const monthPad = (calMonth+1).toString().padStart(2,'0');
+                  const list = (calendar || []).filter(c => (c.scheduled_date || "").startsWith(`${calYear}-${monthPad}`));
+                  if (list.length === 0) return <p className="text-[11px] text-[#59615D] py-3 text-center">No entries scheduled this month.</p>;
+                  return <div className="space-y-2">{list.sort((a,b)=>(a.scheduled_date||"").localeCompare(b.scheduled_date||"")).map(c => (
+                    <div key={c.id} className="border border-[#E5E3DB] rounded-xl p-3 flex justify-between items-center hover:bg-[#FAF8F3] transition" data-testid={`cal-row-${c.id}`}>
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 text-center flex-shrink-0 rounded-lg bg-[#3B5249]/10 py-1"><p className="text-[9px] uppercase text-[#59615D]">{new Date(c.scheduled_date).toLocaleString('en-US',{month:'short'})}</p><p className="text-sm font-bold text-[#3B5249] leading-none">{c.scheduled_date.slice(8,10)}</p></div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-medium text-sm text-[#2C3531] truncate">{c.shoot_type || c.title}</p>
+                            <PlatformPill platform={c.platform} />
+                            <Badge variant="outline" className="text-[9px] capitalize">{c.content_type}</Badge>
+                            {c.shoot_time && <span className="text-[9px] text-[#A66E4E] font-medium">⏰ {c.shoot_time}</span>}
+                          </div>
+                          <p className="text-[10px] text-[#59615D] truncate">{c.assigned_to_name && <span className="mr-2">👤 {c.assigned_to_name}</span>}{c.notes || (c.title && c.shoot_type ? c.title : "")}</p>
                         </div>
-                        <p className="text-[10px] text-[#59615D] truncate">📅 {c.scheduled_date} · {c.notes || "No notes"}</p>
+                      </div>
+                      <div className="flex gap-1 items-center flex-shrink-0">
+                        <Select value={c.status} onValueChange={async (v) => { await axios.put(`${API}/content-calendar/${c.id}`, { status: v }); fetchData(); }}>
+                          <SelectTrigger className={`h-7 w-24 text-[9px] rounded-full border ${STATUS_STYLE(c.status)}`}><SelectValue /></SelectTrigger>
+                          <SelectContent>{["scheduled", "published", "cancelled"].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
+                        </Select>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-[#3B5249] hover:bg-[#3B5249]/10" onClick={() => openEditCal(c)} data-testid={`cal-edit-${c.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (window.confirm("Delete?")) { await axios.delete(`${API}/content-calendar/${c.id}`); fetchData(); } }} data-testid={`cal-del-${c.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
                       </div>
                     </div>
-                    <div className="flex gap-1 items-center flex-shrink-0">
-                      <Select value={c.status} onValueChange={async (v) => { await axios.put(`${API}/content-calendar/${c.id}`, { status: v }); fetchData(); }}>
-                        <SelectTrigger className={`h-7 w-24 text-[9px] rounded-full border ${STATUS_STYLE(c.status)}`}><SelectValue /></SelectTrigger>
-                        <SelectContent>{["scheduled", "published", "cancelled"].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (window.confirm("Delete?")) { await axios.delete(`${API}/content-calendar/${c.id}`); fetchData(); } }}><Trash2 className="w-3.5 h-3.5" /></Button>
-                    </div>
-                  </div>
-                ))}</div>
-              )}
+                  ))}</div>;
+                })()}
+              </div>
             </div>
           </TabsContent>
 
@@ -1028,17 +1116,27 @@ export default function SocialMediaDashboard() {
       </Dialog>
 
       {/* CALENDAR DIALOG */}
-      <Dialog open={showCal} onOpenChange={setShowCal}>
-        <DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Schedule Post</DialogTitle></DialogHeader>
+      <Dialog open={showCal} onOpenChange={(o)=>{ setShowCal(o); if (!o) setEditingCal(null); }}>
+        <DialogContent className="rounded-2xl max-h-[88vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">{editingCal ? "Edit Schedule" : "Schedule Content"}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label className="text-xs">Title</Label><Input placeholder="Post title" value={calForm.title} onChange={e => setCalForm(f => ({ ...f, title: e.target.value }))} className="rounded-xl" data-testid="cal-title-input" /></div>
+            <div><Label className="text-xs">Shoot / Content Type *</Label>
+              <Select value={calForm.shoot_type} onValueChange={v => setCalForm(f => ({ ...f, shoot_type: v }))}>
+                <SelectTrigger className="rounded-xl" data-testid="cal-shoot-type"><SelectValue /></SelectTrigger>
+                <SelectContent>{["UGC Awareness Reel","Cinematic Product","Product Showcase","Myth & Fact Reel","Customer Testimonial","Behind the Scenes","Tutorial / How-to","Founder Story","Static Post","Carousel","Story","Other"].map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label className="text-xs">Title / Caption Hint</Label><Input placeholder="Optional title (overrides shoot type label)" value={calForm.title} onChange={e => setCalForm(f => ({ ...f, title: e.target.value }))} className="rounded-xl" data-testid="cal-title-input" /></div>
             <div className="grid grid-cols-2 gap-2">
               <div><Label className="text-xs">Platform</Label><Select value={calForm.platform} onValueChange={v => setCalForm(f => ({ ...f, platform: v }))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{["instagram", "facebook", "youtube", "tiktok", "linkedin", "twitter", "blog"].map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent></Select></div>
-              <div><Label className="text-xs">Type</Label><Select value={calForm.content_type} onValueChange={v => setCalForm(f => ({ ...f, content_type: v }))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{["post", "reel", "story", "video", "blog", "ad"].map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label className="text-xs">Format</Label><Select value={calForm.content_type} onValueChange={v => setCalForm(f => ({ ...f, content_type: v }))}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{["post", "reel", "story", "video", "blog", "ad"].map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent></Select></div>
             </div>
-            <div><Label className="text-xs">Scheduled Date</Label><Input type="date" value={calForm.scheduled_date} onChange={e => setCalForm(f => ({ ...f, scheduled_date: e.target.value }))} className="rounded-xl" /></div>
-            <div><Label className="text-xs">Notes</Label><Textarea placeholder="Notes / caption draft" value={calForm.notes} onChange={e => setCalForm(f => ({ ...f, notes: e.target.value }))} className="rounded-xl" /></div>
-            <Button onClick={submitCal} className="w-full rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white" data-testid="cal-submit">Schedule</Button>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Date *</Label><Input type="date" value={calForm.scheduled_date} onChange={e => setCalForm(f => ({ ...f, scheduled_date: e.target.value }))} className="rounded-xl" data-testid="cal-date-input"/></div>
+              <div><Label className="text-xs">Time (optional)</Label><Input type="time" value={calForm.shoot_time} onChange={e => setCalForm(f => ({ ...f, shoot_time: e.target.value }))} className="rounded-xl" data-testid="cal-time-input"/></div>
+            </div>
+            <div><Label className="text-xs">Assigned To (name)</Label><Input placeholder="Content developer / shoot person" value={calForm.assigned_to_name} onChange={e => setCalForm(f => ({ ...f, assigned_to_name: e.target.value }))} className="rounded-xl" /></div>
+            <div><Label className="text-xs">Notes</Label><Textarea placeholder="Brief, props, location, caption draft…" value={calForm.notes} onChange={e => setCalForm(f => ({ ...f, notes: e.target.value }))} className="rounded-xl" rows={3}/></div>
+            <Button onClick={submitCal} className="w-full rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white" data-testid="cal-submit">{editingCal ? "Update" : "Schedule"}</Button>
           </div>
         </DialogContent>
       </Dialog>
