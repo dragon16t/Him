@@ -50,6 +50,7 @@ export default function HRManagerDashboard() {
   const [editingLogout, setEditingLogout] = useState(null); // user_id whose logout time is being edited
   const [logoutTimeInput, setLogoutTimeInput] = useState("");
   const [hiringCandidates, setHiringCandidates] = useState([]);
+  const [hiringTotalAll, setHiringTotalAll] = useState(0);  // stable team-wide pipeline count
   const [employeeTasks, setEmployeeTasks] = useState([]);
   const [birthdays, setBirthdays] = useState({today:[],upcoming:[]});
   const [resignations, setResignations] = useState([]);
@@ -135,6 +136,8 @@ export default function HRManagerDashboard() {
         setAdvances(adv.data.advances||[]); setCommunications(cm.data.communications||[]);
         setAttendance(att.data.records||[]); setHiringCandidates(hire.data.entries||[]);
         setEmployeeTasks(et.data.tasks||[]);
+        // Always fetch a separate, hired-inclusive total so the header count never fluctuates
+        try { const totalRes = await axios.get(`${API}/hiring/candidates`, { params: { include_hired: 'true' } }); setHiringTotalAll((totalRes.data.entries||[]).length); } catch { setHiringTotalAll(hire.data.entries?.length || 0); }
         if (allcl.data.call_logs?.length) setCallLogs(allcl.data.call_logs);
         setSalesManagers(sms.data.sales_managers||[]);
         setDistrictManagers(dms.data.managers||[]);
@@ -415,7 +418,7 @@ export default function HRManagerDashboard() {
 
         <Tabs defaultValue="employees" className="space-y-4">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"employees",l:"Employees"},{v:"efficiency",l:"Efficiency"},{v:"mysheet",l:"My Sheet"},{v:"payroll",l:"Payroll"},{v:"attendance",l:"Attendance"},{v:"advances",l:"Advances"},{v:"commissions",l:"Commissions"},{v:"leaves",l:"Leaves"},{v:"birthdays",l:"Birthdays"},{v:"resignations",l:"Resignations"},{v:"complaints",l:`Complaints (${complaints.filter(c=>c.status!=='resolved').length})`},{v:"hiring",l:`Hiring (${hiringCandidates.filter(c=>c.status!=='hired'&&c.status!=='rejected').length})`},{v:"hrcalls",l:`My Calls (${hrCallToday})`},{v:"calllogs",l:"All Call Logs"},{v:"documents",l:"Documents"},{v:"tasksheets",l:"Task Sheets"},{v:"communication",l:"Comm."},{v:"monitoring",l:"Activity"}].map(t => (
+            {[{v:"employees",l:"Employees"},{v:"efficiency",l:"Efficiency"},{v:"mysheet",l:"My Sheet"},{v:"payroll",l:"Payroll"},{v:"attendance",l:"Attendance"},{v:"advances",l:"Advances"},{v:"commissions",l:"Commissions"},{v:"leaves",l:"Leaves"},{v:"birthdays",l:"Birthdays"},{v:"resignations",l:"Resignations"},{v:"complaints",l:`Complaints (${complaints.filter(c=>c.status!=='resolved').length})`},{v:"hiring",l:`Hiring (${hiringTotalAll || hiringCandidates.length})`},{v:"hrcalls",l:`My Calls (${hrCallToday})`},{v:"calllogs",l:"All Call Logs"},{v:"documents",l:"Documents"},{v:"tasksheets",l:"Task Sheets"},{v:"communication",l:"Comm."},{v:"monitoring",l:"Activity"}].map(t => (
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`hr-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -664,7 +667,7 @@ export default function HRManagerDashboard() {
 
           {/* HIRING — Full feature: add, edit, forward, hire/reject */}
           <TabsContent value="hiring"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Hiring Pipeline ({hiringCandidates.length})</h3>
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Hiring Pipeline <span className="text-sm text-[#59615D]">· Total: {hiringTotalAll || hiringCandidates.length} · Showing: {hiringCandidates.length}</span></h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEditingCandidate(null);setCandidateForm({name:"",phone:"",email:"",position:"telecaller",location:"",experience:"",qualification:"",skills:"",expected_salary:0,interview_date:"",interview_notes:"",source:"direct",status:"contacted",notes:""});setShowAddCandidate(true);}} data-testid="hr-add-candidate-btn">+ Add Candidate</Button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">

@@ -4894,15 +4894,15 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
     if role == 'inhouse_telecaller':
         query["created_by"] = current_user['id']
     elif role == 'hr_manager':
-        # HR sees: candidates they created + every candidate added by an in-house telecaller
-        # (whose entire purpose is to feed the HR pipeline). Other HRs' private candidates
-        # remain scoped to them.
+        # All HR managers share the SAME pipeline — they're a team working on it together.
+        # No more scoping by individual HR's `created_by`. The previous logic caused HR-A and HR-B
+        # to see different counts (e.g. 59 vs 90+) which confused users about real candidate volume.
+        # Candidates that are private to other roles (e.g. SMM-only) can still be hidden via show_all.
         if not show_all:
-            ihtc_ids = [u['id'] async for u in db.inhouse_telecallers.find({}, {"_id":0,"id":1})]
             query = {"$or": [
-                {"created_by": current_user['id']},
-                {"created_by_role": "inhouse_telecaller"},
-                {"created_by": {"$in": ihtc_ids}},  # legacy docs lacking created_by_role
+                {"created_by_role": {"$in": ["hr_manager", "inhouse_telecaller", "admin"]}},
+                {"created_by_role": {"$exists": False}},  # legacy docs lacking the role tag
+                {"created_by_role": ""},
             ]}
     elif role == 'social_media_manager':
         if not show_all:
@@ -4919,7 +4919,7 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
     if not include_hired:
         if role in ('hr_manager', 'admin', 'inhouse_telecaller'):
             query = {"$and": [query, {"status": {"$ne": "hired"}}]} if query else {"status": {"$ne": "hired"}}
-    entries = await db.hiring_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    entries = await db.hiring_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
     stats = {"total": len(entries), "contacted": len([e for e in entries if e['status'] == 'contacted']),
              "interested": len([e for e in entries if e['status'] == 'interested']),
              "interviewed": len([e for e in entries if e['status'] == 'interviewed']),
