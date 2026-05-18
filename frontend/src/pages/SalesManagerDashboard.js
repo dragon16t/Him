@@ -71,6 +71,12 @@ export default function SalesManagerDashboard() {
   // Direct order creation (Sales Manager)
   const [showCreateOrder, setShowCreateOrder] = useState(false);
   const [orderForm, setOrderForm] = useState({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 });
+  // Sales Manager — team-wide leads view (Leads tab)
+  const [smLeads, setSmLeads] = useState([]);
+  const [smLeadStatus, setSmLeadStatus] = useState("all");
+  const [smLeadDate, setSmLeadDate] = useState("");
+  const [smLeadTcFilter, setSmLeadTcFilter] = useState("all");
+  const [smLeadSearch, setSmLeadSearch] = useState("");
   // Assistant Sales Managers (ASMs)
   const [asms, setAsms] = useState([]);
   const [showAddAsm, setShowAddAsm] = useState(false);
@@ -90,6 +96,7 @@ export default function SalesManagerDashboard() {
       try { const hc = await axios.get(`${API}/hiring/candidates`); setHiringCandidates(hc.data.entries||[]); } catch {}
       try { const cl = await axios.get(`${API}/call-logs/all`); setCallLogs(cl.data.call_logs||[]); } catch {}
       try { const a = await axios.get(`${API}/my-team/asms`); setAsms(a.data.asms||[]); } catch {}
+      try { const ld = await axios.get(`${API}/leads`, { params: { limit: 1000 } }); setSmLeads(ld.data.leads || []); } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,11 +258,83 @@ export default function SalesManagerDashboard() {
         </div>
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"telecallers",l:"Telecallers"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"telecallers",l:"Telecallers"},{v:"leads",l:"📋 Leads"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
+          <TabsContent value="leads" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
+            {(() => {
+              const today = new Date().toISOString().slice(0,10);
+              const visibleLeads = (smLeads || []).filter(l => {
+                if (l.status === "routed_to_collab") return false;
+                if (smLeadStatus !== "all" && l.status !== smLeadStatus) return false;
+                if (smLeadDate && (l.created_at || "").slice(0,10) !== smLeadDate) return false;
+                if (smLeadTcFilter !== "all" && l.assigned_to !== smLeadTcFilter && l.created_by !== smLeadTcFilter) return false;
+                if (smLeadSearch) {
+                  const q = smLeadSearch.toLowerCase().trim();
+                  const hay = `${l.name || ""} ${l.phone_number || ""} ${l.product_interest || ""} ${l.assigned_to_name || ""}`.toLowerCase();
+                  if (!hay.includes(q)) return false;
+                }
+                return true;
+              }).sort((a,b)=> (b.created_at || "").localeCompare(a.created_at || ""));
+              const todayCount = (smLeads || []).filter(l => l.status !== "routed_to_collab" && (l.created_at || "").slice(0,10) === today).length;
+              return (
+                <>
+                  <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+                    <h3 className="font-heading text-lg font-medium">Team Leads <span className="text-sm text-[#59615D]">· Total: {smLeads.filter(x=>x.status!=="routed_to_collab").length} · Today: {todayCount} · Showing: <b className="text-[#3B5249]">{visibleLeads.length}</b></span></h3>
+                  </div>
+
+                  {/* Status filter chips */}
+                  <div className="flex gap-1 flex-wrap mb-2" data-testid="sm-leads-status-chips">
+                    {[
+                      {v:"all",l:"All"},
+                      {v:"new",l:"New"},
+                      {v:"interested",l:"Interested"},
+                      {v:"follow_up",l:"Follow-up"},
+                      {v:"no_response",l:"No Response"},
+                      {v:"busy",l:"Busy"},
+                      {v:"ordered",l:"Order Created"},
+                      {v:"order_created",l:"Converted"},
+                      {v:"not_interested",l:"Not Interested"},
+                    ].map(s=>(
+                      <button key={s.v} onClick={()=>setSmLeadStatus(s.v)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap border transition ${smLeadStatus===s.v?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white text-[#59615D] border-[#E5E3DB] hover:border-[#3B5249]"}`} data-testid={`sm-leads-status-${s.v}`}>{s.l}</button>
+                    ))}
+                  </div>
+
+                  {/* Date + TC + search */}
+                  <div className="flex gap-2 flex-wrap items-center mb-4">
+                    <Input type="date" value={smLeadDate} onChange={e=>setSmLeadDate(e.target.value)} className="rounded-xl h-8 text-xs w-40" data-testid="sm-leads-date"/>
+                    {smLeadDate && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>setSmLeadDate("")}>Clear date</Button>}
+                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>setSmLeadDate(today)} data-testid="sm-leads-today">Today only</Button>
+                    <Select value={smLeadTcFilter} onValueChange={setSmLeadTcFilter}>
+                      <SelectTrigger className="rounded-xl h-8 text-xs w-48" data-testid="sm-leads-tc-filter"><SelectValue placeholder="All telecallers"/></SelectTrigger>
+                      <SelectContent><SelectItem value="all">All telecallers</SelectItem>{telecallers.map(tc=><SelectItem key={tc.id} value={tc.id}>{tc.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Input value={smLeadSearch} onChange={e=>setSmLeadSearch(e.target.value)} placeholder="Search name / phone / product / TC" className="rounded-xl h-8 text-xs flex-1 min-w-[180px]" data-testid="sm-leads-search"/>
+                  </div>
+
+                  {/* Leads table */}
+                  {visibleLeads.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No leads match the selected filters.</p> :
+                    <div className="overflow-x-auto"><table className="w-full text-xs">
+                      <thead><tr className="border-b bg-[#F9F8F6]">{["Date","Name","Phone","Telecaller","Product","Status","Last Order"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
+                      <tbody>{visibleLeads.slice(0,500).map(l=>(
+                        <tr key={l.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6]" data-testid={`sm-lead-row-${l.id}`}>
+                          <td className="p-2 text-[10px]">{(l.created_at||"").slice(0,10)}</td>
+                          <td className="p-2 font-medium">{(l.name && l.name !== "Unknown") ? l.name : "—"}</td>
+                          <td className="p-2"><a href={`tel:${l.phone_number}`} className="text-[#3B5249] underline">{l.phone_number}</a></td>
+                          <td className="p-2 text-[#3B5249]">{l.assigned_to_name || "—"}</td>
+                          <td className="p-2 text-[10px] max-w-[160px] truncate">{l.product_interest || l.last_order_products || "—"}</td>
+                          <td className="p-2"><Badge className={`text-[8px] capitalize ${l.status==='interested'?'bg-green-100 text-green-800':l.status==='not_interested'?'bg-red-100 text-red-800':l.status==='ordered'||l.status==='order_created'?'bg-emerald-100 text-emerald-800':l.status==='follow_up'?'bg-yellow-100 text-yellow-800':'bg-blue-100 text-blue-800'}`}>{(l.status||"").replace(/_/g," ")}</Badge></td>
+                          <td className="p-2 text-[10px]">{l.last_order_amount ? `Rs.${l.last_order_amount}` : "—"}</td>
+                        </tr>
+                      ))}</tbody></table>
+                    </div>
+                  }
+                </>
+              );
+            })()}
+          </div></TabsContent>
           <TabsContent value="salescollab" className="animate-fade-in"><CollaborationContactsPanel title="Sales Collaboration Contact Book" allowedTypes={["sales_opportunity"]} /></TabsContent>
           <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={telecallers} candidateLabel="Telecallers" /></TabsContent>
           <TabsContent value="telecallers" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">

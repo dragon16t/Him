@@ -34,6 +34,9 @@ export default function TelecallerDashboard() {
   const [instructions, setInstructions] = useState([]);
   const [relCalls, setRelCalls] = useState({calls:[],stats:{}});
   const [tab, setTab] = useState("today");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("");  // YYYY-MM-DD; empty = all dates
+  const [searchQuery, setSearchQuery] = useState("");
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [showAddLead, setShowAddLead] = useState(false);
   const [showCallLog, setShowCallLog] = useState(false);
@@ -118,6 +121,14 @@ export default function TelecallerDashboard() {
     // Hide leads routed to collab and recently-ordered leads from active views
     if (l.status === "routed_to_collab") return false;
     if (isRecentlyOrdered(l)) return false;
+    // Apply status + date + search filters on top of the tab
+    if (statusFilter !== "all" && l.status !== statusFilter) return false;
+    if (dateFilter && (l.created_at || "").slice(0,10) !== dateFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase().trim();
+      const hay = `${l.name || ""} ${l.phone_number || ""} ${l.product_interest || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     if (tab === "today") return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     if (tab === "repeat") return l.next_repeat_order_date && l.next_repeat_order_date <= today;
     if (tab === "relationship") return l.next_relationship_date && l.next_relationship_date <= today;
@@ -364,7 +375,31 @@ export default function TelecallerDashboard() {
 
         {/* LEADS LIST */}
         {!["calls","tasks","instructions","commissions","leaderboard","orders"].includes(tab) && (
-          <div className="space-y-2">
+          <>
+            {/* Filter bar — status chips + date + search */}
+            <div className="bg-white rounded-xl border border-[#E5E3DB] p-3 mb-3 space-y-2" data-testid="leads-filter-bar">
+              <div className="flex gap-1 flex-wrap">
+                {[
+                  {v:"all",l:`All (${leads.filter(x=>x.status!=="routed_to_collab"&&!isRecentlyOrdered(x)).length})`},
+                  {v:"new",l:"New"},
+                  {v:"interested",l:"Interested"},
+                  {v:"follow_up",l:"Follow-up"},
+                  {v:"no_response",l:"No Response"},
+                  {v:"busy",l:"Busy"},
+                  {v:"ordered",l:"Order Created"},
+                  {v:"not_interested",l:"Not Interested"},
+                ].map(s=>(
+                  <button key={s.v} onClick={()=>setStatusFilter(s.v)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap border transition ${statusFilter===s.v?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white text-[#59615D] border-[#E5E3DB] hover:border-[#3B5249]"}`} data-testid={`status-filter-${s.v}`}>{s.l}</button>
+                ))}
+              </div>
+              <div className="flex gap-2 flex-wrap items-center">
+                <Input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)} className="rounded-xl h-8 text-xs w-40" data-testid="leads-date-filter"/>
+                {dateFilter && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>setDateFilter("")}>Clear date</Button>}
+                <Input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search name / phone / product" className="rounded-xl h-8 text-xs flex-1 min-w-[180px]" data-testid="leads-search"/>
+                <span className="text-[10px] text-[#59615D] ml-auto">Showing: <b className="text-[#3B5249]">{filteredLeads.length}</b></span>
+              </div>
+            </div>
+            <div className="space-y-2">
             {filteredLeads.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No leads in this category</p>:
             filteredLeads.map(lead => (
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
@@ -389,6 +424,7 @@ export default function TelecallerDashboard() {
               </div>
             ))}
           </div>
+          </>
         )}
       </div>
 
