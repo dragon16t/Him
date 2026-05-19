@@ -590,34 +590,16 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
-        # Head of Sales sees the full pipeline; regular SM sees only their team
-        is_hos_local = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
-        if is_hos_local:
-            target = created_by or assigned_to
-            if target:
-                query['created_by'] = target
-            # else: full org pipeline visible
-        else:
-            # SM sees only leads added by their telecallers (their real contribution)
-            tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
-            ids = [t['id'] for t in tcs] + [current_user['id']]
-            target = created_by or assigned_to
-            if target:
-                if target not in ids:
-                    raise HTTPException(status_code=403, detail="Not your telecaller")
-                query['created_by'] = target
-            else:
-                query['created_by'] = {"$in": ids}
+        # All SMs (incl. HOS) see the full company pipeline. Per-TC drill-down still works via params.
+        target = created_by or assigned_to
+        if target:
+            query['created_by'] = target
+        # else: no scoping → full org leads visible
     elif current_user['role'] == 'assistant_sales_manager':
-        sm_id = current_user.get('managed_by','')
-        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
-        ids = [t['id'] for t in tcs] + [sm_id]
-        if assigned_to:
-            if assigned_to not in ids:
-                raise HTTPException(status_code=403, detail="Not in your team")
-            query['assigned_to'] = assigned_to
-        else:
-            query['assigned_to'] = {"$in": ids}
+        # Asst SM has the same visibility as SM — full pipeline (per-TC drill-down via params)
+        target = created_by or assigned_to
+        if target:
+            query['created_by'] = target
     elif current_user['role'] == 'district_manager':
         ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
         ids = [a['id'] for a in ags] + [current_user['id']]
@@ -1228,14 +1210,10 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
 @api_router.get("/telecallers")
 async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager','head_of_sales']: raise HTTPException(status_code=403)
+    # All Sales Managers (and HOS / Asst SMs) see EVERY telecaller — the small org doesn't benefit from
+    # per-SM scoping when the `managed_by` field is missing on most legacy docs. The SM Leads tab keeps
+    # a per-telecaller dropdown filter for drill-downs.
     q = {}
-    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
-    if current_user['role'] == 'sales_manager' and not is_hos:
-        # Regular SM only sees their team
-        q['managed_by'] = current_user['id']
-    elif current_user['role'] == 'assistant_sales_manager':
-        q['managed_by'] = current_user.get('managed_by','')
-    # Head of Sales / admin → no scope, sees every telecaller
     tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     # All-time totals
     for tc in tcs:

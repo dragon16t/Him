@@ -217,8 +217,8 @@ export default function SalesManagerDashboard() {
         <RoleGuidelines role="sales_manager" />
         <MonthFilter month={month} year={year} onMonthChange={setMonth} onYearChange={setYear} />
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          {[{l:"Orders",v:filteredOrders.length,i:ShoppingBag},{l:"Pending",v:filteredOrders.filter(o=>o.status==='pending').length,i:ClipboardList},{l:"Telecallers",v:telecallers.length,i:Users},{l:"Hire Queue",v:tcCandidates.length,i:PhoneCall},{l:"Revenue",v:`Rs.${monthRevenue}`,i:IndianRupee}].map((s,i)=>(
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3 text-[#3B5249]"/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase">{s.l}</p></div>
+          {[{l:"Orders (Month)",v:filteredOrders.length,sub:`All: ${orders.length}`,i:ShoppingBag},{l:"Pending",v:filteredOrders.filter(o=>o.status==='pending').length,sub:`All: ${orders.filter(o=>o.status==='pending').length}`,i:ClipboardList},{l:"Telecallers",v:telecallers.length,sub:"All-time",i:Users},{l:"Hire Queue",v:tcCandidates.length,sub:"Active",i:PhoneCall},{l:"Revenue (Month)",v:`Rs.${monthRevenue}`,sub:`All: Rs.${orders.filter(o=>o.status==='delivered').reduce((s,o)=>s+(o.total_amount||0),0)}`,i:IndianRupee}].map((s,i)=>(
+            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3 text-[#3B5249]"/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase">{s.l}</p><p className="text-[10px] text-[#A66E4E] mt-1">{s.sub}</p></div>
           ))}
         </div>
 
