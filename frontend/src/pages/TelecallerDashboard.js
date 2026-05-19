@@ -256,14 +256,16 @@ export default function TelecallerDashboard() {
         {(() => {
           const todayIso = new Date().toISOString().slice(0,10);
           const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString().slice(0,10);
-          // a) Interested leads with NO order created
+          // a) Never-called new leads (the user's main complaint — 30 fresh leads must NOT show as "all clear")
+          const newUncalled = leads.filter(l => l.status === "new" && (!l.call_logs || l.call_logs.length === 0) && l.status !== "routed_to_collab");
+          // b) Interested leads with NO order created
           const interestedNotConverted = leads.filter(l => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id));
-          // b) Follow-ups due NOW
+          // c) Follow-ups due NOW
           const dueNow = leads.filter(l => isFollowUpDueNow(l));
-          // c) Repeat orders + relationship calls due
+          // d) Repeat orders + relationship calls due
           const repeatDue = leads.filter(l => l.next_repeat_order_date && l.next_repeat_order_date <= todayIso);
           const relationshipDue = leads.filter(l => l.next_relationship_date && l.next_relationship_date <= todayIso);
-          // d) Stale interested leads (no call log in last 7 days)
+          // e) Stale interested leads (no call log in last 7 days)
           const staleInterested = leads.filter(l => {
             if (l.status !== "interested") return false;
             const logs = l.call_logs || [];
@@ -272,14 +274,15 @@ export default function TelecallerDashboard() {
             const lastTs = (last.logged_at || last.timestamp || "").slice(0,10);
             return lastTs && lastTs < sevenDaysAgo;
           });
-          // e) Today's orders by this telecaller — for motivation
+          // f) Today's orders by this telecaller — for motivation
           const todayOrders = (orders || []).filter(o => (o.created_at || "").slice(0,10) === todayIso && o.status !== "cancelled");
           const todayRevenue = todayOrders.reduce((s,o) => s + (Number(o.total_amount) || 0), 0);
-          // f) Top performer of the day from leaderboard
+          // g) Top performer of the day from leaderboard
           const topPerformer = (leaderboard && leaderboard[0]) || null;
           const myRank = leaderboard ? leaderboard.findIndex(u => u.id === user.id) + 1 : 0;
 
           const alerts = [];
+          if (newUncalled.length > 0) alerts.push({ key: "fresh", tone: "red", icon: Phone, msg: `🔥 ${newUncalled.length} fresh lead(s) waiting for their FIRST call. Don't let them go cold!`, action: () => setTab("today") });
           if (dueNow.length > 0) alerts.push({ key: "due", tone: "red", icon: AlertTriangle, msg: `${dueNow.length} follow-up call(s) are DUE NOW — call them before they cool off.`, action: () => setTab("today") });
           if (interestedNotConverted.length > 0) alerts.push({ key: "interested", tone: "amber", icon: Zap, msg: `${interestedNotConverted.length} interested customer(s) haven't been converted to an order yet. Tap to push them to checkout.`, action: () => setTab("interested") });
           if (repeatDue.length > 0) alerts.push({ key: "repeat", tone: "orange", icon: RefreshCw, msg: `${repeatDue.length} customer(s) are due for a repeat order today.`, action: () => setTab("repeat") });
@@ -289,6 +292,7 @@ export default function TelecallerDashboard() {
           if (topPerformer && topPerformer.id !== user.id && (topPerformer.revenue || 0) > 0) {
             alerts.push({ key: "top", tone: "violet", icon: Trophy, msg: `🏆 ${topPerformer.name} is leading with Rs.${(topPerformer.revenue||0).toLocaleString()} today. You're at #${myRank || "—"}. Catch up!`, action: () => setTab("leaderboard") });
           }
+          // Only show "all clear" when EVERY actionable bucket is empty
           if (alerts.length === 0) {
             alerts.push({ key: "all-clear", tone: "green", icon: Trophy, msg: "✨ All clear! No pending calls, no overdue follow-ups. Great work — go grab fresh leads!", action: () => setShowAddLead(true) });
           }
