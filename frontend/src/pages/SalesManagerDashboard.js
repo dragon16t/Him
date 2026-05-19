@@ -91,7 +91,7 @@ export default function SalesManagerDashboard() {
     try {
       const tcParams = {};
       if (tcWindowDays) tcParams.days = tcWindowDays;
-      if (tcDayDate) tcParams.date = tcDayDate;
+      if (tcDayDate) tcParams.day = tcDayDate;
       const [s, tc, o, c, t, i, co] = await Promise.all([
         axios.get(`${API}/dashboard/stats`), axios.get(`${API}/telecallers`, { params: tcParams }), axios.get(`${API}/orders`),
         axios.get(`${API}/commissions/all`), axios.get(`${API}/tasks`), axios.get(`${API}/instructions`), axios.get(`${API}/contacts`)

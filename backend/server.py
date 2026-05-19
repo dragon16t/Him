@@ -1242,7 +1242,7 @@ async def get_all_telecallers(current_user: dict = Depends(get_current_user)):
     return {"telecallers": tcs}
 
 @api_router.get("/telecallers")
-async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager','head_of_sales']: raise HTTPException(status_code=403)
     q = {}
     # Each SM sees ONLY their own team (TCs where managed_by = sm.id).
@@ -1335,12 +1335,12 @@ async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None
             tc['window_leads'] = actual_lead_window
 
     # Date-specific stats — for the per-card date picker
-    if date:
+    if day:
         for tc in tcs:
-            day_stats = {"date": date, "leads_added": 0, "new": 0, "interested": 0, "not_interested": 0, "follow_up": 0, "ordered": 0, "calls_made": 0}
+            day_stats = {"date": day, "leads_added": 0, "new": 0, "interested": 0, "not_interested": 0, "follow_up": 0, "ordered": 0, "calls_made": 0}
             async for ld in db.leads.find({"assigned_to": tc['id']}, {"_id":0,"status":1,"created_at":1,"call_logs":1,"created_by":1}):
                 created = str(ld.get("created_at",""))[:10]
-                if created == date and ld.get("created_by") == tc['id']:
+                if created == day and ld.get("created_by") == tc['id']:
                     day_stats["leads_added"] += 1
                 st = ld.get("status","")
                 if st == "new" and (not ld.get("call_logs")): day_stats["new"] += 1
@@ -1350,8 +1350,8 @@ async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None
                 if st in ("ordered","order_created","converted","delivered"): day_stats["ordered"] += 1
                 for cl in (ld.get("call_logs") or []):
                     ts = str(cl.get("logged_at") or cl.get("timestamp") or "")
-                    if ts[:10] == date: day_stats["calls_made"] += 1
-            day_stats["calls_made"] += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "$or": [{"created_at": {"$regex": f"^{date}"}}, {"call_date": date}]})
+                    if ts[:10] == day: day_stats["calls_made"] += 1
+            day_stats["calls_made"] += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "$or": [{"created_at": {"$regex": f"^{day}"}}, {"call_date": day}]})
             tc['day_stats'] = day_stats
     return {"telecallers": tcs}
 
