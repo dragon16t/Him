@@ -363,6 +363,26 @@ export default function SalesManagerDashboard() {
                 <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Conv.</p><p className="font-semibold text-xs" data-testid={`tc-conv-${tc.id}`}>{tcWindowDays ? (tc.window_conv||0) : (tc.conversions||0)}</p></div>
                 <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Comm.</p><p className="font-semibold text-xs">Rs.{tc.commission_earned||0}</p></div>
               </div>
+              {/* Live health pills — same warnings the TC sees on her dashboard */}
+              <div className="grid grid-cols-3 gap-1.5 mt-1.5 text-center">
+                <div className={`rounded-lg p-1.5 border ${(tc.pending_calls||0) > 5 ? "bg-red-50 border-red-200" : (tc.pending_calls||0) > 0 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"}`} data-testid={`tc-pending-${tc.id}`}>
+                  <p className="text-[9px] text-[#59615D]">Pending</p>
+                  <p className={`font-semibold text-xs ${(tc.pending_calls||0) > 5 ? "text-red-700" : (tc.pending_calls||0) > 0 ? "text-amber-700" : "text-emerald-700"}`}>{tc.pending_calls||0}{(tc.pending_calls||0) > 0 ? " ⚠️" : ""}</p>
+                </div>
+                <div className={`rounded-lg p-1.5 border ${(tc.today_calls||0) === 0 ? "bg-red-50 border-red-200" : (tc.today_calls||0) < 5 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"}`} data-testid={`tc-today-${tc.id}`}>
+                  <p className="text-[9px] text-[#59615D]">Today</p>
+                  <p className={`font-semibold text-xs ${(tc.today_calls||0) === 0 ? "text-red-700" : (tc.today_calls||0) < 5 ? "text-amber-700" : "text-emerald-700"}`}>{tc.today_calls||0}{(tc.today_calls||0) === 0 ? " 🔴" : ""}</p>
+                </div>
+                <div className={`rounded-lg p-1.5 border ${(tc.not_updated_leads||0) > 5 ? "bg-red-50 border-red-200" : (tc.not_updated_leads||0) > 0 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"}`} data-testid={`tc-notupdated-${tc.id}`}>
+                  <p className="text-[9px] text-[#59615D]">No Log</p>
+                  <p className={`font-semibold text-xs ${(tc.not_updated_leads||0) > 5 ? "text-red-700" : (tc.not_updated_leads||0) > 0 ? "text-amber-700" : "text-emerald-700"}`}>{tc.not_updated_leads||0}</p>
+                </div>
+              </div>
+              {(tc.stale_interested||0) > 0 && (
+                <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 text-[10px] text-amber-800 flex items-center gap-1" data-testid={`tc-stale-${tc.id}`}>
+                  ⏰ <b>{tc.stale_interested}</b> interested lead(s) not called in 7+ days
+                </div>
+              )}
               <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if(!window.confirm(`Promote ${tc.name} to Asst Sales Manager?`))return;try{await axios.post(`${API}/promote/tc-to-asm`,{telecaller_id:tc.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-tc-${tc.id}`}>Promote to Asst SM</Button>
             </div>))}</div>
             {/* End of Telecaller Cards */}

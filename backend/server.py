@@ -1215,6 +1215,44 @@ async def get_telecallers(days: Optional[int] = None, current_user: dict = Depen
         tc['total_leads'] = await db.leads.count_documents({"created_by": tc['id']})
         comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(500)
         tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
+        # ----- Live "health" stats so the SM sees what each TC sees in their alerts banner -----
+        today_iso = date.today().isoformat()
+        seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
+        # Pending: new+never-called OR follow-up due today/earlier OR interested without an order
+        pending = 0
+        stale_interested = 0
+        not_updated = 0  # leads with no call log AT ALL (regardless of status)
+        ordered_lead_ids = set([o.get("lead_id") for o in await db.orders.find({"created_by": tc['id'], "lead_id": {"$exists": True, "$ne": ""}}, {"_id":0,"lead_id":1}).to_list(2000) if o.get("lead_id")])
+        async for ld in db.leads.find({"assigned_to": tc['id']}, {"_id":0,"id":1,"status":1,"call_logs":1,"next_follow_up_date":1}):
+            logs = ld.get("call_logs") or []
+            if ld.get("status") == "new" and len(logs) == 0:
+                pending += 1
+            if ld.get("status") in ("interested", "ordered") and ld.get("id") not in ordered_lead_ids:
+                pending += 1
+            nfd = ld.get("next_follow_up_date") or ""
+            if nfd and nfd <= today_iso and ld.get("status") not in ("order_created","converted","not_interested"):
+                pending += 1
+            # Stale interested — no recent call log
+            if ld.get("status") == "interested":
+                last_ts = ""
+                if logs:
+                    last = logs[-1]
+                    last_ts = (last.get("logged_at") or last.get("timestamp") or "")[:10]
+                if not last_ts or last_ts < seven_days_ago:
+                    stale_interested += 1
+            if not logs:
+                not_updated += 1
+        tc['pending_calls'] = pending
+        tc['stale_interested'] = stale_interested
+        tc['not_updated_leads'] = not_updated
+        # Calls done TODAY (for the orange "no activity today" warning)
+        today_calls = 0
+        async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
+            for cl in (lead.get("call_logs") or []):
+                ts = cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or ""
+                if str(ts).startswith(today_iso): today_calls += 1
+        today_calls += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "created_at": {"$regex": f"^{today_iso}"}})
+        tc['today_calls'] = today_calls
     # Windowed counts when `days` is provided (3/7/15/30) for the SM tab filter chips
     if days and int(days) > 0:
         from datetime import timedelta as _td
