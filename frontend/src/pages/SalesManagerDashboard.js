@@ -40,6 +40,7 @@ export default function SalesManagerDashboard() {
   const [tcWindowDays, setTcWindowDays] = useState(0); // 0 = all time; 3/7/15/30 = last N days
   const [tcDayDate, setTcDayDate] = useState(""); // YYYY-MM-DD per-card day-stats picker
   const [salesManagers, setSalesManagers] = useState([]); // For Head of Sales panel
+  const [allTelecallers, setAllTelecallers] = useState([]);  // HOS-only — every TC for assignment
   const [agents, setAgents] = useState([]);
   const [orders, setOrders] = useState([]);
   const [commissions, setCommissions] = useState([]);
@@ -104,6 +105,8 @@ export default function SalesManagerDashboard() {
       try { const ld = await axios.get(`${API}/leads`, { params: { limit: 1000 } }); setSmLeads(ld.data.leads || []); } catch {}
       // Head of Sales — fetch all SMs (will 403 silently for regular SMs, that's fine)
       try { const sm = await axios.get(`${API}/sales-managers`); setSalesManagers(sm.data.sales_managers || []); } catch {}
+      // Head of Sales — fetch ALL telecallers across the company for assignment panel
+      try { const allTcs = await axios.get(`${API}/telecallers/all`); setAllTelecallers(allTcs.data.telecallers || []); } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -366,30 +369,56 @@ export default function SalesManagerDashboard() {
               <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>{ setTcDayDate(new Date().toISOString().slice(0,10)); setTcWindowDays(0); }} data-testid="tc-day-today">Today</Button>
               {tcDayDate && <Button size="sm" variant="ghost" className="rounded-full text-[10px] h-7 px-2 text-[#A66E4E]" onClick={()=>setTcDayDate("")} data-testid="tc-day-clear">Clear</Button>}
             </div>
-            {/* Head of Sales quick-switch panel (only Habeeb sees this) */}
-            {(user.is_head_of_sales || (user.email||"").toLowerCase()==="habeebrahman@celestaglow.com") && salesManagers.filter(sm=>sm.id!==user.id).length>0 && (
-              <div className="bg-[#F4ECD2]/40 border border-[#A66E4E]/40 rounded-xl p-3 mb-4" data-testid="head-of-sales-panel">
-                <p className="text-xs font-semibold text-[#3B5249] mb-2">👑 Head of Sales — Quick Switch to Other Sales Managers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {salesManagers.filter(sm=>sm.id!==user.id).map(sm=>(
-                    <Button key={sm.id} size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={async()=>{
-                      try {
-                        const r = await axios.post(`${API}/admin/proxy-login/${sm.id}`);
-                        // Save original session so user can return
-                        const origToken = localStorage.getItem("token");
-                        const origUser = localStorage.getItem("user");
-                        if (origToken && origUser) {
-                          const stack = JSON.parse(localStorage.getItem("impersonation_stack") || "[]");
-                          stack.push({ token: origToken, user: JSON.parse(origUser) });
-                          localStorage.setItem("impersonation_stack", JSON.stringify(stack));
-                        }
-                        localStorage.setItem("token", r.data.token);
-                        localStorage.setItem("user", JSON.stringify(r.data.user));
-                        window.location.href = r.data.route;
-                      } catch (e) { toast.error(e.response?.data?.detail || "Cannot open dashboard"); }
-                    }} data-testid={`hos-open-${sm.id}`}>↗ {sm.name}</Button>
-                  ))}
+            {/* Head of Sales quick-switch + TC assignment panel (only Habeeb / HOS sees this) */}
+            {(user.is_head_of_sales || (user.email||"").toLowerCase()==="habeebrahman@celestaglow.com") && (
+              <div className="bg-[#F4ECD2]/40 border border-[#A66E4E]/40 rounded-xl p-3 mb-4 space-y-3" data-testid="head-of-sales-panel">
+                <div>
+                  <p className="text-xs font-semibold text-[#3B5249] mb-2">👑 Head of Sales — Quick Switch to Other Sales Managers</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {salesManagers.filter(sm=>sm.id!==user.id).length === 0 && <p className="text-[10px] text-[#59615D] italic">No other Sales Managers yet.</p>}
+                    {salesManagers.filter(sm=>sm.id!==user.id).map(sm=>(
+                      <Button key={sm.id} size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={async()=>{
+                        try {
+                          const r = await axios.post(`${API}/admin/proxy-login/${sm.id}`);
+                          const origToken = localStorage.getItem("token");
+                          const origUser = localStorage.getItem("user");
+                          if (origToken && origUser) {
+                            const stack = JSON.parse(localStorage.getItem("impersonation_stack") || "[]");
+                            stack.push({ token: origToken, user: JSON.parse(origUser) });
+                            localStorage.setItem("impersonation_stack", JSON.stringify(stack));
+                          }
+                          localStorage.setItem("token", r.data.token);
+                          localStorage.setItem("user", JSON.stringify(r.data.user));
+                          window.location.href = r.data.route;
+                        } catch (e) { toast.error(e.response?.data?.detail || "Cannot open dashboard"); }
+                      }} data-testid={`hos-open-${sm.id}`}>↗ {sm.name} <span className="ml-1 opacity-60">({allTelecallers.filter(t=>t.managed_by===sm.id).length} TCs)</span></Button>
+                    ))}
+                  </div>
                 </div>
+                {/* TC assignment — orphan / wrongly-assigned telecallers */}
+                {allTelecallers.length > 0 && (() => {
+                  const orphans = allTelecallers.filter(t => !t.managed_by || !salesManagers.find(sm=>sm.id===t.managed_by));
+                  if (orphans.length === 0) return null;
+                  return (
+                    <div className="border-t border-[#A66E4E]/30 pt-3">
+                      <p className="text-xs font-semibold text-[#A66E4E] mb-2">🛠 {orphans.length} unassigned telecaller(s) — assign them to a Sales Manager</p>
+                      <div className="space-y-1">
+                        {orphans.map(tc => (
+                          <div key={tc.id} className="flex items-center gap-2 flex-wrap bg-white rounded-lg px-2 py-1.5" data-testid={`orphan-tc-${tc.id}`}>
+                            <span className="text-xs font-medium flex-1 min-w-0 truncate">{tc.name} <span className="text-[10px] text-[#59615D]">· {tc.phone || cleanEmail(tc.email) || "—"}</span></span>
+                            <Select onValueChange={async (smId)=>{
+                              try { await axios.post(`${API}/admin/assign-telecaller`, { telecaller_id: tc.id, sales_manager_id: smId }); toast.success("Assigned"); fetchData(); }
+                              catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+                            }}>
+                              <SelectTrigger className="rounded-full h-7 text-[10px] w-40 border-[#3B5249]" data-testid={`assign-tc-${tc.id}`}><SelectValue placeholder="Assign to SM…" /></SelectTrigger>
+                              <SelectContent>{salesManagers.map(sm=><SelectItem key={sm.id} value={sm.id}>{sm.name}{sm.is_head_of_sales ? " 👑" : ""}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p>{cleanEmail(tc.email)&&<p className="text-xs text-[#59615D]">{cleanEmail(tc.email)}</p>}{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>

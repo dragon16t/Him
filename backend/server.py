@@ -509,6 +509,21 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     # Return flat user object (consistent with /auth/login's `user` shape).
     return current_user
 
+@api_router.post("/admin/assign-telecaller")
+async def assign_telecaller_to_sm(data: dict, current_user: dict = Depends(get_current_user)):
+    """Assign one or multiple telecallers to a Sales Manager (admin / HOS only)."""
+    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    if current_user['role'] != 'admin' and not is_hos:
+        raise HTTPException(status_code=403, detail="Admin or Head of Sales only")
+    tc_ids = data.get('telecaller_ids') or ([data['telecaller_id']] if data.get('telecaller_id') else [])
+    sm_id = data.get('sales_manager_id')
+    if not tc_ids or not sm_id:
+        raise HTTPException(status_code=400, detail="telecaller_ids and sales_manager_id are required")
+    sm = await db.sales_managers.find_one({"id": sm_id}, {"_id": 0, "name": 1})
+    if not sm: raise HTTPException(status_code=404, detail="Sales Manager not found")
+    result = await db.telecallers.update_many({"id": {"$in": tc_ids}}, {"$set": {"managed_by": sm_id, "managed_by_name": sm.get("name",""), "managed_by_role": "sales_manager"}})
+    return {"message": f"Assigned {result.modified_count} telecaller(s) to {sm.get('name')}", "modified": result.modified_count}
+
 @api_router.post("/admin/set-head-of-sales/{sm_id}")
 async def set_head_of_sales(sm_id: str, current_user: dict = Depends(get_current_user)):
     if current_user['role'] != 'admin': raise HTTPException(status_code=403, detail="Admin only")
@@ -590,16 +605,26 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
-        # All SMs (incl. HOS) see the full company pipeline. Per-TC drill-down still works via params.
+        # SM sees only leads owned by their telecallers
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+        ids = [t['id'] for t in tcs] + [current_user['id']]
         target = created_by or assigned_to
         if target:
+            if target not in ids:
+                raise HTTPException(status_code=403, detail="Not your telecaller")
             query['created_by'] = target
-        # else: no scoping → full org leads visible
+        else:
+            query['created_by'] = {"$in": ids}
     elif current_user['role'] == 'assistant_sales_manager':
-        # Asst SM has the same visibility as SM — full pipeline (per-TC drill-down via params)
-        target = created_by or assigned_to
-        if target:
-            query['created_by'] = target
+        sm_id = current_user.get('managed_by','')
+        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
+        ids = [t['id'] for t in tcs] + [sm_id]
+        if assigned_to:
+            if assigned_to not in ids:
+                raise HTTPException(status_code=403, detail="Not in your team")
+            query['assigned_to'] = assigned_to
+        else:
+            query['assigned_to'] = {"$in": ids}
     elif current_user['role'] == 'district_manager':
         ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
         ids = [a['id'] for a in ags] + [current_user['id']]
@@ -1207,13 +1232,25 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
     return {"message": "Paid"}
 
 # ==================== USER MANAGEMENT ====================
+@api_router.get("/telecallers/all")
+async def get_all_telecallers(current_user: dict = Depends(get_current_user)):
+    """Admin / Head of Sales — full company TC roster (for assignment & switch panels)."""
+    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    if current_user['role'] != 'admin' and not is_hos:
+        raise HTTPException(status_code=403, detail="Admin or Head of Sales only")
+    tcs = await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return {"telecallers": tcs}
+
 @api_router.get("/telecallers")
 async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager','head_of_sales']: raise HTTPException(status_code=403)
-    # All Sales Managers (and HOS / Asst SMs) see EVERY telecaller — the small org doesn't benefit from
-    # per-SM scoping when the `managed_by` field is missing on most legacy docs. The SM Leads tab keeps
-    # a per-telecaller dropdown filter for drill-downs.
     q = {}
+    # Each SM sees ONLY their own team (TCs where managed_by = sm.id).
+    # Head of Sales uses the 👑 Quick-Switch panel to log into other SMs' dashboards.
+    if current_user['role'] == 'sales_manager':
+        q['managed_by'] = current_user['id']
+    elif current_user['role'] == 'assistant_sales_manager':
+        q['managed_by'] = current_user.get('managed_by','')
     tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     # All-time totals
     for tc in tcs:
