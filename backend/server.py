@@ -545,14 +545,14 @@ async def proxy_login(user_id: str, current_user: dict = Depends(get_current_use
         user = await db[coll_name].find_one({"id": user_id}, {"_id": 0})
         if not user: continue
         # Scope check for non-admin proxy users
-        if role == 'sales_manager':
-            # SM can only impersonate their direct TCs / ASMs
+        if role == 'sales_manager' and not is_head_of_sales:
+            # Regular SM can only impersonate their direct TCs / ASMs
             if target_role not in ('telecaller','assistant_sales_manager'):
                 raise HTTPException(status_code=403, detail="SM can only proxy into their team")
             if user.get('managed_by') != current_user['id']:
                 raise HTTPException(status_code=403, detail="Not your team member")
         elif is_head_of_sales and role != 'admin':
-            # Head of Sales: only sales-side roles
+            # Head of Sales: only sales-side roles (but ANY sales user, not just direct team)
             if target_role not in ('sales_manager','assistant_sales_manager','telecaller','district_manager','assistant_district_manager','agent'):
                 raise HTTPException(status_code=403, detail="Head of Sales cannot impersonate this role")
         token = create_token(user["id"], user["email"], target_role)
