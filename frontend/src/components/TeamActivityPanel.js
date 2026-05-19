@@ -92,12 +92,7 @@ export default function TeamActivityPanel() {
                     <p className="text-sm font-medium mt-1">{a.customer_name || "(unknown customer)"}{a.customer_phone && <span className="text-xs text-[#59615D] font-normal ml-2">{a.customer_phone}</span>}</p>
                     {a.address && <p className="text-[11px] text-[#59615D]">📍 {a.address}</p>}
                     {a.product_interest && <p className="text-[11px] text-[#A66E4E]">Interested in: {a.product_interest}</p>}
-                    {a.notes && (
-                      <div className="mt-2 bg-[#F9F8F6] rounded-lg p-2 border-l-2 border-[#3B5249]">
-                        <p className="text-[10px] uppercase tracking-wider text-[#3B5249] font-semibold flex items-center gap-1"><FileText className="w-3 h-3"/>Notes</p>
-                        <p className="text-xs text-[#2C3531] mt-0.5 whitespace-pre-wrap">{a.notes}</p>
-                      </div>
-                    )}
+                    {/* Notes are private to the individual telecaller — viewable only inside their own call viewer dialog. */}
                   </div>
                 </div>
                 <div className="flex flex-col items-end text-right gap-1 shrink-0">

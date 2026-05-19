@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import axios from "axios";
 import UniversalLogin from "@/pages/UniversalLogin";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 
 const TelecallerDashboard = React.lazy(() => import("@/pages/TelecallerDashboard"));
 const ManagerDashboard = React.lazy(() => import("@/pages/ManagerDashboard"));
@@ -54,6 +55,7 @@ function App() {
   useHideBadge();
   return (
     <BrowserRouter>
+      <ImpersonationBanner />
       <Suspense fallback={<Loader />}>
       <Routes>
         <Route path="/login" element={<UniversalLogin />} />

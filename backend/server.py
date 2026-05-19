@@ -509,25 +509,50 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     # Return flat user object (consistent with /auth/login's `user` shape).
     return current_user
 
+@api_router.post("/admin/set-head-of-sales/{sm_id}")
+async def set_head_of_sales(sm_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != 'admin': raise HTTPException(status_code=403, detail="Admin only")
+    sm = await db.sales_managers.find_one({"id": sm_id})
+    if not sm: raise HTTPException(status_code=404, detail="Sales Manager not found")
+    # Unset on any other SM (only one HOS at a time)
+    await db.sales_managers.update_many({}, {"$set": {"is_head_of_sales": False}})
+    await db.sales_managers.update_one({"id": sm_id}, {"$set": {"is_head_of_sales": True, "title": "Head of Sales"}})
+    return {"message": f"{sm.get('name')} is now Head of Sales"}
+
 @api_router.post("/admin/proxy-login/{user_id}")
 async def proxy_login(user_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403, detail="Admin only")
-    for coll_name, role in AUTH_COLLECTIONS.items():
+    # Admin → any user · Head of Sales → any SM/ASM/TC · SM → their TCs only
+    role = current_user.get('role')
+    is_head_of_sales = bool(current_user.get('is_head_of_sales')) or current_user.get('email','').lower() == 'habeebrahman@celestaglow.com'
+    if role != 'admin' and not is_head_of_sales and role != 'sales_manager':
+        raise HTTPException(status_code=403, detail="Not allowed")
+    for coll_name, target_role in AUTH_COLLECTIONS.items():
         user = await db[coll_name].find_one({"id": user_id}, {"_id": 0})
-        if user:
-            token = create_token(user["id"], user["email"], role)
-            ud = {k: v for k, v in user.items() if k != "password_hash"}
-            ud["role"] = role
-            route = {
-                "admin":"/dashboard","sales_manager":"/sales-manager","district_manager":"/manager",
-                "telecaller":"/telecaller","agent":"/agent","finance_manager":"/finance",
-                "hr_manager":"/hr-manager","social_media_manager":"/social-media",
-                "inhouse_telecaller":"/influencer-outreach","content_strategist":"/content-strategist",
-                "content_developer":"/content-developer","inventory_manager":"/inventory",
-                "digital_marketing_manager":"/digital-marketing",
-                "assistant_sales_manager":"/assistant-sm","assistant_district_manager":"/assistant-dm"
-            }.get(role, "/login")
-            return {"token": token, "user": ud, "route": route}
+        if not user: continue
+        # Scope check for non-admin proxy users
+        if role == 'sales_manager':
+            # SM can only impersonate their direct TCs / ASMs
+            if target_role not in ('telecaller','assistant_sales_manager'):
+                raise HTTPException(status_code=403, detail="SM can only proxy into their team")
+            if user.get('managed_by') != current_user['id']:
+                raise HTTPException(status_code=403, detail="Not your team member")
+        elif is_head_of_sales and role != 'admin':
+            # Head of Sales: only sales-side roles
+            if target_role not in ('sales_manager','assistant_sales_manager','telecaller','district_manager','assistant_district_manager','agent'):
+                raise HTTPException(status_code=403, detail="Head of Sales cannot impersonate this role")
+        token = create_token(user["id"], user["email"], target_role)
+        ud = {k: v for k, v in user.items() if k != "password_hash"}
+        ud["role"] = target_role
+        route = {
+            "admin":"/dashboard","sales_manager":"/sales-manager","district_manager":"/manager",
+            "telecaller":"/telecaller","agent":"/agent","finance_manager":"/finance",
+            "hr_manager":"/hr-manager","social_media_manager":"/social-media",
+            "inhouse_telecaller":"/influencer-outreach","content_strategist":"/content-strategist",
+            "content_developer":"/content-developer","inventory_manager":"/inventory",
+            "digital_marketing_manager":"/digital-marketing",
+            "assistant_sales_manager":"/assistant-sm","assistant_district_manager":"/assistant-dm"
+        }.get(target_role, "/login")
+        return {"token": token, "user": ud, "route": route}
     raise HTTPException(status_code=404, detail="User not found")
 
 # ==================== PROFILE ====================
@@ -565,17 +590,24 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     if current_user['role'] == 'telecaller': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
-        # SM sees only leads added by their telecallers (their real contribution)
-        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
-        ids = [t['id'] for t in tcs] + [current_user['id']]
-        # If a specific telecaller is requested, restrict to that one (but only if in scope)
-        target = created_by or assigned_to
-        if target:
-            if target not in ids:
-                raise HTTPException(status_code=403, detail="Not your telecaller")
-            query['created_by'] = target
+        # Head of Sales sees the full pipeline; regular SM sees only their team
+        is_hos_local = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+        if is_hos_local:
+            target = created_by or assigned_to
+            if target:
+                query['created_by'] = target
+            # else: full org pipeline visible
         else:
-            query['created_by'] = {"$in": ids}
+            # SM sees only leads added by their telecallers (their real contribution)
+            tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+            ids = [t['id'] for t in tcs] + [current_user['id']]
+            target = created_by or assigned_to
+            if target:
+                if target not in ids:
+                    raise HTTPException(status_code=403, detail="Not your telecaller")
+                query['created_by'] = target
+            else:
+                query['created_by'] = {"$in": ids}
     elif current_user['role'] == 'assistant_sales_manager':
         sm_id = current_user.get('managed_by','')
         tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
@@ -1194,13 +1226,16 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
 
 # ==================== USER MANAGEMENT ====================
 @api_router.get("/telecallers")
-async def get_telecallers(days: Optional[int] = None, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager']: raise HTTPException(status_code=403)
+async def get_telecallers(days: Optional[int] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager','head_of_sales']: raise HTTPException(status_code=403)
     q = {}
-    if current_user['role'] == 'sales_manager':
+    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    if current_user['role'] == 'sales_manager' and not is_hos:
+        # Regular SM only sees their team
         q['managed_by'] = current_user['id']
     elif current_user['role'] == 'assistant_sales_manager':
         q['managed_by'] = current_user.get('managed_by','')
+    # Head of Sales / admin → no scope, sees every telecaller
     tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     # All-time totals
     for tc in tcs:
@@ -1256,23 +1291,53 @@ async def get_telecallers(days: Optional[int] = None, current_user: dict = Depen
     # Windowed counts when `days` is provided (3/7/15/30) for the SM tab filter chips
     if days and int(days) > 0:
         from datetime import timedelta as _td
-        cutoff_iso = (datetime.now(timezone.utc) - _td(days=int(days))).isoformat()
+        cutoff_dt = datetime.now(timezone.utc) - _td(days=int(days))
+        cutoff_iso = cutoff_dt.isoformat()
+        cutoff_date_only = cutoff_dt.date().isoformat()  # for legacy docs with date-only created_at
         for tc in tcs:
             w_calls = 0
             async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
                 for cl in (lead.get("call_logs") or []):
-                    ts = cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or ""
-                    if str(ts) >= cutoff_iso:
+                    ts = str(cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or "")
+                    if ts and (ts[:10] >= cutoff_date_only):
                         w_calls += 1
-            w_calls += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "created_at": {"$gte": cutoff_iso}})
+            w_calls += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "$or": [{"created_at": {"$gte": cutoff_iso}}, {"call_date": {"$gte": cutoff_date_only}}]})
             tc['window_calls'] = w_calls
             tc['window_conv'] = await db.orders.count_documents({
                 "created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]},
-                "created_at": {"$gte": cutoff_iso}
+                "$or": [{"created_at": {"$gte": cutoff_iso}}, {"order_date": {"$gte": cutoff_date_only}}]
             })
+            # Date-prefix fallback so legacy docs (without TZ on created_at) still match
             tc['window_leads'] = await db.leads.count_documents({
-                "created_by": tc['id'], "created_at": {"$gte": cutoff_iso}
+                "created_by": tc['id'],
+                "$or": [{"created_at": {"$gte": cutoff_iso}}, {"created_at": {"$regex": f"^{cutoff_date_only[:4]}"}}],
             })
+            # Re-tighten with python check for accuracy
+            actual_lead_window = 0
+            async for ld in db.leads.find({"created_by": tc['id']}, {"_id":0,"created_at":1}):
+                ts = str(ld.get("created_at", ""))
+                if ts[:10] >= cutoff_date_only: actual_lead_window += 1
+            tc['window_leads'] = actual_lead_window
+
+    # Date-specific stats — for the per-card date picker
+    if date:
+        for tc in tcs:
+            day_stats = {"date": date, "leads_added": 0, "new": 0, "interested": 0, "not_interested": 0, "follow_up": 0, "ordered": 0, "calls_made": 0}
+            async for ld in db.leads.find({"assigned_to": tc['id']}, {"_id":0,"status":1,"created_at":1,"call_logs":1,"created_by":1}):
+                created = str(ld.get("created_at",""))[:10]
+                if created == date and ld.get("created_by") == tc['id']:
+                    day_stats["leads_added"] += 1
+                st = ld.get("status","")
+                if st == "new" and (not ld.get("call_logs")): day_stats["new"] += 1
+                if st == "interested": day_stats["interested"] += 1
+                if st == "not_interested": day_stats["not_interested"] += 1
+                if st == "follow_up": day_stats["follow_up"] += 1
+                if st in ("ordered","order_created","converted","delivered"): day_stats["ordered"] += 1
+                for cl in (ld.get("call_logs") or []):
+                    ts = str(cl.get("logged_at") or cl.get("timestamp") or "")
+                    if ts[:10] == date: day_stats["calls_made"] += 1
+            day_stats["calls_made"] += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "$or": [{"created_at": {"$regex": f"^{date}"}}, {"call_date": date}]})
+            tc['day_stats'] = day_stats
     return {"telecallers": tcs}
 
 @api_router.get("/managers")
@@ -1282,7 +1347,10 @@ async def get_managers(current_user: dict = Depends(get_current_user)):
 
 @api_router.get("/sales-managers")
 async def get_sales_managers(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ('admin','hr_manager'): raise HTTPException(status_code=403)
+    # Admin / HR see everyone. Head of Sales sees all SMs (for proxy-login navigation).
+    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    if current_user['role'] not in ('admin','hr_manager') and not is_hos:
+        raise HTTPException(status_code=403)
     return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
 
 @api_router.get("/agents")
@@ -7037,6 +7105,11 @@ async def startup():
     await _backfill_lead_last_order()
     await _backfill_telecaller_counts()
     await _backfill_created_by_names()
+    # Mark Habeeb Rahman as Head of Sales (flag used for proxy-login authority)
+    await db.sales_managers.update_many(
+        {"email": {"$regex": "^habeeb", "$options": "i"}},
+        {"$set": {"is_head_of_sales": True, "title": "Head of Sales"}}
+    )
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")

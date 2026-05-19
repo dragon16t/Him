@@ -282,15 +282,16 @@ export default function TelecallerDashboard() {
           const myRank = leaderboard ? leaderboard.findIndex(u => u.id === user.id) + 1 : 0;
 
           const alerts = [];
-          if (newUncalled.length > 0) alerts.push({ key: "fresh", tone: "red", icon: Phone, msg: `🔥 ${newUncalled.length} fresh lead(s) waiting for their FIRST call. Don't let them go cold!`, action: () => setTab("today") });
-          if (dueNow.length > 0) alerts.push({ key: "due", tone: "red", icon: AlertTriangle, msg: `${dueNow.length} follow-up call(s) are DUE NOW — call them before they cool off.`, action: () => setTab("today") });
-          if (interestedNotConverted.length > 0) alerts.push({ key: "interested", tone: "amber", icon: Zap, msg: `${interestedNotConverted.length} interested customer(s) haven't been converted to an order yet. Tap to push them to checkout.`, action: () => setTab("interested") });
-          if (repeatDue.length > 0) alerts.push({ key: "repeat", tone: "orange", icon: RefreshCw, msg: `${repeatDue.length} customer(s) are due for a repeat order today.`, action: () => setTab("repeat") });
-          if (relationshipDue.length > 0) alerts.push({ key: "rel", tone: "pink", icon: Phone, msg: `${relationshipDue.length} relationship call(s) due — keep your loyal customers warm.`, action: () => setTab("relationship") });
-          if (staleInterested.length > 0) alerts.push({ key: "stale", tone: "amber", icon: Clock, msg: `${staleInterested.length} interested lead(s) haven't been called in 7+ days. Re-engage them now!`, action: () => setTab("interested") });
-          if (todayOrders.length > 0) alerts.push({ key: "win", tone: "green", icon: Trophy, msg: `🎉 You created ${todayOrders.length} order(s) today worth Rs.${todayRevenue.toLocaleString()}. Keep going!`, action: () => setTab("orders") });
+          const jump = (t) => () => { setTab(t); setStatusFilter("all"); setDateFilter(""); setSearchQuery(""); };
+          if (newUncalled.length > 0) alerts.push({ key: "fresh", tone: "red", icon: Phone, msg: `🔥 ${newUncalled.length} fresh lead(s) waiting for their FIRST call. Don't let them go cold!`, action: jump("today") });
+          if (dueNow.length > 0) alerts.push({ key: "due", tone: "red", icon: AlertTriangle, msg: `${dueNow.length} follow-up call(s) are DUE NOW — call them before they cool off.`, action: jump("today") });
+          if (interestedNotConverted.length > 0) alerts.push({ key: "interested", tone: "amber", icon: Zap, msg: `${interestedNotConverted.length} interested customer(s) haven't been converted to an order yet. Tap to push them to checkout.`, action: jump("interested") });
+          if (repeatDue.length > 0) alerts.push({ key: "repeat", tone: "orange", icon: RefreshCw, msg: `${repeatDue.length} customer(s) are due for a repeat order today.`, action: jump("repeat") });
+          if (relationshipDue.length > 0) alerts.push({ key: "rel", tone: "pink", icon: Phone, msg: `${relationshipDue.length} relationship call(s) due — keep your loyal customers warm.`, action: jump("relationship") });
+          if (staleInterested.length > 0) alerts.push({ key: "stale", tone: "amber", icon: Clock, msg: `${staleInterested.length} interested lead(s) haven't been called in 7+ days. Re-engage them now!`, action: jump("interested") });
+          if (todayOrders.length > 0) alerts.push({ key: "win", tone: "green", icon: Trophy, msg: `🎉 You created ${todayOrders.length} order(s) today worth Rs.${todayRevenue.toLocaleString()}. Keep going!`, action: jump("orders") });
           if (topPerformer && topPerformer.id !== user.id && (topPerformer.revenue || 0) > 0) {
-            alerts.push({ key: "top", tone: "violet", icon: Trophy, msg: `🏆 ${topPerformer.name} is leading with Rs.${(topPerformer.revenue||0).toLocaleString()} today. You're at #${myRank || "—"}. Catch up!`, action: () => setTab("leaderboard") });
+            alerts.push({ key: "top", tone: "violet", icon: Trophy, msg: `🏆 ${topPerformer.name} is leading with Rs.${(topPerformer.revenue||0).toLocaleString()} today. You're at #${myRank || "—"}. Catch up!`, action: jump("leaderboard") });
           }
           // Only show "all clear" when EVERY actionable bucket is empty
           if (alerts.length === 0) {

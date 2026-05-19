@@ -388,6 +388,9 @@ export default function AdminCRMPanel() {
                         <div className="flex gap-1 flex-shrink-0">
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>openEditUser(u)} data-testid={`edit-user-${u.id}`}><Edit className="w-3 h-3"/></Button>
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>proxyLogin(u)} data-testid={`view-dashboard-${u.id}`} title="Open dashboard in new tab"><Shield className="w-3 h-3"/></Button>
+                          {u.role==="sales_manager" && (
+                            <Button size="sm" variant="ghost" className={`h-7 w-7 p-0 text-[10px] ${u.is_head_of_sales?"text-[#A66E4E] bg-[#F4ECD2]":"text-[#3B5249]"}`} title={u.is_head_of_sales?"Already Head of Sales":"Promote to Head of Sales"} onClick={async()=>{ if(!window.confirm(`Promote ${u.name} to Head of Sales? Any existing Head of Sales will be unset.`))return; try{ await axios.post(`${API}/admin/set-head-of-sales/${u.id}`); toast.success(`${u.name} is now Head of Sales`); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } }} data-testid={`set-hos-${u.id}`}>👑</Button>
+                          )}
                           {u.role!=="admin"&&<Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600" onClick={async()=>{try{const{data}=await axios.get(`${API}/users/${u.id}/cascade-preview`);setCascadeUser(u);setCascadePreview(data);}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-user-${u.id}`} title="Delete user with cascade"><X className="w-3 h-3"/></Button>}
                         </div>
                       </div>

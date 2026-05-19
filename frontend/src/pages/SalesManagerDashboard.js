@@ -38,6 +38,8 @@ export default function SalesManagerDashboard() {
   const [stats, setStats] = useState({});
   const [telecallers, setTelecallers] = useState([]);
   const [tcWindowDays, setTcWindowDays] = useState(0); // 0 = all time; 3/7/15/30 = last N days
+  const [tcDayDate, setTcDayDate] = useState(""); // YYYY-MM-DD per-card day-stats picker
+  const [salesManagers, setSalesManagers] = useState([]); // For Head of Sales panel
   const [agents, setAgents] = useState([]);
   const [orders, setOrders] = useState([]);
   const [commissions, setCommissions] = useState([]);
@@ -86,8 +88,11 @@ export default function SalesManagerDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
+      const tcParams = {};
+      if (tcWindowDays) tcParams.days = tcWindowDays;
+      if (tcDayDate) tcParams.date = tcDayDate;
       const [s, tc, o, c, t, i, co] = await Promise.all([
-        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/telecallers`, { params: tcWindowDays ? { days: tcWindowDays } : {} }), axios.get(`${API}/orders`),
+        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/telecallers`, { params: tcParams }), axios.get(`${API}/orders`),
         axios.get(`${API}/commissions/all`), axios.get(`${API}/tasks`), axios.get(`${API}/instructions`), axios.get(`${API}/contacts`)
       ]);
       setStats(s.data.stats); setTelecallers(tc.data.telecallers); setOrders(o.data.orders);
@@ -97,10 +102,12 @@ export default function SalesManagerDashboard() {
       try { const cl = await axios.get(`${API}/call-logs/all`); setCallLogs(cl.data.call_logs||[]); } catch {}
       try { const a = await axios.get(`${API}/my-team/asms`); setAsms(a.data.asms||[]); } catch {}
       try { const ld = await axios.get(`${API}/leads`, { params: { limit: 1000 } }); setSmLeads(ld.data.leads || []); } catch {}
+      // Head of Sales — fetch all SMs (will 403 silently for regular SMs, that's fine)
+      try { const sm = await axios.get(`${API}/sales-managers`); setSalesManagers(sm.data.sales_managers || []); } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tcWindowDays]);
+  }, [tcWindowDays, tcDayDate]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleAddTC = async () => { if (!tcForm.name) return toast.error("Name required"); if (!tcForm.phone || tcForm.phone.trim().length < 7) return toast.error("Valid phone number required"); try { await axios.post(`${API}/telecallers`, tcForm); toast.success("Added"); setShowAddTC(false); setTcForm({name:"",email:"",phone:"",password:"",language:"",location:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); } };
@@ -342,27 +349,69 @@ export default function SalesManagerDashboard() {
               <h3 className="font-heading text-lg font-medium">Telecallers</h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddTC(true)} data-testid="add-tc-btn"><Plus className="w-4 h-4 mr-1"/>Add</Button>
             </div>
-            <div className="flex gap-1.5 flex-wrap mb-4" data-testid="tc-window-chips">
+            <div className="flex gap-1.5 flex-wrap mb-3 items-center" data-testid="tc-window-chips">
               {[{d:0,l:"All time"},{d:3,l:"Last 3d"},{d:7,l:"Last 7d"},{d:15,l:"Last 15d"},{d:30,l:"Last 30d"}].map(opt=>(
                 <Button key={opt.d} size="sm" variant={tcWindowDays===opt.d?"default":"outline"}
-                  onClick={()=>setTcWindowDays(opt.d)}
+                  onClick={()=>{ setTcWindowDays(opt.d); setTcDayDate(""); }}
                   className={`rounded-full text-[10px] h-6 px-2 ${tcWindowDays===opt.d?"bg-[#3B5249] text-white":"border-[#E5E3DB]"}`}
                   data-testid={`tc-window-${opt.d}`}
                 >{opt.l}</Button>
               ))}
-              <span className="text-[10px] text-[#59615D] flex items-center ml-2">{tcWindowDays?`Showing activity from the last ${tcWindowDays} day(s)`:"All-time totals"}</span>
+              <span className="text-[10px] text-[#59615D] flex items-center ml-2">{tcDayDate?`Showing day stats for ${tcDayDate}`:tcWindowDays?`Showing activity from the last ${tcWindowDays} day(s)`:"All-time totals"}</span>
             </div>
+            {/* Date picker for per-card day breakdown */}
+            <div className="flex gap-2 items-center mb-4 flex-wrap" data-testid="tc-day-picker-row">
+              <span className="text-[11px] text-[#59615D]">📅 Day stats:</span>
+              <Input type="date" value={tcDayDate} onChange={e=>{ setTcDayDate(e.target.value); if (e.target.value) setTcWindowDays(0); }} className="rounded-xl h-7 text-xs w-40" data-testid="tc-day-date"/>
+              <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>{ setTcDayDate(new Date().toISOString().slice(0,10)); setTcWindowDays(0); }} data-testid="tc-day-today">Today</Button>
+              {tcDayDate && <Button size="sm" variant="ghost" className="rounded-full text-[10px] h-7 px-2 text-[#A66E4E]" onClick={()=>setTcDayDate("")} data-testid="tc-day-clear">Clear</Button>}
+            </div>
+            {/* Head of Sales quick-switch panel (only Habeeb sees this) */}
+            {(user.is_head_of_sales || (user.email||"").toLowerCase()==="habeebrahman@celestaglow.com") && salesManagers.filter(sm=>sm.id!==user.id).length>0 && (
+              <div className="bg-[#F4ECD2]/40 border border-[#A66E4E]/40 rounded-xl p-3 mb-4" data-testid="head-of-sales-panel">
+                <p className="text-xs font-semibold text-[#3B5249] mb-2">👑 Head of Sales — Quick Switch to Other Sales Managers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {salesManagers.filter(sm=>sm.id!==user.id).map(sm=>(
+                    <Button key={sm.id} size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={async()=>{
+                      try {
+                        const r = await axios.post(`${API}/admin/proxy-login/${sm.id}`);
+                        // Save original session so user can return
+                        const origToken = localStorage.getItem("token");
+                        const origUser = localStorage.getItem("user");
+                        if (origToken && origUser) {
+                          const stack = JSON.parse(localStorage.getItem("impersonation_stack") || "[]");
+                          stack.push({ token: origToken, user: JSON.parse(origUser) });
+                          localStorage.setItem("impersonation_stack", JSON.stringify(stack));
+                        }
+                        localStorage.setItem("token", r.data.token);
+                        localStorage.setItem("user", JSON.stringify(r.data.user));
+                        window.location.href = r.data.route;
+                      } catch (e) { toast.error(e.response?.data?.detail || "Cannot open dashboard"); }
+                    }} data-testid={`hos-open-${sm.id}`}>↗ {sm.name}</Button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p>{cleanEmail(tc.email)&&<p className="text-xs text-[#59615D]">{cleanEmail(tc.email)}</p>}{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {tc.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-lang-${tc.id}`}>🗣 {tc.language}</Badge>}
                 {(tc.locality || tc.location || tc.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-place-${tc.id}`}>📍 {tc.locality || tc.location || tc.city}</Badge>}
               </div>
               <div className="grid grid-cols-4 gap-1.5 mt-2 text-center">
-                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Leads</p><p className="font-semibold text-xs" data-testid={`tc-leads-${tc.id}`}>{tcWindowDays ? (tc.window_leads||0) : (tc.total_leads||0)}</p></div>
-                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Calls</p><p className="font-semibold text-xs" data-testid={`tc-calls-${tc.id}`}>{tcWindowDays ? (tc.window_calls||0) : (tc.total_calls||0)}</p></div>
-                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Conv.</p><p className="font-semibold text-xs" data-testid={`tc-conv-${tc.id}`}>{tcWindowDays ? (tc.window_conv||0) : (tc.conversions||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">{tcDayDate?"+Leads":"Leads"}</p><p className="font-semibold text-xs" data-testid={`tc-leads-${tc.id}`}>{tcDayDate ? (tc.day_stats?.leads_added||0) : tcWindowDays ? (tc.window_leads||0) : (tc.total_leads||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Calls</p><p className="font-semibold text-xs" data-testid={`tc-calls-${tc.id}`}>{tcDayDate ? (tc.day_stats?.calls_made||0) : tcWindowDays ? (tc.window_calls||0) : (tc.total_calls||0)}</p></div>
+                <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Conv.</p><p className="font-semibold text-xs" data-testid={`tc-conv-${tc.id}`}>{tcDayDate ? (tc.day_stats?.ordered||0) : tcWindowDays ? (tc.window_conv||0) : (tc.conversions||0)}</p></div>
                 <div className="bg-[#F9F8F6] rounded-lg p-1.5"><p className="text-[10px] text-[#59615D]">Comm.</p><p className="font-semibold text-xs">Rs.{tc.commission_earned||0}</p></div>
               </div>
+              {/* Day-stats deep breakdown — only when a date is picked */}
+              {tcDayDate && tc.day_stats && (
+                <div className="grid grid-cols-4 gap-1.5 mt-1.5 text-center" data-testid={`tc-daystats-${tc.id}`}>
+                  <div className="rounded-lg p-1.5 bg-blue-50 border border-blue-200"><p className="text-[9px] text-[#59615D]">New</p><p className="font-semibold text-xs text-blue-700">{tc.day_stats.new}</p></div>
+                  <div className="rounded-lg p-1.5 bg-emerald-50 border border-emerald-200"><p className="text-[9px] text-[#59615D]">Interested</p><p className="font-semibold text-xs text-emerald-700">{tc.day_stats.interested}</p></div>
+                  <div className="rounded-lg p-1.5 bg-yellow-50 border border-yellow-200"><p className="text-[9px] text-[#59615D]">Follow-up</p><p className="font-semibold text-xs text-yellow-700">{tc.day_stats.follow_up}</p></div>
+                  <div className="rounded-lg p-1.5 bg-red-50 border border-red-200"><p className="text-[9px] text-[#59615D]">Not Int.</p><p className="font-semibold text-xs text-red-700">{tc.day_stats.not_interested}</p></div>
+                </div>
+              )}
               {/* Live health pills — same warnings the TC sees on her dashboard */}
               <div className="grid grid-cols-3 gap-1.5 mt-1.5 text-center">
                 <div className={`rounded-lg p-1.5 border ${(tc.pending_calls||0) > 5 ? "bg-red-50 border-red-200" : (tc.pending_calls||0) > 0 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"}`} data-testid={`tc-pending-${tc.id}`}>
