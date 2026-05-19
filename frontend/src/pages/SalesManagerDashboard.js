@@ -461,7 +461,7 @@ export default function SalesManagerDashboard() {
           <TabsContent value="orders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <h3 className="font-heading text-lg font-medium">Orders ({orders.filter(o=>o.status==="pending").length} pending)</h3>
-              <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowCreateOrder(true)} data-testid="sm-create-order-btn"><Plus className="w-3 h-3 mr-1"/>Create Order</Button>
+              <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setOrderForm({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 });setShowCreateOrder(true);}} data-testid="sm-create-order-btn"><Plus className="w-3 h-3 mr-1"/>Create Order</Button>
             </div>
             <div className="space-y-3">{orders.map(o=>(<div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4">
               <div className="flex flex-col sm:flex-row justify-between gap-2">

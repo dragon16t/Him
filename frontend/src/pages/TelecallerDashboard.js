@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupee, Loader2, X, ClipboardList, RefreshCw, Wallet } from "lucide-react";
+import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupee, Loader2, X, ClipboardList, RefreshCw, Wallet, AlertTriangle, Trophy, Zap, Clock } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
@@ -251,6 +251,72 @@ export default function TelecallerDashboard() {
       </div>
       <div className="max-w-5xl mx-auto px-4 py-4">
         <RoleGuidelines role="telecaller" />
+
+        {/* SMART COACH ALERTS — proactive reminders & motivation */}
+        {(() => {
+          const todayIso = new Date().toISOString().slice(0,10);
+          const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString().slice(0,10);
+          // a) Interested leads with NO order created
+          const interestedNotConverted = leads.filter(l => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id));
+          // b) Follow-ups due NOW
+          const dueNow = leads.filter(l => isFollowUpDueNow(l));
+          // c) Repeat orders + relationship calls due
+          const repeatDue = leads.filter(l => l.next_repeat_order_date && l.next_repeat_order_date <= todayIso);
+          const relationshipDue = leads.filter(l => l.next_relationship_date && l.next_relationship_date <= todayIso);
+          // d) Stale interested leads (no call log in last 7 days)
+          const staleInterested = leads.filter(l => {
+            if (l.status !== "interested") return false;
+            const logs = l.call_logs || [];
+            if (!logs.length) return true;
+            const last = logs[logs.length - 1];
+            const lastTs = (last.logged_at || last.timestamp || "").slice(0,10);
+            return lastTs && lastTs < sevenDaysAgo;
+          });
+          // e) Today's orders by this telecaller — for motivation
+          const todayOrders = (orders || []).filter(o => (o.created_at || "").slice(0,10) === todayIso && o.status !== "cancelled");
+          const todayRevenue = todayOrders.reduce((s,o) => s + (Number(o.total_amount) || 0), 0);
+          // f) Top performer of the day from leaderboard
+          const topPerformer = (leaderboard && leaderboard[0]) || null;
+          const myRank = leaderboard ? leaderboard.findIndex(u => u.id === user.id) + 1 : 0;
+
+          const alerts = [];
+          if (dueNow.length > 0) alerts.push({ key: "due", tone: "red", icon: AlertTriangle, msg: `${dueNow.length} follow-up call(s) are DUE NOW — call them before they cool off.`, action: () => setTab("today") });
+          if (interestedNotConverted.length > 0) alerts.push({ key: "interested", tone: "amber", icon: Zap, msg: `${interestedNotConverted.length} interested customer(s) haven't been converted to an order yet. Tap to push them to checkout.`, action: () => setTab("interested") });
+          if (repeatDue.length > 0) alerts.push({ key: "repeat", tone: "orange", icon: RefreshCw, msg: `${repeatDue.length} customer(s) are due for a repeat order today.`, action: () => setTab("repeat") });
+          if (relationshipDue.length > 0) alerts.push({ key: "rel", tone: "pink", icon: Phone, msg: `${relationshipDue.length} relationship call(s) due — keep your loyal customers warm.`, action: () => setTab("relationship") });
+          if (staleInterested.length > 0) alerts.push({ key: "stale", tone: "amber", icon: Clock, msg: `${staleInterested.length} interested lead(s) haven't been called in 7+ days. Re-engage them now!`, action: () => setTab("interested") });
+          if (todayOrders.length > 0) alerts.push({ key: "win", tone: "green", icon: Trophy, msg: `🎉 You created ${todayOrders.length} order(s) today worth Rs.${todayRevenue.toLocaleString()}. Keep going!`, action: () => setTab("orders") });
+          if (topPerformer && topPerformer.id !== user.id && (topPerformer.revenue || 0) > 0) {
+            alerts.push({ key: "top", tone: "violet", icon: Trophy, msg: `🏆 ${topPerformer.name} is leading with Rs.${(topPerformer.revenue||0).toLocaleString()} today. You're at #${myRank || "—"}. Catch up!`, action: () => setTab("leaderboard") });
+          }
+          if (alerts.length === 0) {
+            alerts.push({ key: "all-clear", tone: "green", icon: Trophy, msg: "✨ All clear! No pending calls, no overdue follow-ups. Great work — go grab fresh leads!", action: () => setShowAddLead(true) });
+          }
+
+          const toneMap = {
+            red: "bg-red-50 border-red-300 text-red-800",
+            amber: "bg-amber-50 border-amber-300 text-amber-800",
+            orange: "bg-orange-50 border-orange-300 text-orange-800",
+            pink: "bg-pink-50 border-pink-300 text-pink-800",
+            green: "bg-emerald-50 border-emerald-300 text-emerald-800",
+            violet: "bg-violet-50 border-violet-300 text-violet-800",
+          };
+
+          return (
+            <div className="space-y-1.5 mb-4" data-testid="tc-coach-alerts">
+              {alerts.slice(0, 4).map(a => {
+                const Icon = a.icon;
+                return (
+                  <button key={a.key} onClick={a.action} className={`w-full text-left flex items-start gap-2 rounded-xl border px-3 py-2 ${toneMap[a.tone]} hover:shadow-sm transition`} data-testid={`tc-alert-${a.key}`}>
+                    <Icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs font-medium leading-snug flex-1">{a.msg}</p>
+                    <span className="text-[10px] opacity-70 mt-0.5">Tap →</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* Warning Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
