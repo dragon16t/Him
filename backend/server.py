@@ -5015,15 +5015,14 @@ async def get_hiring_candidates(request: Request, current_user: dict = Depends(g
     if role == 'inhouse_telecaller':
         query["created_by"] = current_user['id']
     elif role == 'hr_manager':
-        # All HR managers share the SAME pipeline — they're a team working on it together.
-        # No more scoping by individual HR's `created_by`. The previous logic caused HR-A and HR-B
-        # to see different counts (e.g. 59 vs 90+) which confused users about real candidate volume.
-        # Candidates that are private to other roles (e.g. SMM-only) can still be hidden via show_all.
+        # Each HR sees only the candidates they personally added (Noora's list stays with Noora,
+        # Rukhsana's list stays with Rukhsana). Candidates added by in-house telecallers feed
+        # straight into the company-wide pool that any HR can pick up.
         if not show_all:
             query = {"$or": [
-                {"created_by_role": {"$in": ["hr_manager", "inhouse_telecaller", "admin"]}},
-                {"created_by_role": {"$exists": False}},  # legacy docs lacking the role tag
-                {"created_by_role": ""},
+                {"created_by": current_user['id']},
+                {"created_by_role": "inhouse_telecaller"},
+                {"created_by_role": "admin"},
             ]}
     elif role == 'social_media_manager':
         if not show_all:

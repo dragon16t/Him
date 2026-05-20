@@ -667,7 +667,7 @@ export default function HRManagerDashboard() {
 
           {/* HIRING — Full feature: add, edit, forward, hire/reject */}
           <TabsContent value="hiring"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Hiring Pipeline <span className="text-sm text-[#59615D]">· Total: {hiringTotalAll || hiringCandidates.length} · Showing: {hiringCandidates.length}</span></h3>
+            <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">My Hiring Pipeline <span className="text-sm text-[#59615D]">· Total mine: {hiringTotalAll || hiringCandidates.length} · Showing: {hiringCandidates.length}</span></h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEditingCandidate(null);setCandidateForm({name:"",phone:"",email:"",position:"telecaller",location:"",experience:"",qualification:"",skills:"",expected_salary:0,interview_date:"",interview_notes:"",source:"direct",status:"contacted",notes:""});setShowAddCandidate(true);}} data-testid="hr-add-candidate-btn">+ Add Candidate</Button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">

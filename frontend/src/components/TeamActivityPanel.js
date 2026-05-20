@@ -52,7 +52,10 @@ export default function TeamActivityPanel() {
       </div>
       <MonthFilter month={month} year={year} day={day} onMonthChange={setMonth} onYearChange={setYear} onDayChange={setDay}/>
       <div className="flex gap-2 mb-4 flex-wrap items-center">
-        <span className="text-[10px] text-[#59615D] font-medium uppercase">Type:</span>
+        <span className="text-[10px] text-[#59615D] font-medium uppercase">Quick:</span>
+        <button onClick={()=>{const d=new Date();setMonth(String(d.getMonth()+1));setYear(String(d.getFullYear()));setDay(String(d.getDate()));}} className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${day===String(new Date().getDate())&&month===String(new Date().getMonth()+1)?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid="activity-today-filter">📅 Today only</button>
+        <button onClick={()=>setDay("all")} className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${day==="all"?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid="activity-all-days">All days</button>
+        <span className="text-[10px] text-[#59615D] font-medium uppercase ml-2">Type:</span>
         {[{v:"all",l:"All"},{v:"call",l:"Calls"},{v:"home_visit",l:"Home Visits"}].map(t=>(
           <button key={t.v} onClick={()=>setActivityType(t.v)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${activityType===t.v?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid={`activity-type-${t.v}`}>{t.l}</button>
         ))}
