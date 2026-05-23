@@ -649,6 +649,8 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     else:
         # Hide leads routed to collaboration / sales-opportunity contact books
         query['status'] = {"$ne": "routed_to_collab"}
+    # Always exclude soft-deleted leads — they must never come back to any list
+    query['deleted'] = {"$ne": True}
     if year and month and day and month != "all":
         prefix = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
         query['created_at'] = {"$gte": prefix, "$lt": prefix + "T99"}
@@ -746,6 +748,41 @@ async def get_follow_up_leads(current_user: dict = Depends(get_current_user)):
         "total_repeat": len(repeat_leads), "total_relationship": len(relationship_leads)
     }
 
+
+@api_router.delete("/leads/{lead_id}")
+async def delete_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Soft-delete a lead — keeps it hidden forever. TCs can delete their own;
+    SM / Admin can delete any lead in their scope."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead: raise HTTPException(status_code=404, detail="Lead not found")
+    role = current_user.get('role')
+    uid = current_user.get('id')
+    if role == 'telecaller':
+        if lead.get('assigned_to') != uid and lead.get('created_by') != uid:
+            raise HTTPException(status_code=403, detail="Not your lead")
+    elif role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    # Soft delete so it doesn't reappear in any list
+    await db.leads.update_one({"id": lead_id}, {"$set": {
+        "deleted": True, "deleted_by": uid, "deleted_at": datetime.now(timezone.utc).isoformat()
+    }})
+    return {"message": "Lead deleted"}
+
+@api_router.post("/leads/bulk-delete")
+async def bulk_delete_leads(data: dict, current_user: dict = Depends(get_current_user)):
+    lead_ids = data.get('lead_ids') or []
+    if not lead_ids: raise HTTPException(status_code=400, detail="lead_ids required")
+    role = current_user.get('role')
+    uid = current_user.get('id')
+    q = {"id": {"$in": lead_ids}}
+    if role == 'telecaller':
+        q["$or"] = [{"assigned_to": uid}, {"created_by": uid}]
+    elif role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    res = await db.leads.update_many(q, {"$set": {
+        "deleted": True, "deleted_by": uid, "deleted_at": datetime.now(timezone.utc).isoformat()
+    }})
+    return {"message": f"Deleted {res.modified_count} lead(s)", "modified": res.modified_count}
 
 @api_router.post("/leads")
 async def create_lead(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
