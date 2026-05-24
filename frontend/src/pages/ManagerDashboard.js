@@ -15,16 +15,21 @@ import { LogOut, ShoppingBag, Users, MapPin, IndianRupee, Package, Check, X, Plu
 import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
+import DarkModeToggle from "../components/DarkModeToggle";
 import NotificationBell from "../components/NotificationBell";
 import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
+import OrdersPanel from "../components/OrdersPanel";
+import DailyReportButton from "../components/DailyReportButton";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const API = "/api";
 
 export default function ManagerDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [orders, setOrders] = useState([]);
@@ -89,9 +94,9 @@ export default function ManagerDashboard() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const approveOrder = async (id) => { try { await axios.put(`${API}/orders/${id}/approve`); toast.success("Approved!"); fetchData(); } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } };
-  const rejectOrder = async (id) => { try { await axios.put(`${API}/orders/${id}/reject`, { reason: "Rejected" }); toast.success("Rejected"); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddProduct = async () => { if (!productForm.name) return toast.error("Name required"); try { await axios.post(`${API}/products`, {...productForm,price:Number(productForm.price),stock:Number(productForm.stock)}); toast.success("Added"); setShowAddProduct(false); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddRegion = async () => { if (!regionForm.name) return toast.error("Name required"); try { await axios.post(`${API}/regions`, {...regionForm,state:"Kerala",areas:regionForm.areas.split(",").map(a=>a.trim()).filter(Boolean)}); toast.success("Added"); setShowAddRegion(false); fetchData(); } catch { toast.error("Failed"); } };
+  const rejectOrder = async (id) => { try { await axios.put(`${API}/orders/${id}/reject`, { reason: "Rejected" }); toast.success("Rejected"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddProduct = async () => { if (!productForm.name) return toast.error("Name required"); try { await axios.post(`${API}/products`, {...productForm,price:Number(productForm.price),stock:Number(productForm.stock)}); toast.success("Added"); setShowAddProduct(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddRegion = async () => { if (!regionForm.name) return toast.error("Name required"); try { await axios.post(`${API}/regions`, {...regionForm,state:"Kerala",areas:regionForm.areas.split(",").map(a=>a.trim()).filter(Boolean)}); toast.success("Added"); setShowAddRegion(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const handleAddAgent = async () => { if (!agentForm.name || !agentForm.email) return toast.error("Fill required fields"); if (!agentForm.phone) return toast.error("Phone number is mandatory"); try { await axios.post(`${API}/agents`, agentForm); toast.success("Agent added"); setShowAddAgent(false); setAgentForm({name:"",email:"",password:"",district:"",area:"",region_id:"",phone:"",language:""}); fetchData(); } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const openEditAgent = (a) => { setEditingAgent(a); setAgentEditForm({ name: a.name || "", phone: a.phone || "", language: a.language || "", area: a.area || "", district: a.district || "" }); };
   const openCallViewer = (a) => { setCallViewerAgent(a); setCallViewerDays(7); };
@@ -112,12 +117,12 @@ export default function ManagerDashboard() {
       fetchData();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
-  const handleAddTask = async () => { if (!taskForm.title || !taskForm.assigned_to) return toast.error("Fill required"); try { await axios.post(`${API}/tasks`, taskForm); toast.success("Task created"); setShowAddTask(false); fetchData(); } catch { toast.error("Failed"); } };
-  const approveFund = async (id, status) => { try { await axios.put(`${API}/fund-requests/${id}/approve`, {status}); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); } };
-  const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch { toast.error("Failed"); } };
+  const handleAddTask = async () => { if (!taskForm.title || !taskForm.assigned_to) return toast.error("Fill required"); try { await axios.post(`${API}/tasks`, taskForm); toast.success("Task created"); setShowAddTask(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const approveFund = async (id, status) => { try { await axios.put(`${API}/fund-requests/${id}/approve`, {status}); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const generateLocalities = async () => { if (!genDistrict) return; setGenLoading(true); try { const {data} = await axios.post(`${API}/ai/generate-localities`, {district:genDistrict}); setGenLocalities(data.localities || []); } catch { toast.error("AI failed"); } setGenLoading(false); };
-  const saveLocalities = async () => { if (!selectedRegion || genLocalities.length === 0) return; try { await axios.put(`${API}/regions/${selectedRegion.id}`, {localities: genLocalities}); toast.success("Localities saved!"); setShowGenLocalities(false); fetchData(); } catch { toast.error("Failed"); } };
-  const updateAgent = async (agentId, data) => { try { await axios.put(`${API}/users/${agentId}/update`, data); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); } };
+  const saveLocalities = async () => { if (!selectedRegion || genLocalities.length === 0) return; try { await axios.put(`${API}/regions/${selectedRegion.id}`, {localities: genLocalities}); toast.success("Localities saved!"); setShowGenLocalities(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const updateAgent = async (agentId, data) => { try { await axios.put(`${API}/users/${agentId}/update`, data); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const handleAddAdm = async () => {
     if (!admForm.name || !admForm.email || !admForm.phone) return toast.error("Name, email and phone are required");
     try {
@@ -147,7 +152,7 @@ export default function ManagerDashboard() {
 
   const [editLocality, setEditLocality] = useState({ regionId: "", index: -1, value: "" });
   const updateLocality = async (regionId, localities) => {
-    try { await axios.put(`${API}/regions/${regionId}`, { localities }); toast.success("Localities updated"); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/regions/${regionId}`, { localities }); toast.success("Localities updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const removeLocality = async (regionId, index) => {
     const r = regions.find(x => x.id === regionId);
@@ -176,7 +181,7 @@ export default function ManagerDashboard() {
   const confirmedOrders = filteredOrders.filter(o => o.status === "confirmed");
   const pendingFunds = fundRequests.filter(f => f.status === "pending");
   const hireCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"select"}); toast.success("Selected — HR will finalize hiring"); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } };
-  const rejectCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"reject"}); toast.success("Rejected"); fetchData(); } catch{ toast.error("Failed"); } };
+  const rejectCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"reject"}); toast.success("Rejected"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
 
   return (
     <div className="min-h-screen bg-[#F9F8F6]" data-testid="manager-dashboard">
@@ -184,7 +189,8 @@ export default function ManagerDashboard() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">District Manager - {user.name}</p></div>
           <div className="flex items-center gap-2">
-            <AttendanceCheckIn />
+            <DailyReportButton />
+            <DarkModeToggle compact /><AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB]" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-2" />Logout</Button>
           </div>
         </div>
@@ -194,7 +200,7 @@ export default function ManagerDashboard() {
         <MonthFilter month={month} year={year} onMonthChange={setMonth} onYearChange={setYear} />
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[{l:"Orders",v:filteredOrders.length,i:ShoppingBag,c:"#3B5249"},{l:"Pending",v:pendingOrders.length,i:ClipboardList,c:"#D4A373"},{l:"Agents",v:agents.length,i:UserCheck,c:"#6B8E6B"},{l:"Hire Queue",v:agentCandidates.length,i:Users,c:"#A66E4E"},{l:"Revenue",v:`Rs.${monthRevenue}`,i:IndianRupee,c:"#3B5249"}].map((s,i)=>(
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase tracking-wider mt-1">{s.l}</p></div>
+            <div key={`md-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase tracking-wider mt-1">{s.l}</p></div>
           ))}
         </div>
 
@@ -248,25 +254,9 @@ export default function ManagerDashboard() {
           </TabsList>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
           <TabsContent value="groups" className="animate-fade-in"><TeamGroupsPanel candidates={agents} candidateLabel="Agents" /></TabsContent>
-          <TabsContent value="orders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
-            <h3 className="font-heading text-lg font-medium mb-4">Orders ({pendingOrders.length} pending, {confirmedOrders.length} to ship)</h3>
-            {filteredOrders.length===0?<div className="p-10 text-center text-[#59615D]">No orders</div>:
-            <div className="space-y-3">{filteredOrders.map(o=>(<div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`order-${o.id}`}>
-              <div className="flex flex-col sm:flex-row justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap"><p className="font-mono text-xs font-medium">{o.id}</p><Badge className={`text-[9px] whitespace-nowrap ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-blue-100 text-blue-800":o.status==="confirmed"?"bg-emerald-100 text-emerald-800":o.status==="pending"?"bg-yellow-100 text-yellow-800":"bg-red-100 text-red-800"}`}>{o.status?.toUpperCase()}</Badge></div>
-                  <p className="font-medium text-sm mt-1">{o.customer_name} | {o.customer_phone}</p>
-                  <p className="text-xs text-[#59615D]">{o.customer_address}</p>
-                  {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
-                  <p className="font-heading font-semibold text-[#3B5249] mt-1">Total: Rs.{o.total_amount} <span className="font-normal text-xs text-[#59615D]">({o.payment_type}) | By: {o.created_by_name || "—"}</span></p>
-                </div>
-                <div className="flex flex-wrap gap-2 items-start">
-                  {o.status==="pending"&&<><Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)} data-testid={`approve-${o.id}`}><Check className="w-3 h-3 mr-1"/>Approve</Button><Button size="sm" variant="outline" className="rounded-full text-xs h-7 text-red-500" onClick={()=>rejectOrder(o.id)}><X className="w-3 h-3"/></Button></>}
-                  <DelhiveryShipActions order={o} role="district_manager" onChange={fetchData} compact />
-                </div>
-              </div>
-            </div>))}</div>}
-          </div></TabsContent>
+          <TabsContent value="orders" className="animate-fade-in">
+            <OrdersPanel role="district_manager" />
+          </TabsContent>
           <TabsContent value="agents" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between items-center mb-4"><h3 className="font-heading text-lg font-medium">Agents ({agents.length})</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddAgent(true)} data-testid="add-agent-btn"><Plus className="w-4 h-4 mr-1"/>Add Agent</Button></div>
             <div className="space-y-3">{agents.map(a=>(<div key={a.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`agent-${a.id}`}>
               <div className="flex justify-between items-start">
@@ -289,8 +279,8 @@ export default function ManagerDashboard() {
               </div>
               {/* Call Logs */}
               {a.call_logs?.length>0&&<div className="mt-2 border-t border-[#E5E3DB] pt-2"><p className="text-[10px] text-[#59615D] font-medium">Recent Call Logs:</p>{a.call_logs.slice(0,3).map(cl=>(<p key={cl.id} className="text-[10px] text-[#59615D]">{cl.call_date} - {cl.details} ({cl.caller_name})</p>))}</div>}
-              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6" onClick={async()=>{const details=prompt(`Log call with ${a.name}:`);if(!details)return;try{await axios.post(`${API}/agents/${a.id}/call-log`,{details});toast.success("Call logged!");fetchData();}catch{toast.error("Failed");}}} data-testid={`log-agent-call-${a.id}`}>Log Call</Button>
-              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-1 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if(!window.confirm(`Promote ${a.name} to Asst District Manager?`))return;try{await axios.post(`${API}/promote/agent-to-adm`,{agent_id:a.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-${a.id}`}>Promote to Asst DM</Button>
+              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6" onClick={async()=>{const details=await confirm({title:`Log call with ${a.name}`,input:{label:"Call details",placeholder:"What was discussed?"}});if(!details)return;try{await axios.post(`${API}/agents/${a.id}/call-log`,{details});toast.success("Call logged!");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} data-testid={`log-agent-call-${a.id}`}>Log Call</Button>
+              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-1 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{const ok=await confirm({title:`Promote ${a.name} to Asst District Manager?`,description:"They will get ADM access and be CC'd on instructions to you.",okLabel:"Promote"});if(!ok)return;try{await axios.post(`${API}/promote/agent-to-adm`,{agent_id:a.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-${a.id}`}>Promote to Asst DM</Button>
             </div>))}</div>
           </div></TabsContent>
           {/* REPEAT ORDERS */}
@@ -391,20 +381,20 @@ export default function ManagerDashboard() {
                       const existingReg = districtRegions[0];
                       if(existingReg){await axios.put(`${API}/regions/${existingReg.id}`,{localities:data.localities.map(l=>({name:l,type:"area",agents:[]}))});toast.success(`${data.localities.length} localities generated`);}
                       else{await axios.post(`${API}/regions`,{name:district,district,state:"Kerala",pincode:"",areas:[],localities:data.localities.map(l=>({name:l,type:"area",agents:[]}))});toast.success(`Region created with ${data.localities.length} localities`);}
-                      fetchData();}else toast.error("No localities found");}catch{toast.error("Failed");}setGenLoading(false);}} data-testid={`gen-loc-${district}`}>{genLoading?<Loader2 className="w-3 h-3 animate-spin mr-1"/>:<Sparkles className="w-3 h-3 mr-1"/>}AI Generate</Button>
-                    <Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{const name=prompt("Locality name:");const pin=prompt("PIN code (optional):");if(!name)return;const existingReg=districtRegions[0];if(existingReg){await axios.post(`${API}/regions/${existingReg.id}/localities`,{name,type:"area",pincode:pin||""});toast.success("Added");fetchData();}else{await axios.post(`${API}/regions`,{name:district,district,state:"Kerala",pincode:pin||"",areas:[],localities:[{name,type:"area",agents:[]}]});toast.success("Created");fetchData();}}}><Plus className="w-3 h-3 mr-1"/>Add Locality</Button>
+                      fetchData();}else toast.error("No localities found");} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }setGenLoading(false);}} data-testid={`gen-loc-${district}`}>{genLoading?<Loader2 className="w-3 h-3 animate-spin mr-1"/>:<Sparkles className="w-3 h-3 mr-1"/>}AI Generate</Button>
+                    <Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{const name=await confirm({title:"Add Locality",input:{label:"Locality name",placeholder:"e.g. Kakkanad"}});if(!name)return;const pin=await confirm({title:"PIN code (optional)",input:{label:"PIN code",placeholder:"e.g. 682030",type:"text"},okLabel:"Save"});const existingReg=districtRegions[0];if(existingReg){await axios.post(`${API}/regions/${existingReg.id}/localities`,{name,type:"area",pincode:pin||""});toast.success("Added");fetchData();}else{await axios.post(`${API}/regions`,{name:district,district,state:"Kerala",pincode:pin||"",areas:[],localities:[{name,type:"area",agents:[]}]});toast.success("Created");fetchData();}}}><Plus className="w-3 h-3 mr-1"/>Add Locality</Button>
                   </div>
                 </div>
                 {districtRegions.map(r=>(<div key={r.id}>
                   {r.localities?.length>0?<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{r.localities.map((loc,idx)=>{
                     const locName = typeof loc==="string"?loc:loc.name;
                     const locAgents = typeof loc!=="string"?loc.agents||[]:[];
-                    return (<div key={idx} className="bg-[#F9F8F6] rounded-lg p-3">
+                    return (<div key={`md-${idx}`} className="bg-[#F9F8F6] rounded-lg p-3">
                       <div className="flex justify-between items-start">
                         <p className="font-medium text-sm">{locName}</p>
-                        <Select onValueChange={async(agentId)=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/assign-agent`,{agent_id:agentId});toast.success("Agent assigned!");fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-28 text-[9px] rounded-lg"><SelectValue placeholder="+ Agent"/></SelectTrigger><SelectContent>{agents.map(a=><SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>)}</SelectContent></Select>
+                        <Select onValueChange={async(agentId)=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/assign-agent`,{agent_id:agentId});toast.success("Agent assigned!");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-6 w-28 text-[9px] rounded-lg"><SelectValue placeholder="+ Agent"/></SelectTrigger><SelectContent>{agents.map(a=><SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>)}</SelectContent></Select>
                       </div>
-                      {locAgents.length>0&&<div className="flex flex-wrap gap-1 mt-1">{locAgents.map(aid=>{const ag=agents.find(a=>a.id===aid);return <Badge key={aid} className="bg-[#3B5249] text-white text-[9px]">{ag?.name||aid} <X className="w-2.5 h-2.5 ml-1 cursor-pointer" onClick={async()=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/remove-agent`,{agent_id:aid});toast.success("Removed");fetchData();}catch{toast.error("Failed");}}}/></Badge>;})}</div>}
+                      {locAgents.length>0&&<div className="flex flex-wrap gap-1 mt-1">{locAgents.map(aid=>{const ag=agents.find(a=>a.id===aid);return <Badge key={aid} className="bg-[#3B5249] text-white text-[9px]">{ag?.name||aid} <X className="w-2.5 h-2.5 ml-1 cursor-pointer" onClick={async()=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/remove-agent`,{agent_id:aid});toast.success("Removed");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}/></Badge>;})}</div>}
                     </div>);
                   })}</div>:<p className="text-xs text-[#59615D] py-2">No localities. Use "AI Generate" or "Add Locality".</p>}
                 </div>))}
@@ -473,7 +463,7 @@ export default function ManagerDashboard() {
             )}
             <div className="space-y-2">
               {callViewerLogs.map((c, i) => (
-                <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`agent-call-row-${i}`}>
+                <div key={`md-${i}`} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`agent-call-row-${i}`}>
                   <div className="flex justify-between gap-2 flex-wrap items-start">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm">
@@ -501,7 +491,7 @@ export default function ManagerDashboard() {
         </DialogContent>
       </Dialog>
       <Dialog open={showAddTask} onOpenChange={setShowAddTask}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Create Task</DialogTitle></DialogHeader><div className="space-y-3"><Input placeholder="Title" value={taskForm.title} onChange={e=>setTaskForm(f=>({...f,title:e.target.value}))} className="rounded-xl" data-testid="task-title-input"/><Textarea placeholder="Description" value={taskForm.description} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} className="rounded-xl"/><Select value={taskForm.assigned_to} onValueChange={v=>{const a=agents.find(x=>x.id===v);setTaskForm(f=>({...f,assigned_to:v,assigned_to_name:a?.name||""}));}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Assign to agent"/></SelectTrigger><SelectContent>{agents.map(a=><SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select><Select value={taskForm.priority} onValueChange={v=>setTaskForm(f=>({...f,priority:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select><Input type="date" value={taskForm.due_date} onChange={e=>setTaskForm(f=>({...f,due_date:e.target.value}))} className="rounded-xl"/><Button onClick={handleAddTask} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-task-btn">Create</Button></div></DialogContent></Dialog>
-      <Dialog open={showGenLocalities} onOpenChange={setShowGenLocalities}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading flex items-center gap-2"><Sparkles className="w-5 h-5 text-[#A66E4E]"/>AI Locality Generator</DialogTitle></DialogHeader><div className="space-y-3"><Select value={selectedRegion?.id||""} onValueChange={v=>{const r=regions.find(x=>x.id===v);setSelectedRegion(r);setGenDistrict(r?.district||"");}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select region"/></SelectTrigger><SelectContent>{regions.map(r=><SelectItem key={r.id} value={r.id}>{r.name} - {r.district}</SelectItem>)}</SelectContent></Select><Button onClick={generateLocalities} disabled={genLoading||!genDistrict} className="w-full rounded-full bg-[#A66E4E] text-white">{genLoading?<Loader2 className="w-4 h-4 animate-spin mr-2"/>:<Sparkles className="w-4 h-4 mr-2"/>}Generate Localities</Button>{genLocalities.length>0&&<div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-xs font-medium mb-2">Generated {genLocalities.length} localities:</p><div className="flex flex-wrap gap-1">{genLocalities.map((l,i)=><Badge key={i} variant="outline" className="text-xs">{l}</Badge>)}</div><Button onClick={saveLocalities} className="w-full rounded-full bg-[#3B5249] text-white mt-3">Save to Region</Button></div>}</div></DialogContent></Dialog>
+      <Dialog open={showGenLocalities} onOpenChange={setShowGenLocalities}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading flex items-center gap-2"><Sparkles className="w-5 h-5 text-[#A66E4E]"/>AI Locality Generator</DialogTitle></DialogHeader><div className="space-y-3"><Select value={selectedRegion?.id||""} onValueChange={v=>{const r=regions.find(x=>x.id===v);setSelectedRegion(r);setGenDistrict(r?.district||"");}}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select region"/></SelectTrigger><SelectContent>{regions.map(r=><SelectItem key={r.id} value={r.id}>{r.name} - {r.district}</SelectItem>)}</SelectContent></Select><Button onClick={generateLocalities} disabled={genLoading||!genDistrict} className="w-full rounded-full bg-[#A66E4E] text-white">{genLoading?<Loader2 className="w-4 h-4 animate-spin mr-2"/>:<Sparkles className="w-4 h-4 mr-2"/>}Generate Localities</Button>{genLocalities.length>0&&<div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-xs font-medium mb-2">Generated {genLocalities.length} localities:</p><div className="flex flex-wrap gap-1">{genLocalities.map((l,i)=><Badge key={`md-${i}`} variant="outline" className="text-xs">{l}</Badge>)}</div><Button onClick={saveLocalities} className="w-full rounded-full bg-[#3B5249] text-white mt-3">Save to Region</Button></div>}</div></DialogContent></Dialog>
 
       {/* ADD ADM DIALOG */}
       <Dialog open={showAddAdm} onOpenChange={setShowAddAdm}>

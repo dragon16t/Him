@@ -19,6 +19,7 @@ import {
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
 
@@ -158,7 +159,7 @@ export default function ContentDeveloperDashboard() {
       toast.success("Shoot plan added"); setShowShoot(false);
       setShootForm({ title: "", shoot_date: new Date().toISOString().slice(0, 10), location: "", deadline: "", notes: "" });
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const createOwnScript = async () => {
     if (!ownScriptForm.pillar_id || !ownScriptForm.title) return toast.error("Pillar + title required");
@@ -254,7 +255,7 @@ export default function ContentDeveloperDashboard() {
             <p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Content Developer · {user.name}</p>
           </div>
           <div className="flex items-center gap-2">
-            <NotificationBell />
+            <DarkModeToggle compact /><NotificationBell />
             <AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1" />Logout</Button>
           </div>
@@ -283,7 +284,7 @@ export default function ContentDeveloperDashboard() {
             { l: "Live Posts", v: completed.length, i: CheckCircle2, c: "#6B8E6B" },
             { l: "My Own Scripts", v: myOwnScripts.length, i: Pencil, c: "#A66E4E" },
           ].map((s, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-3 hover:shadow-md transition">
+            <div key={`cdd-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-3 hover:shadow-md transition">
               <div className="w-8 h-8 rounded-xl flex items-center justify-center mb-2" style={{ backgroundColor: `${s.c}18` }}>
                 <s.i className="w-4 h-4" style={{ color: s.c }} />
               </div>

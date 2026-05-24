@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import {
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 import CollaborationContactsPanel from "../components/CollaborationContactsPanel";
 
 const API = "/api";
@@ -67,6 +69,7 @@ const scriptState = (s) => {
 
 export default function SocialMediaDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [pillars, setPillars] = useState([]);
   const [influencerStats, setInfluencerStats] = useState({});
@@ -199,7 +202,7 @@ export default function SocialMediaDashboard() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const deletePillar = async (p) => {
-    if (!window.confirm(`Delete pillar "${p.title}"?`)) return;
+    if (!(await confirm({title:`Delete pillar "${p.title}"?`,danger:true,okLabel:"Confirm"}))) return;
     try { await axios.delete(`${API}/content/pillars/${p.id}`); toast.success("Pillar deleted"); fetchData(); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
@@ -216,7 +219,7 @@ export default function SocialMediaDashboard() {
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const deleteScript = async (s) => {
-    if (!window.confirm(`Delete script "${s.title}"?`)) return;
+    if (!(await confirm({title:`Delete script "${s.title}"?`,danger:true,okLabel:"Confirm"}))) return;
     try {
       await axios.delete(`${API}/content/scripts/${s.id}`).catch(async () => {
         // Backend may not have a delete; fall back to status=cancelled
@@ -244,7 +247,7 @@ export default function SocialMediaDashboard() {
       setShowCal(false); setEditingCal(null);
       setCalForm({ title: "", platform: "instagram", content_type: "post", shoot_type: "UGC Awareness Reel", shoot_time: "", scheduled_date: "", assigned_to_name: "", notes: "" });
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const openCalDay = (dateStr) => {
     setEditingCal(null);
@@ -258,8 +261,7 @@ export default function SocialMediaDashboard() {
   };
   const submitInf = async () => {
     if (!infForm.influencer_name) return toast.error("Name required");
-    try { await axios.post(`${API}/influencer/outreach`, infForm); toast.success("Influencer added"); setShowInf(false); setInfForm({ influencer_name: "", contact: "", platform: "instagram", followers: "", category: "beauty", barter_type: "", status: "pending", notes: "" }); fetchData(); }
-    catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/influencer/outreach`, infForm); toast.success("Influencer added"); setShowInf(false); setInfForm({ influencer_name: "", contact: "", platform: "instagram", followers: "", category: "beauty", barter_type: "", status: "pending", notes: "" }); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const confirmConvert = async () => {
     if (!convertPostLink.trim()) return toast.error("Post link required for converted status");
@@ -357,7 +359,7 @@ export default function SocialMediaDashboard() {
   };
   // SMM publishes directly without CD (skip the CD pipeline) — needs live URL
   const directPost = async (s) => {
-    const link = window.prompt("Live post URL (you're posting directly, bypassing CD):");
+    const link = await confirm({title:"Post live URL",description:"You're posting directly, bypassing CD.",input:{placeholder:"https://instagram.com/p/..."},okLabel:"Mark Posted"});
     if (!link) return;
     try { await axios.post(`${API}/content/scripts/${s.id}/approve-post`, { action: "direct_post", post_link: link }); toast.success("Posted directly · link saved"); fetchData(); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
@@ -412,7 +414,7 @@ export default function SocialMediaDashboard() {
                 <Button size="sm" className="rounded-full text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white h-7" onClick={() => reviewDeliverable(s, "approve")} data-testid={`approve-${s.id}`}>
                   <CheckCircle2 className="w-3 h-3 mr-1" />Approve
                 </Button>
-                <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 text-orange-600 border-orange-300" onClick={() => { const fb = window.prompt("Feedback for CD:"); if (fb) reviewDeliverable(s, "reject", { feedback: fb }); }}>
+                <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 text-orange-600 border-orange-300" onClick={async () => { const fb = await confirm({title:"Feedback for Content Developer",input:{placeholder:"What needs to change?"},okLabel:"Send"}); if (fb) reviewDeliverable(s, "reject", { feedback: fb }); }}>
                   Revise
                 </Button>
               </>
@@ -443,7 +445,7 @@ export default function SocialMediaDashboard() {
             <p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Social Media Manager · {user.name}</p>
           </div>
           <div className="flex items-center gap-2">
-            <NotificationBell />
+            <DarkModeToggle compact /><NotificationBell />
             <AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1" />Logout</Button>
           </div>
@@ -467,7 +469,7 @@ export default function SocialMediaDashboard() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {stats.map((s, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-4 hover:shadow-md transition" data-testid={`stat-${s.l.replace(/\s+/g, '-').toLowerCase()}`}>
+            <div key={`smd-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-4 hover:shadow-md transition" data-testid={`stat-${s.l.replace(/\s+/g, '-').toLowerCase()}`}>
               <div className="flex items-start justify-between">
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${s.c}18` }}>
                   <s.i className="w-4.5 h-4.5" style={{ color: s.c }} />
@@ -704,7 +706,7 @@ export default function SocialMediaDashboard() {
                         </div>
                         <div className="flex flex-col gap-1 items-end">
                           <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => reviewDeliverable(s, "approve")} data-testid={`approve-post-${s.id}`}><CheckCircle2 className="w-3 h-3 mr-1" />Approve</Button>
-                          <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 text-orange-600 border-orange-300 hover:bg-orange-50" onClick={() => { const fb = window.prompt("Feedback for CD:"); if (fb) reviewDeliverable(s, "reject", { feedback: fb }); }}>Request Revision</Button>
+                          <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 text-orange-600 border-orange-300 hover:bg-orange-50" onClick={async () => { const fb = await confirm({title:"Request revision",input:{placeholder:"Feedback for Content Developer"},okLabel:"Send"}); if (fb) reviewDeliverable(s, "reject", { feedback: fb }); }}>Request Revision</Button>
                         </div>
                       </div>
                     </div>
@@ -853,7 +855,7 @@ export default function SocialMediaDashboard() {
                           <SelectContent>{["scheduled", "published", "cancelled"].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
                         </Select>
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-[#3B5249] hover:bg-[#3B5249]/10" onClick={() => openEditCal(c)} data-testid={`cal-edit-${c.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (window.confirm("Delete?")) { await axios.delete(`${API}/content-calendar/${c.id}`); fetchData(); } }} data-testid={`cal-del-${c.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (await confirm({title:"Delete calendar entry?",danger:true,okLabel:"Delete"})) { await axios.delete(`${API}/content-calendar/${c.id}`); fetchData(); } }} data-testid={`cal-del-${c.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
                       </div>
                     </div>
                   ))}</div>;
@@ -880,7 +882,7 @@ export default function SocialMediaDashboard() {
                   { l: "Product Sent", v: influencerStats.product_sent || 0, c: "#B08968", i: Package },
                   { l: "Converted", v: influencerStats.converted || 0, c: "#6B8E6B", i: CheckCircle2 },
                 ].map((s, i) => (
-                  <div key={i} className="bg-[#FAF8F3] rounded-xl p-3 border border-[#EAE7DE]">
+                  <div key={`smd-${i}`} className="bg-[#FAF8F3] rounded-xl p-3 border border-[#EAE7DE]">
                     <s.i className="w-3.5 h-3.5 mb-1" style={{ color: s.c }} />
                     <p className="font-heading text-xl font-semibold" style={{ color: s.c }}>{s.v}</p>
                     <p className="text-[10px] text-[#59615D] uppercase tracking-wider">{s.l}</p>
@@ -948,7 +950,7 @@ export default function SocialMediaDashboard() {
                             <SelectTrigger className={`h-7 w-32 text-[9px] rounded-full border ${STATUS_STYLE(e.status)}`} data-testid={`inf-status-${e.id}`}><SelectValue /></SelectTrigger>
                             <SelectContent>{["pending", "contacted", "responded", "product_sent", "converted", "rejected"].map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s.replace("_", " ")}</SelectItem>)}</SelectContent>
                           </Select>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (window.confirm("Delete?")) { try { await axios.delete(`${API}/influencer/outreach/${e.id}`); toast.success("Deleted"); fetchData(); } catch (err) { toast.error(err.response?.data?.detail || "Delete failed"); } } }}><Trash2 className="w-3 h-3" /></Button>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50" onClick={async () => { if (await confirm({title:"Delete influencer entry?",danger:true,okLabel:"Delete"})) { try { await axios.delete(`${API}/influencer/outreach/${e.id}`); toast.success("Deleted"); fetchData(); } catch (err) { toast.error(err.response?.data?.detail || "Delete failed"); } } }}><Trash2 className="w-3 h-3" /></Button>
                         </div>
                       </div>
                     </div>
@@ -1139,7 +1141,7 @@ export default function SocialMediaDashboard() {
             <Button onClick={submitCal} className="w-full rounded-full bg-[#3B5249] hover:bg-[#2F4338] text-white" data-testid="cal-submit">{editingCal ? "Update" : "Schedule"}</Button>
             {editingCal && (
               <Button variant="outline" onClick={async () => {
-                if (!window.confirm(`Delete this scheduled entry?`)) return;
+                if (!(await confirm({title:`Delete this scheduled entry?`,danger:true,okLabel:"Confirm"}))) return;
                 try { await axios.delete(`${API}/content-calendar/${editingCal.id}`); toast.success("Deleted"); setShowCal(false); setEditingCal(null); fetchData(); }
                 catch { toast.error("Failed to delete"); }
               }} className="w-full rounded-full border-red-300 text-red-600 hover:bg-red-50" data-testid="cal-delete-btn">

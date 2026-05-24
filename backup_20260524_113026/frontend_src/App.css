@@ -1,0 +1,32 @@
+/* Hide Made with Emergent badge */
+#emergent-badge {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #E5E3DB; border-radius: 3px; }
+
+/* Mobile fixes */
+@media (max-width: 768px) {
+    .max-w-7xl { padding-left: 1rem; padding-right: 1rem; }
+    table { font-size: 0.75rem; }
+    .fixed.bottom-6 { bottom: 1rem; }
+}
+
+/* No content overlap with FABs */
+.pb-24 { padding-bottom: 6rem; }
+
+/* Fade in - minimal, no animation jank */
+.animate-fade-in {
+    opacity: 1;
+}

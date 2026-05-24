@@ -3,10 +3,10 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, json, bcrypt, jwt, requests, smtplib, asyncio
+import os, logging, uuid, json, bcrypt, jwt, requests, smtplib, asyncio, secrets
 from datetime import datetime, timezone, timedelta, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -26,7 +26,7 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'default_jwt_secret')
+JWT_SECRET = os.environ.get('JWT_SECRET') or secrets.token_urlsafe(64)
 JWT_ALGORITHM = "HS256"
 SMTP_EMAIL = os.environ.get('SMTP_EMAIL', '')
 SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
@@ -130,6 +130,90 @@ storage_key = None
 app = FastAPI(title="Celesta Glow CRM", version="3.0")
 api_router = APIRouter(prefix="/api")
 
+# Rate limiter (needs to exist before any @limiter.limit() decorator below)
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+def _rate_limit_key(request: Request):
+    """Per-user rate limit when JWT is present, else fall back to IP.
+    Solves the audit's 'per-user rate limit (currently per-IP, breaks behind ingress)' item."""
+    try:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
+            uid = payload.get("sub")
+            if uid:
+                return f"user:{uid}"
+    except Exception:
+        pass
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=_rate_limit_key)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ===== WebSocket connection manager (defined early so any endpoint can push) =====
+class _ConnectionManager:
+    def __init__(self):
+        self.active: dict = {}  # user_id -> set[WebSocket]
+    async def connect(self, user_id: str, ws):
+        await ws.accept()
+        self.active.setdefault(user_id, set()).add(ws)
+    def disconnect(self, user_id: str, ws):
+        if user_id in self.active:
+            self.active[user_id].discard(ws)
+            if not self.active[user_id]:
+                self.active.pop(user_id, None)
+    async def push(self, user_id: str, payload: dict):
+        for ws in list(self.active.get(user_id, set())):
+            try: await ws.send_json(payload)
+            except Exception: self.active[user_id].discard(ws)
+    async def broadcast(self, payload: dict):
+        for sockets in list(self.active.values()):
+            for ws in list(sockets):
+                try: await ws.send_json(payload)
+                except Exception: sockets.discard(ws)
+    async def push_many(self, user_ids: list, payload: dict):
+        for uid in user_ids:
+            await self.push(uid, payload)
+
+ws_manager = _ConnectionManager()
+
+async def emit_event(user_ids, event_type: str, title: str, body: str = "", **extra):
+    """Helper used across order/commission/finance endpoints to push real-time events.
+    Safe no-op when no clients are connected. Catches all exceptions."""
+    try:
+        payload = {"type": event_type, "title": title, "body": body,
+                   "ts": datetime.now(timezone.utc).isoformat(), **extra}
+        if isinstance(user_ids, str):
+            await ws_manager.push(user_ids, payload)
+        elif isinstance(user_ids, (list, tuple, set)):
+            await ws_manager.push_many(list(user_ids), payload)
+    except Exception as e:
+        logger.debug(f"emit_event failed: {e}")
+
+# ===== Security headers middleware (CSP + X-Frame + Referrer-Policy + X-Content-Type-Options) =====
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Content-Security-Policy — relaxed for posthog/Google Fonts already loaded in index.html
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://assets.emergent.sh https://*.posthog.com https://*.i.posthog.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob: https:; "
+        "connect-src 'self' wss: https: http:; "
+        "frame-ancestors 'none';"
+    )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(self), microphone=(self), camera=(self)")
+    return response
+
 # ==================== OBJECT STORAGE ====================
 def init_storage():
     global storage_key
@@ -208,6 +292,14 @@ def verify_password(plain, hashed):
 
 def create_token(user_id, email, role):
     return jwt.encode({"sub": user_id, "email": email, "role": role, "exp": datetime.now(timezone.utc) + timedelta(days=7)}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def create_refresh_token(user_id, email, role):
+    """Long-lived refresh token (30 days). Used to obtain new access tokens without re-login."""
+    return jwt.encode(
+        {"sub": user_id, "email": email, "role": role, "type": "refresh",
+         "exp": datetime.now(timezone.utc) + timedelta(days=30)},
+        JWT_SECRET, algorithm=JWT_ALGORITHM,
+    )
 
 ROLE_COLLECTIONS = {
     "admin": "admins", "sales_manager": "sales_managers", "district_manager": "managers",
@@ -473,7 +565,8 @@ async def write_test_credentials():
 
 # ==================== AUTH ROUTES ====================
 @api_router.post("/auth/login")
-async def login(data: dict):
+@limiter.limit("10/minute")
+async def login(request: Request, data: dict):
     email = data.get("email", "").lower().strip()
     password = data.get("password", "")
     if not email or not password: raise HTTPException(status_code=400, detail="Email and password are required")
@@ -483,14 +576,37 @@ async def login(data: dict):
         if user:
             if verify_password(password, user.get("password_hash", "")):
                 token = create_token(user["id"], email, role)
+                refresh = create_refresh_token(user["id"], email, role)
                 ud = {k: v for k, v in user.items() if k != "password_hash"}
                 ud["role"] = role
-                return {"token": token, "user": ud}
+                return {"token": token, "refresh_token": refresh, "user": ud}
             found_user = True
             break
     if found_user:
         raise HTTPException(status_code=401, detail="Password entered is wrong")
     raise HTTPException(status_code=404, detail="No account found with this email")
+
+@api_router.post("/auth/refresh")
+@limiter.limit("30/minute")
+async def refresh_access_token(request: Request, data: dict):
+    """Exchange a valid refresh token for a fresh access token (no password re-entry)."""
+    refresh = data.get("refresh_token", "")
+    if not refresh: raise HTTPException(status_code=400, detail="refresh_token is required")
+    try:
+        payload = jwt.decode(refresh, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expired — please log in again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Not a refresh token")
+    role = payload.get("role"); uid = payload.get("sub"); email = payload.get("email", "")
+    coll = ROLE_COLLECTIONS.get(role)
+    if not coll: raise HTTPException(status_code=401, detail="Invalid role")
+    user = await db[coll].find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    if not user: raise HTTPException(status_code=401, detail="User no longer exists")
+    token = create_token(uid, email, role)
+    return {"token": token, "expires_in_days": 7}
 
 @api_router.post("/auth/reset-password")
 async def reset_password(data: dict):
@@ -512,7 +628,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 @api_router.post("/admin/assign-telecaller")
 async def assign_telecaller_to_sm(data: dict, current_user: dict = Depends(get_current_user)):
     """Assign one or multiple telecallers to a Sales Manager (admin / HOS only)."""
-    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    is_hos = bool(current_user.get('is_head_of_sales'))
     if current_user['role'] != 'admin' and not is_hos:
         raise HTTPException(status_code=403, detail="Admin or Head of Sales only")
     tc_ids = data.get('telecaller_ids') or ([data['telecaller_id']] if data.get('telecaller_id') else [])
@@ -538,7 +654,7 @@ async def set_head_of_sales(sm_id: str, current_user: dict = Depends(get_current
 async def proxy_login(user_id: str, current_user: dict = Depends(get_current_user)):
     # Admin → any user · Head of Sales → any SM/ASM/TC · SM → their TCs only
     role = current_user.get('role')
-    is_head_of_sales = bool(current_user.get('is_head_of_sales')) or current_user.get('email','').lower() == 'habeebrahman@celestaglow.com'
+    is_head_of_sales = bool(current_user.get('is_head_of_sales'))
     if role != 'admin' and not is_head_of_sales and role != 'sales_manager':
         raise HTTPException(status_code=403, detail="Not allowed")
     for coll_name, target_role in AUTH_COLLECTIONS.items():
@@ -798,8 +914,14 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
         for c in ROLE_COLLECTIONS.values():
             u = await db[c].find_one({"id": assigned_to}, {"_id": 0, "name": 1})
             if u: assigned_to_name = u.get("name",""); break
+    # Phone normalization (Phase 2 fix) — strip non-digits, keep last 10
+    try:
+        from phase2 import normalize_phone as _norm_phone
+        phone_norm = _norm_phone(phone)
+    except Exception:
+        phone_norm = "".join(ch for ch in phone if ch.isdigit())[-10:]
     lead = {
-        "id": f"lead-{uuid.uuid4().hex[:8]}", "phone_number": phone,
+        "id": f"lead-{uuid.uuid4().hex[:8]}", "phone_number": phone, "phone_number_norm": phone_norm,
         "name": data.get("name", "Customer"), "source": data.get("source", "manual"),
         "status": "new", "assigned_to": assigned_to, "assigned_to_name": assigned_to_name,
         "product_interest": data.get("product_interest", "general"),
@@ -826,8 +948,16 @@ async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user))
 
 @api_router.put("/leads/{lead_id}")
 async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    # Hardening: reject malformed call_log payload (must be a dict, not string/list)
+    if "call_log" in data and not isinstance(data.get("call_log"), dict):
+        raise HTTPException(status_code=422, detail="call_log must be an object with status/remarks/etc.")
     update_data = {k: v for k, v in data.items() if k not in ["id", "_id", "call_log"]}
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # P11: re-normalize phone_number_norm whenever phone_number is being updated
+    if "phone_number" in data:
+        raw = (data.get("phone_number") or "").strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        update_data["phone_number_norm"] = digits[-10:] if len(digits) >= 10 else digits
     # 15-minute mandatory callback rule for first contact
     if "call_log" in data and data.get("status") not in ["not_interested", "ordered", "delivered"]:
         callback_time = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
@@ -919,7 +1049,9 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
         ids = [t['id'] for t in tcs] + [current_user['id']] + [a['id'] for a in asms]
         query['created_by'] = {'$in': ids}
     elif current_user['role'] == 'district_manager':
-        # DM sees only agent-created orders FROM THEIR TEAM (managed_by = self)
+        # DM sees only agent-created orders FROM THEIR TEAM (managed_by = self).
+        # NOTE: Telecaller-created orders are routed through the SM chain (not DM).
+        # This is intentional team-strict scope — agents-only for DM, telecallers-only for SM.
         ags = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
         adms = await db.assistant_district_managers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(50)
         ids = [a['id'] for a in ags] + [current_user['id']] + [a['id'] for a in adms]
@@ -994,22 +1126,20 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     return {"order": order, "message": "Order created successfully"}
 
 def _can_edit_order(order: dict, user: dict) -> tuple[bool, str]:
-    """Role-based access check for editing orders.
-    Returns (allowed, reason_if_denied).
+    """Sync wrapper — kept for backwards compat with existing endpoints.
+    For team-scoped checks (SM/DM seeing ONLY their team's orders), use
+    `can_edit_order_strict` (async) from upgrades.py.
     """
     status = order.get("status", "")
     creator_role = order.get("created_by_role", "")
     creator_id = order.get("created_by", "")
     role = user["role"]
     uid = user["id"]
-    # Once shipped or delivered → LOCKED for everyone
-    if status in ("shipped", "delivered", "rejected", "cancelled"):
+    # Allow editing of pending/confirmed/shipped; only LOCK final states
+    if status in ("delivered", "rejected", "cancelled"):
         return False, f"Order is {status} — editing is locked"
-    if role == "admin":
-        return True, ""
-    if role == "inventory_manager":
-        # Can edit until they ship it (i.e. while status in pending/confirmed)
-        return True, ""
+    if role == "admin": return True, ""
+    if role == "inventory_manager": return True, ""
     if role in ("sales_manager", "assistant_sales_manager"):
         if creator_role in ("telecaller", "sales_manager", "assistant_sales_manager", "inhouse_telecaller"):
             return True, ""
@@ -1019,7 +1149,6 @@ def _can_edit_order(order: dict, user: dict) -> tuple[bool, str]:
             return True, ""
         return False, "District manager can only edit agent-team orders"
     if role in ("telecaller", "agent", "inhouse_telecaller"):
-        # Creators can edit only their OWN order AND only while still pending (not yet approved)
         if creator_id != uid:
             return False, "You can only edit orders you created"
         if status != "pending":
@@ -1031,7 +1160,9 @@ def _can_edit_order(order: dict, user: dict) -> tuple[bool, str]:
 async def edit_order(order_id: str, data: dict, current_user: dict = Depends(get_current_user)):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order: raise HTTPException(status_code=404, detail="Order not found")
-    allowed, reason = _can_edit_order(order, current_user)
+    # Team-strict scope check (upgrades.py)
+    from upgrades import can_edit_order_strict
+    allowed, reason = await can_edit_order_strict(order, current_user)
     if not allowed:
         raise HTTPException(status_code=403, detail=reason)
     # Whitelist editable fields
@@ -1132,6 +1263,24 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
         await db.telecallers.update_one({"id": order['created_by']}, {"$inc": {"conversions": 1, "total_sales": order['total_amount']}})
     elif cr == 'agent':
         await db.agents.update_one({"id": order['created_by']}, {"$inc": {"total_sales": order['total_amount']}})
+    # Real-time push to the creator + admins (notify of delivery + commission)
+    try:
+        admins = await db.admins.find({}, {"_id": 0, "id": 1}).to_list(10)
+        await emit_event(
+            [order['created_by']] + [a['id'] for a in admins],
+            "order_delivered",
+            f"Order delivered · Rs.{order['total_amount']:,}",
+            body=f"Order {order_id} marked delivered. Commission Rs.{amt} credited.",
+            order_id=order_id, amount=order['total_amount'], commission=amt,
+        )
+    except Exception as _e:
+        logger.debug(f"WS emit skipped: {_e}")
+    # Auto-deduct stock (Phase 2 #15)
+    try:
+        from phase2 import deduct_stock_for_order
+        await deduct_stock_for_order(order)
+    except Exception as _e:
+        logger.warning(f"stock deduct: {_e}")
     # Mark lead as delivered + set repeat/relationship windows if not yet set
     if order.get('lead_id'):
         today = date.today()
@@ -1268,11 +1417,243 @@ async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_curre
         await record_transaction("debit", "commission_payout", comm['commission_amount'], f"Commission paid to {comm.get('user_name','')} for {comm.get('order_id','')}", reference_id=cid, method=pay_method, created_by=current_user['id'])
     return {"message": "Paid"}
 
+@api_router.post("/commissions/bulk-pay")
+async def bulk_pay_commissions(data: dict, current_user: dict = Depends(get_current_user)):
+    """B10.3: Pay multiple commissions in a single call. Body: {ids:[...], paid_via, notes}."""
+    if current_user['role'] not in ['admin', 'finance_manager', 'sales_manager', 'district_manager']:
+        raise HTTPException(status_code=403)
+    ids = data.get("ids", []) or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="ids list is required")
+    paid_via = data.get("paid_via", "bank_transfer")
+    notes = data.get("notes", "")
+    pay_method = "cash" if paid_via == "cash" else "bank"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    coms = await db.commissions.find({"id": {"$in": ids}, "status": {"$ne": "paid"}}, {"_id": 0}).to_list(500)
+    if not coms:
+        return {"paid_count": 0, "total_amount": 0, "skipped": len(ids), "message": "No pending commissions in selection"}
+    paid_ids = [c["id"] for c in coms]
+    await db.commissions.update_many(
+        {"id": {"$in": paid_ids}},
+        {"$set": {"status": "paid", "paid_at": now_iso, "paid_via": paid_via, "notes": notes}},
+    )
+    total_amount = round(sum(c.get("commission_amount", 0) or 0 for c in coms), 2)
+    for c in coms:
+        await record_transaction("debit", "commission_payout", c.get("commission_amount", 0),
+                                  f"Bulk commission paid to {c.get('user_name','')} for {c.get('order_id','')}",
+                                  reference_id=c["id"], method=pay_method, created_by=current_user['id'])
+    await log_audit("bulk_pay_commission", "commission", ",".join(paid_ids[:5]), current_user['id'], current_user.get('name',''), f"Bulk paid {len(paid_ids)} commissions totalling Rs.{total_amount}")
+    # Real-time push to each commission recipient
+    try:
+        recipients = list({c.get("user_id") for c in coms if c.get("user_id")})
+        await emit_event(recipients, "commission_paid",
+                          f"Commission paid · Rs.{total_amount:,}",
+                          body=f"You received {len(paid_ids)} commission payment(s).",
+                          method=pay_method, count=len(paid_ids), amount=total_amount)
+    except Exception as _e:
+        logger.debug(f"WS emit (bulk-pay) skipped: {_e}")
+    return {"paid_count": len(paid_ids), "skipped": len(ids) - len(paid_ids), "total_amount": total_amount, "method": pay_method}
+
+@api_router.get("/leads/{lead_id}/score")
+async def lead_score(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """AI-feature: Rule-based lead-conversion likelihood score (0-100) — no LLM required.
+    Inputs: call count, recent call recency, status, follow-ups attended, prior orders."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead: raise HTTPException(status_code=404, detail="Lead not found")
+    score = 30  # baseline
+    reasons = []
+    # Call volume
+    call_logs = lead.get("call_logs", []) or []
+    if len(call_logs) >= 3:
+        score += 15; reasons.append(f"+15 multiple contacts ({len(call_logs)})")
+    elif len(call_logs) >= 1:
+        score += 8; reasons.append("+8 contacted at least once")
+    # Status weighting
+    status = (lead.get("status") or "new").lower()
+    status_weights = {
+        "interested": 25, "callback": 18, "follow_up": 15, "order_created": 35,
+        "ordered": 40, "delivered": 50, "converted": 50,
+        "no_response": -10, "busy": -3, "not_interested": -25,
+    }
+    sw = status_weights.get(status, 0)
+    if sw:
+        score += sw; reasons.append(f"{'+' if sw>0 else ''}{sw} status={status}")
+    # Recency boost — talked within last 7 days
+    last_log = call_logs[-1] if call_logs else None
+    if last_log and last_log.get("logged_at"):
+        try:
+            last_dt = datetime.fromisoformat(last_log["logged_at"].replace("Z","+00:00"))
+            days_since = (datetime.now(timezone.utc) - last_dt).days
+            if days_since <= 1: score += 12; reasons.append("+12 contacted within 24h")
+            elif days_since <= 7: score += 6; reasons.append("+6 contacted within 7 days")
+            elif days_since > 30: score -= 10; reasons.append("-10 stale (>30 days)")
+        except Exception:
+            pass
+    # Prior orders signal (repeat propensity)
+    prior_orders = await db.orders.count_documents({"customer_phone": lead.get("phone_number_norm","") or lead.get("phone_number","")})
+    if prior_orders > 0:
+        score += min(20, prior_orders * 5); reasons.append(f"+{min(20, prior_orders*5)} prior orders ({prior_orders})")
+    score = max(0, min(100, score))
+    band = "hot" if score >= 70 else "warm" if score >= 40 else "cold"
+    return {"lead_id": lead_id, "score": score, "band": band, "reasons": reasons,
+            "call_count": len(call_logs), "status": status, "prior_orders": prior_orders}
+
+@api_router.post("/calls/{lead_id}/summary")
+async def call_summary(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """AI-feature: Auto-summary of all call logs for a lead. Uses LLM when EMERGENT_LLM_KEY
+    is set; otherwise falls back to a deterministic rule-based summary."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead: raise HTTPException(status_code=404, detail="Lead not found")
+    call_logs = lead.get("call_logs", []) or []
+    if not call_logs:
+        return {"summary": "No call history yet for this lead.", "source": "fallback", "call_count": 0}
+    # Try LLM path
+    llm_key = os.environ.get("EMERGENT_LLM_KEY")
+    if llm_key:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            session = f"call-summary-{lead_id}"
+            chat = LlmChat(api_key=llm_key, session_id=session,
+                           system_message="You are a CRM assistant. Summarise the call history of this lead in 3-4 short bullet points, focusing on customer intent, objections, and next-best-action.").with_model("gemini", "gemini-2.5-flash")
+            joined = "\n".join([f"[{c.get('logged_at','')}] status={c.get('status','')} remarks={c.get('remarks','')}" for c in call_logs[-20:]])
+            resp = await chat.send_message(UserMessage(text=f"Lead: {lead.get('name','')} | Phone: {lead.get('phone_number','')}\n\nCall logs:\n{joined}"))
+            return {"summary": str(resp), "source": "llm", "call_count": len(call_logs)}
+        except Exception as e:
+            logger.warning(f"LLM call-summary failed for {lead_id}: {e}")
+    # Fallback: deterministic
+    statuses = [c.get("status","") for c in call_logs if c.get("status")]
+    from collections import Counter
+    top_status = Counter(statuses).most_common(1)[0][0] if statuses else "unclear"
+    last_remark = next((c.get("remarks","") for c in reversed(call_logs) if c.get("remarks")), "(no remarks)")
+    lines = [
+        f"• Total calls: {len(call_logs)}",
+        f"• Most common outcome: {top_status}",
+        f"• Last remark: {last_remark[:140]}",
+        f"• Suggested next action: {'Close-the-deal call' if top_status in ('interested','callback') else 'Re-engage with offer' if top_status in ('no_response','busy') else 'Archive' if top_status=='not_interested' else 'Follow up'}",
+    ]
+    return {"summary": "\n".join(lines), "source": "fallback", "call_count": len(call_logs)}
+
+@api_router.post("/leads/{lead_id}/reply-suggestions")
+async def reply_suggestions(lead_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """AI-feature: Suggest 3 reply messages for a lead based on its status + call history.
+    Tries LLM (Emergent key); falls back to rule-based templates when key absent."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead: raise HTTPException(status_code=404, detail="Lead not found")
+    status = (lead.get("status") or "new").lower()
+    customer_name = lead.get("name") or "customer"
+    last_call = (lead.get("call_logs") or [])[-1] if lead.get("call_logs") else None
+    # Fallback templates (always available)
+    fallback_map = {
+        "interested": [
+            f"Hi {customer_name}, thank you for showing interest in Celesta Glow products! Should I place your order today? We have a special offer for new customers.",
+            f"Hi {customer_name}, just confirming your interest. Would you prefer COD or online payment? I can get your order shipped in 24 hours.",
+            f"Hi {customer_name}, is there a specific product you'd like to know more about? Happy to send you details on WhatsApp.",
+        ],
+        "callback": [
+            f"Hi {customer_name}, this is a follow-up call as promised. Is it a good time to talk now? It only takes 2 minutes.",
+            f"Hi {customer_name}, calling back as discussed. Have you had a chance to think about our offer?",
+            f"Hi {customer_name}, just checking in — were there any questions I could help clarify?",
+        ],
+        "no_response": [
+            f"Hi {customer_name}, we missed you! Tried calling but couldn't connect. When would be a good time to chat?",
+            f"Hi {customer_name}, hope all is well. Could I share a quick update on the product you asked about?",
+            f"Hi {customer_name}, sorry to disturb — just one quick question and I'll let you go.",
+        ],
+        "busy": [
+            f"Hi {customer_name}, I understand you're busy. What time works best for a 2-minute call this week?",
+            f"Hi {customer_name}, no rush — should I message you the details on WhatsApp instead?",
+        ],
+        "not_interested": [
+            f"Hi {customer_name}, totally understand. May I check back in a few months in case anything changes?",
+            f"Hi {customer_name}, thank you for your time. If you ever need beauty/wellness products, we're here.",
+        ],
+    }
+    fallback = fallback_map.get(status, [
+        f"Hi {customer_name}, hope you're doing well! This is from Celesta Glow — do you have a minute to chat about our products?",
+        f"Hi {customer_name}, would you like to know more about our skincare range? I can send a quick overview.",
+        f"Hi {customer_name}, is there anything specific I can help you with today?",
+    ])
+    # Try LLM path
+    llm_key = os.environ.get("EMERGENT_LLM_KEY")
+    if llm_key:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = LlmChat(
+                api_key=llm_key,
+                session_id=f"reply-{lead_id}",
+                system_message="You are a CRM sales assistant for Celesta Glow (Indian beauty/wellness brand). Suggest exactly 3 short, warm, professional reply messages a telecaller could send. Output 3 lines, one per suggestion, no numbering."
+            ).with_model("gemini", "gemini-2.5-flash")
+            ctx = f"Customer: {customer_name}\nStatus: {status}\n"
+            if last_call:
+                ctx += f"Last call status: {last_call.get('status','')}\nLast remark: {last_call.get('remarks','')}\n"
+            resp = await chat.send_message(UserMessage(text=ctx + "\nSuggest 3 reply messages."))
+            suggestions = [line.strip().lstrip("-•1234567890. ") for line in str(resp).split("\n") if line.strip()][:3]
+            if len(suggestions) == 3:
+                return {"suggestions": suggestions, "source": "llm"}
+        except Exception as e:
+            logger.warning(f"LLM reply-suggestions failed for {lead_id}: {e}")
+    return {"suggestions": fallback[:3], "source": "fallback"}
+
+@api_router.get("/analytics/anomalies")
+async def revenue_anomalies(window_days: int = 14, current_user: dict = Depends(get_current_user)):
+    """AI-feature: Detect revenue/conversion anomalies using simple statistical methods (Z-score on daily revenue).
+    No LLM required. Returns dates where revenue was outside 2σ of the trailing mean."""
+    if current_user['role'] not in ['admin', 'sales_manager', 'district_manager', 'finance_manager']:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    window_days = max(7, min(window_days, 90))
+    since = (date.today() - timedelta(days=window_days)).isoformat()
+    orders = await db.orders.find(
+        {"created_at": {"$gte": since}, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "created_at": 1, "total_amount": 1, "status": 1},
+    ).to_list(10000)
+    # Group by date
+    by_date: dict = {}
+    for o in orders:
+        d = (o.get("created_at") or "")[:10]
+        if not d: continue
+        by_date.setdefault(d, {"revenue": 0.0, "orders": 0, "delivered": 0})
+        by_date[d]["revenue"] += float(o.get("total_amount", 0) or 0)
+        by_date[d]["orders"] += 1
+        if o.get("status") == "delivered":
+            by_date[d]["delivered"] += 1
+    series = [{"date": d, **by_date[d]} for d in sorted(by_date.keys())]
+    if len(series) < 3:
+        return {"anomalies": [], "series": series,
+                "mean_daily_revenue": 0, "stddev": 0, "overall_conversion_pct": 0,
+                "window_days": window_days,
+                "message": "Not enough data for anomaly detection"}
+    # Z-score on revenue
+    revs = [s["revenue"] for s in series]
+    mean = sum(revs) / len(revs)
+    variance = sum((r - mean) ** 2 for r in revs) / len(revs)
+    stddev = variance ** 0.5
+    anomalies = []
+    if stddev > 0:
+        for s in series:
+            z = (s["revenue"] - mean) / stddev
+            if abs(z) >= 2:
+                anomalies.append({
+                    "date": s["date"], "revenue": round(s["revenue"], 2),
+                    "z_score": round(z, 2),
+                    "direction": "drop" if z < 0 else "spike",
+                    "severity": "high" if abs(z) >= 3 else "medium",
+                })
+    # Conversion-rate anomaly (delivered/orders ratio)
+    overall_conv = round(sum(s["delivered"] for s in series) / max(1, sum(s["orders"] for s in series)) * 100, 2)
+    return {
+        "anomalies": anomalies,
+        "window_days": window_days,
+        "mean_daily_revenue": round(mean, 2),
+        "stddev": round(stddev, 2),
+        "overall_conversion_pct": overall_conv,
+        "series": series[-30:],
+    }
+
 # ==================== USER MANAGEMENT ====================
 @api_router.get("/telecallers/all")
 async def get_all_telecallers(current_user: dict = Depends(get_current_user)):
     """Admin / Head of Sales — full company TC roster (for assignment & switch panels)."""
-    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    is_hos = bool(current_user.get('is_head_of_sales'))
     if current_user['role'] != 'admin' and not is_hos:
         raise HTTPException(status_code=403, detail="Admin or Head of Sales only")
     tcs = await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
@@ -1400,7 +1781,7 @@ async def get_managers(current_user: dict = Depends(get_current_user)):
 @api_router.get("/sales-managers")
 async def get_sales_managers(current_user: dict = Depends(get_current_user)):
     # Admin / HR see everyone. Head of Sales sees all SMs (for proxy-login navigation).
-    is_hos = bool(current_user.get('is_head_of_sales')) or (current_user.get('email','').lower() == 'habeebrahman@celestaglow.com')
+    is_hos = bool(current_user.get('is_head_of_sales'))
     if current_user['role'] not in ('admin','hr_manager') and not is_hos:
         raise HTTPException(status_code=403)
     return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
@@ -1586,16 +1967,40 @@ async def get_content_strategists(current_user: dict = Depends(get_current_user)
     return {"content_strategists": await db.content_strategists.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
 
 @api_router.get("/all-users")
-async def get_all_users(current_user: dict = Depends(get_current_user)):
+async def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    role_filter: str = "",
+    q: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """B1.7: Now paginated + filterable by role and free-text name/email query.
+    Returns {users, total, skip, limit} — backwards compatible (clients reading
+    `users` still work; pagination metadata is additive)."""
     if current_user['role'] not in ['admin', 'hr_manager', 'social_media_manager', 'finance_manager', 'district_manager', 'sales_manager']: raise HTTPException(status_code=403)
     all_users = []
-    for coll_name, role in AUTH_COLLECTIONS.items():
-        users = await db[coll_name].find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    target_collections = AUTH_COLLECTIONS.items()
+    if role_filter:
+        target_collections = [(c, r) for c, r in AUTH_COLLECTIONS.items() if r == role_filter]
+    q_norm = (q or "").strip().lower()
+    for coll_name, role in target_collections:
+        mongo_q = {}
+        if q_norm:
+            mongo_q = {"$or": [
+                {"name": {"$regex": q_norm, "$options": "i"}},
+                {"email": {"$regex": q_norm, "$options": "i"}},
+                {"phone": {"$regex": q_norm, "$options": "i"}},
+            ]}
+        users = await db[coll_name].find(mongo_q, {"_id": 0, "password_hash": 0}).to_list(500)
         for u in users:
             u['role'] = role
             u['collection'] = coll_name
         all_users.extend(users)
-    return {"users": all_users}
+    # Sort newest first, then paginate (single-pass — collections are small enough)
+    all_users.sort(key=lambda u: u.get('created_at', ''), reverse=True)
+    total = len(all_users)
+    paged = all_users[skip: skip + limit] if limit > 0 else all_users
+    return {"users": paged, "total": total, "skip": skip, "limit": limit}
 
 @api_router.get("/hr-team")
 async def get_hr_team(current_user: dict = Depends(get_current_user)):
@@ -1628,6 +2033,8 @@ def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
              "emergency_contact": data.get("emergency_contact", ""),
              "dob": data.get("dob", ""),
              "joining_date": data.get("joining_date", ""),
+             # Employee photo (data-URL or absolute URL) — capped at 800KB to stay under Mongo doc limits
+             "profile_image": (data.get("profile_image") or "")[:800_000],
              "created_at": datetime.now(timezone.utc).isoformat()}
         if extra_fields:
             for k,v in extra_fields.items():
@@ -1765,7 +2172,7 @@ async def update_my_asm(asm_id: str, data: dict, current_user: dict = Depends(ge
     if not asm: raise HTTPException(status_code=404)
     if current_user['role']=='sales_manager' and asm.get('managed_by') != current_user['id']:
         raise HTTPException(status_code=403, detail="Not your ASM")
-    upd = {k: v for k, v in data.items() if k in ('name','email','phone','salary','incentive','bank_account_name','bank_account_number','bank_ifsc','bank_name','upi_id','address')}
+    upd = {k: v for k, v in data.items() if k in ('name','email','phone','salary','incentive','bank_account_name','bank_account_number','bank_ifsc','bank_name','upi_id','address','pan_number','aadhaar_number','dob','joining_date','emergency_contact','profile_image')}
     if 'password' in data and data['password']:
         upd['password_hash'] = hash_password(data['password'])
     upd['updated_at'] = datetime.now(timezone.utc).isoformat()
@@ -2503,8 +2910,12 @@ async def get_cash_holders(current_user: dict = Depends(get_current_user)):
 @api_router.post("/finance/assign-cash")
 async def assign_cash(data: dict, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
-    user_id = data.get("user_id",""); amount = data.get("amount",0); user_name = data.get("user_name","")
-    if amount <= 0: raise HTTPException(status_code=400)
+    user_id = (data.get("user_id") or "").strip()
+    amount = data.get("amount", 0)
+    user_name = (data.get("user_name") or "").strip()
+    # Hardening: reject empty user_id (prevents ghost cash-holder rows)
+    if not user_id: raise HTTPException(status_code=400, detail="user_id is required")
+    if amount <= 0: raise HTTPException(status_code=400, detail="Amount must be positive")
     await db.cash_holders.update_one({"user_id": user_id}, {"$inc": {"amount": amount}, "$set": {"user_name": user_name, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     await record_transaction("debit", "cash_to_employee", amount, f"Cash given to {user_name}", method="cash", created_by=current_user['id'])
     return {"message": f"Rs.{amount} assigned to {user_name}"}
@@ -2513,10 +2924,17 @@ async def assign_cash(data: dict, current_user: dict = Depends(get_current_user)
 async def return_cash(data: dict, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
     user_id = data.get("user_id",""); amount = data.get("amount",0); user_name = data.get("user_name","")
-    if amount <= 0: raise HTTPException(status_code=400)
+    if amount <= 0: raise HTTPException(status_code=400, detail="Amount must be positive")
+    # B10.4: validate balance before returning cash — prevents holder going negative
+    holder = await db.cash_holders.find_one({"user_id": user_id}, {"_id": 0, "amount": 1, "user_name": 1})
+    if not holder:
+        raise HTTPException(status_code=404, detail="No cash holder record found for this user")
+    current_balance = holder.get("amount", 0) or 0
+    if amount > current_balance:
+        raise HTTPException(status_code=400, detail=f"Cannot return Rs.{amount}: holder only has Rs.{current_balance}")
     await db.cash_holders.update_one({"user_id": user_id}, {"$inc": {"amount": -amount}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
     await record_transaction("credit", "cash_from_employee", amount, f"Cash returned by {user_name}", method="cash", created_by=current_user['id'])
-    return {"message": f"Rs.{amount} returned by {user_name}"}
+    return {"message": f"Rs.{amount} returned by {user_name}", "remaining_balance": round(current_balance - amount, 2)}
 
 # ==================== DASHBOARD STATS ====================
 @api_router.get("/dashboard/stats")
@@ -3099,6 +3517,228 @@ async def get_all_employees(current_user: dict = Depends(get_current_user)):
             u['latest_payroll'] = latest_payroll
             employees.append(u)
     return {"employees": employees}
+
+@api_router.get("/employees/{user_id}/profile")
+async def get_employee_full_profile(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Comprehensive employee profile (Admin + HR Manager + the employee themselves).
+    Returns ALL stored details: personal, bank, identity, employment, payroll history,
+    attendance summary, leave balance, recent commissions, advances and reimbursements."""
+    if current_user['role'] not in ['admin', 'hr_manager'] and current_user['id'] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    # Locate user across all role collections
+    user = None
+    role_resolved = None
+    coll_resolved = None
+    for coll_name, role in AUTH_COLLECTIONS.items():
+        u = await db[coll_name].find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+        if u:
+            user = u; role_resolved = role; coll_resolved = coll_name
+            break
+    if not user:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    user["role"] = role_resolved
+    user["collection"] = coll_resolved
+
+    # Payroll history (last 12 months)
+    payroll_history = await db.payroll.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(12)
+
+    # Attendance summary (current month)
+    today_iso = date.today().isoformat()
+    cur_month = today_iso[:7]
+    attendance_this_month = await db.attendance.count_documents({"user_id": user_id, "date": {"$regex": f"^{cur_month}"}})
+    attendance_total = await db.attendance.count_documents({"user_id": user_id})
+
+    # Leave balance
+    leave_balance = await db.leave_balances.find_one({"user_id": user_id}, {"_id": 0})
+
+    # Last 10 commissions (if any)
+    commissions = await db.commissions.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(10)
+
+    # Advances + reimbursements (cash holder + last expense)
+    cash_holder = await db.cash_holders.find_one({"user_id": user_id}, {"_id": 0})
+    recent_expenses = await db.expenses.find({"created_by": user_id}, {"_id": 0}).sort("created_at", -1).to_list(5)
+
+    # Manager / direct reports
+    manager_info = None
+    if user.get("managed_by"):
+        for cn in ROLE_COLLECTIONS.values():
+            m = await db[cn].find_one({"id": user.get("managed_by")}, {"_id": 0, "name": 1, "id": 1, "email": 1})
+            if m: manager_info = m; break
+
+    return {
+        "user": user,
+        "payroll_history": payroll_history,
+        "attendance_this_month": attendance_this_month,
+        "attendance_total": attendance_total,
+        "leave_balance": leave_balance,
+        "commissions_recent": commissions,
+        "cash_holder": cash_holder,
+        "recent_expenses": recent_expenses,
+        "manager": manager_info,
+    }
+
+@api_router.put("/employees/{user_id}/photo")
+async def update_employee_photo(user_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Update an existing employee's profile photo. Admin/HR/Self only.
+    Body: {profile_image: 'data:image/...;base64,...'} — capped at 800KB."""
+    if current_user['role'] not in ['admin', 'hr_manager'] and current_user['id'] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    img = (data.get("profile_image") or "")[:800_000]
+    for coll in ROLE_COLLECTIONS.values():
+        u = await db[coll].find_one({"id": user_id}, {"_id": 0, "id": 1})
+        if u:
+            await db[coll].update_one({"id": user_id}, {"$set": {"profile_image": img, "updated_at": datetime.now(timezone.utc).isoformat()}})
+            return {"message": "Photo updated", "size": len(img)}
+    raise HTTPException(status_code=404, detail="Employee not found")
+
+@api_router.get("/employees/{user_id}/profile/pdf")
+async def download_employee_profile_pdf(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Render a comprehensive employee profile PDF (Admin + HR + self)."""
+    if current_user['role'] not in ['admin', 'hr_manager'] and current_user['id'] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    # Resolve user
+    user = None; role_resolved = None
+    for coll_name, role in AUTH_COLLECTIONS.items():
+        u = await db[coll_name].find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+        if u:
+            user = u; role_resolved = role; break
+    if not user:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    payroll_history = await db.payroll.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(6)
+    leave_balance = await db.leave_balances.find_one({"user_id": user_id}, {"_id": 0}) or {}
+    attendance_this_month = await db.attendance.count_documents({"user_id": user_id, "date": {"$regex": f"^{date.today().isoformat()[:7]}"}})
+
+    # Build PDF
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from io import BytesIO
+    import base64, re
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    W, H = A4
+    margin = 18 * mm
+    y = H - margin
+
+    # Header bar
+    c.setFillColorRGB(0.23, 0.32, 0.29)  # #3B5249
+    c.rect(0, H - 30 * mm, W, 30 * mm, stroke=0, fill=1)
+    c.setFillColorRGB(0.96, 0.93, 0.82)  # #F4ECD2
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(margin, H - 14 * mm, "Celesta Glow CRM")
+    c.setFont("Helvetica", 10)
+    c.drawString(margin, H - 22 * mm, "Employee Profile Sheet")
+    c.drawRightString(W - margin, H - 22 * mm, f"Generated: {datetime.now(timezone.utc).strftime('%d %b %Y, %H:%M UTC')}")
+
+    y = H - 38 * mm
+    # Profile photo (if present)
+    photo = user.get("profile_image") or ""
+    photo_box_x, photo_box_y, photo_box_w, photo_box_h = W - margin - 30 * mm, y - 30 * mm, 30 * mm, 30 * mm
+    if photo.startswith("data:image"):
+        try:
+            m = re.match(r"data:image/[^;]+;base64,(.+)", photo)
+            if m:
+                raw = base64.b64decode(m.group(1))
+                img = ImageReader(BytesIO(raw))
+                c.drawImage(img, photo_box_x, photo_box_y, width=photo_box_w, height=photo_box_h, preserveAspectRatio=True, mask='auto')
+        except Exception as _e:
+            logger.debug(f"PDF photo draw skipped: {_e}")
+    # Always draw the frame
+    c.setStrokeColorRGB(0.9, 0.89, 0.84)
+    c.setLineWidth(0.6)
+    c.rect(photo_box_x, photo_box_y, photo_box_w, photo_box_h, stroke=1, fill=0)
+
+    c.setFillColorRGB(0.17, 0.21, 0.19)  # #2C3531
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(margin, y, user.get("name") or "—")
+    y -= 6 * mm
+    c.setFont("Helvetica", 10)
+    c.setFillColorRGB(0.35, 0.38, 0.36)
+    c.drawString(margin, y, f"Role: {role_resolved.replace('_', ' ').title()}  ·  ID: {user.get('id')}")
+    y -= 5 * mm
+    c.drawString(margin, y, f"Email: {user.get('email') or '—'}  ·  Phone: {user.get('phone') or '—'}")
+    y -= 12 * mm
+
+    def section(title):
+        nonlocal y
+        if y < 40 * mm:
+            c.showPage(); y = H - margin
+        c.setFillColorRGB(0.23, 0.32, 0.29)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin, y, title)
+        c.setStrokeColorRGB(0.9, 0.89, 0.84)
+        c.line(margin, y - 1.5 * mm, W - margin, y - 1.5 * mm)
+        y -= 6 * mm
+
+    def kv(rows):
+        nonlocal y
+        c.setFont("Helvetica", 10)
+        c.setFillColorRGB(0.17, 0.21, 0.19)
+        for label, value in rows:
+            if y < 25 * mm:
+                c.showPage(); y = H - margin
+            c.setFillColorRGB(0.42, 0.44, 0.42)
+            c.drawString(margin, y, f"{label}:")
+            c.setFillColorRGB(0.17, 0.21, 0.19)
+            c.drawString(margin + 50 * mm, y, str(value) if value not in (None, "") else "—")
+            y -= 5.5 * mm
+
+    section("Personal Information")
+    kv([
+        ("Date of Birth", user.get("dob")),
+        ("Address", user.get("address")),
+        ("Emergency Contact", user.get("emergency_contact")),
+        ("PAN Number", user.get("pan_number")),
+        ("Aadhaar Number", user.get("aadhaar_number")),
+    ])
+
+    section("Employment")
+    kv([
+        ("Joining Date", user.get("joining_date")),
+        ("Role", role_resolved.replace("_", " ").title()),
+        ("District / Area", f"{user.get('district','—')} / {user.get('area','—')}"),
+        ("Reporting Manager ID", user.get("managed_by")),
+        ("Created At", (user.get("created_at") or "")[:10]),
+    ])
+
+    section("Salary & Bank Details")
+    kv([
+        ("Monthly Salary", f"Rs.{user.get('salary', 0):,}"),
+        ("Incentive (%)", f"{user.get('incentive', 0)}%"),
+        ("Bank Account Name", user.get("bank_account_name")),
+        ("Bank Account Number", user.get("bank_account_number")),
+        ("IFSC Code", user.get("bank_ifsc")),
+        ("Bank Name", user.get("bank_name")),
+        ("UPI ID", user.get("upi_id")),
+    ])
+
+    section(f"Attendance ({date.today().isoformat()[:7]})")
+    kv([
+        ("Days Present (this month)", attendance_this_month),
+        ("Annual Leave Balance", leave_balance.get("annual_leave", "—")),
+        ("Sick Leave Balance", leave_balance.get("sick_leave", "—")),
+    ])
+
+    if payroll_history:
+        section("Recent Payroll History (last 6 months)")
+        for p in payroll_history:
+            kv([(f"{p.get('month','')}/{p.get('year','')}", f"Net Rs.{p.get('net_pay', 0):,}  ·  Status: {p.get('status','—')}")])
+
+    # Footer
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColorRGB(0.5, 0.52, 0.5)
+    c.drawString(margin, 12 * mm, "Confidential — Celesta Glow CRM. Do not share without HR authorisation.")
+    c.drawRightString(W - margin, 12 * mm, f"Generated by {current_user.get('name','—')} ({current_user.get('role','—')})")
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+    safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", (user.get("name") or "employee"))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="employee_profile_{safe_name}_{user_id}.pdf"'},
+    )
 
 # ==================== VIDEOGRAPHER/EDITOR ENDPOINTS ====================
 @api_router.get("/production/my-briefs")
@@ -4073,54 +4713,233 @@ DEFAULT_TEMPLATE_BODIES = {
     },
 }
 
+# Role-specific template key convention: "<role>:<letter_key>" e.g. "sales_manager:agreement"
+# When looking up a template we prefer the role-specific override, then fall back to the
+# global override, then to the built-in default. This lets HR have a different employment
+# agreement for sales_manager / telecaller / hr_manager etc. — exactly what the user asked.
+EMPLOYABLE_ROLES = [
+    "sales_manager", "district_manager", "assistant_sales_manager", "assistant_district_manager",
+    "telecaller", "inhouse_telecaller", "agent",
+    "hr_manager", "finance_manager", "social_media_manager", "digital_marketing_manager",
+    "content_strategist", "content_developer", "inventory_manager",
+]
+
+def _split_template_key(key: str):
+    """('sales_manager:agreement') -> ('sales_manager','agreement'); ('offer') -> (None,'offer')."""
+    if ":" in key:
+        role, k = key.split(":", 1)
+        return role, k
+    return None, key
+
+async def _resolve_template(letter_key: str, role: str = None):
+    """Return (template_doc, source) using precedence: role-specific override > global override > built-in default."""
+    if role:
+        rk = f"{role}:{letter_key}"
+        doc = await db.document_templates.find_one({"key": rk}, {"_id": 0})
+        if doc:
+            return doc, "role_override"
+    doc = await db.document_templates.find_one({"key": letter_key}, {"_id": 0})
+    if doc:
+        return doc, "global_override"
+    default = DEFAULT_TEMPLATE_BODIES.get(letter_key)
+    if default:
+        return {"key": letter_key, "subject": default["subject"], "body_html": default["body_html"]}, "default"
+    return None, "missing"
+
 @api_router.get("/hr/document-templates")
 async def list_document_templates(current_user: dict = Depends(get_current_user)):
     """List all customised document templates (overrides). Defaults are built-in."""
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
-    overrides = await db.document_templates.find({}, {"_id": 0}).to_list(50)
+    overrides = await db.document_templates.find({}, {"_id": 0}).to_list(500)
     builtin = ["welcome","offer","employment","agreement","increment","termination","warning","relieving","experience"]
-    return {"templates": overrides, "builtin_keys": builtin}
-
-@api_router.get("/hr/document-templates/{key}")
-async def get_document_template(key: str, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin', 'hr_manager']:
-        raise HTTPException(status_code=403)
-    doc = await db.document_templates.find_one({"key": key}, {"_id": 0})
-    if doc:
-        return {"template": doc, "key": key, "is_default": False}
-    # Fall back to built-in default so HR sees the existing letter content to edit
-    default = DEFAULT_TEMPLATE_BODIES.get(key)
-    if not default:
-        return {"template": None, "key": key, "is_default": True}
     return {
-        "template": {"key": key, "subject": default["subject"], "body_html": default["body_html"]},
-        "key": key,
-        "is_default": True,
+        "templates": overrides,
+        "builtin_keys": builtin,
+        "employable_roles": EMPLOYABLE_ROLES,
     }
 
-@api_router.put("/hr/document-templates/{key}")
-async def upsert_document_template(key: str, data: dict, current_user: dict = Depends(get_current_user)):
-    """Save a customised template. Body: {subject, body_html} — supports placeholders like {emp_name},{position},{salary},{joining_date},{department},{effective_date},{reason} etc."""
+@api_router.get("/hr/document-templates/{key:path}")
+async def get_document_template(key: str, current_user: dict = Depends(get_current_user)):
+    """Key can be plain ('agreement') or role-scoped ('sales_manager:agreement').
+    Returns the role-specific override if present, else falls back to global override,
+    else to the built-in default — so HR can always see *something* to start editing."""
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
+    role, letter_key = _split_template_key(key)
+    # 1. Try the exact key first (role-specific if applicable)
+    doc = await db.document_templates.find_one({"key": key}, {"_id": 0})
+    if doc:
+        return {"template": doc, "key": key, "role": role, "letter_key": letter_key,
+                "is_default": False, "source": "role_override" if role else "global_override"}
+    # 2. If role-scoped and no role override, fall back to global override
+    if role:
+        global_doc = await db.document_templates.find_one({"key": letter_key}, {"_id": 0})
+        if global_doc:
+            return {
+                "template": {"key": key, "subject": global_doc.get("subject",""), "body_html": global_doc.get("body_html","")},
+                "key": key, "role": role, "letter_key": letter_key,
+                "is_default": False, "source": "inherited_global",
+            }
+    # 3. Built-in default
+    default = DEFAULT_TEMPLATE_BODIES.get(letter_key)
+    if not default:
+        return {"template": None, "key": key, "role": role, "letter_key": letter_key,
+                "is_default": True, "source": "missing"}
+    return {
+        "template": {"key": key, "subject": default["subject"], "body_html": default["body_html"]},
+        "key": key, "role": role, "letter_key": letter_key,
+        "is_default": True, "source": "default",
+    }
+
+@api_router.put("/hr/document-templates/{key:path}")
+async def upsert_document_template(key: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Save a customised template. Key can be plain ('agreement') for an org-wide override
+    or role-scoped ('sales_manager:agreement') for a per-role override.
+    Body: {subject, body_html} — supports placeholders like {emp_name},{position},{salary},
+    {joining_date},{department},{effective_date},{reason} etc."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    role, letter_key = _split_template_key(key)
+    if letter_key not in DEFAULT_TEMPLATE_BODIES:
+        raise HTTPException(status_code=400, detail=f"Unknown letter key '{letter_key}'")
+    if role and role not in EMPLOYABLE_ROLES:
+        raise HTTPException(status_code=400, detail=f"Unknown role '{role}'")
     body_html = data.get("body_html", "").strip()
     subject = data.get("subject", "").strip()
     if not body_html:
         raise HTTPException(status_code=400, detail="body_html cannot be empty")
-    update = {"key": key, "subject": subject, "body_html": body_html,
+    update = {"key": key, "letter_key": letter_key, "role": role or "",
+              "subject": subject, "body_html": body_html,
               "updated_by": current_user['id'], "updated_by_name": current_user.get('name', ''),
               "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.document_templates.update_one({"key": key}, {"$set": update}, upsert=True)
     return {"message": "Template saved", "template": update}
 
-@api_router.delete("/hr/document-templates/{key}")
+@api_router.delete("/hr/document-templates/{key:path}")
 async def delete_document_template(key: str, current_user: dict = Depends(get_current_user)):
-    """Reset to built-in default by removing the override."""
+    """Reset to built-in default (or to global override, for role-scoped keys) by removing the override."""
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
     r = await db.document_templates.delete_one({"key": key})
-    return {"message": "Reverted to built-in default" if r.deleted_count else "No override existed"}
+    return {"message": "Reverted" if r.deleted_count else "No override existed"}
+
+# ==================== DOCUMENT DOWNLOAD (per-employee, role-specific) ====================
+async def _find_employee_by_id(emp_id: str):
+    """Search every role collection for an employee by id."""
+    for role, coll in ROLE_COLLECTIONS.items():
+        u = await db[coll].find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
+        if u:
+            u["role"] = role
+            return u
+    return None
+
+def _render_letter_for_employee(letter_key: str, template_doc: dict, employee: dict, extra: dict = None) -> tuple:
+    """Render letter HTML using full letterhead + footer for a given employee + template doc.
+    Returns (subject, full_html_with_letterhead)."""
+    extra = extra or {}
+    salary = int(employee.get("salary") or 0)
+    incentive = int(employee.get("incentive") or 0)
+    ctx = {
+        "emp_name": employee.get("name", ""),
+        "position": (extra.get("position") or employee.get("role", "")).replace("_", " ").title(),
+        "salary": f"{salary:,}",
+        "incentive": f"{incentive:,}",
+        "joining_date": extra.get("joining_date") or employee.get("joining_date") or (employee.get("created_at","")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+        "effective_date": extra.get("effective_date") or datetime.now(timezone.utc).strftime("%d %B %Y"),
+        "department": extra.get("department") or employee.get("department") or employee.get("role","").replace("_", " ").title(),
+        "reporting_to": extra.get("reporting_to") or employee.get("managed_by_name") or "Reporting Manager",
+        "old_salary": f"{int(extra.get('old_salary') or 0):,}",
+        "new_salary": f"{int(extra.get('new_salary') or 0):,}",
+        "reason": extra.get("reason", "—"),
+        "details": extra.get("details", "—"),
+        "today_date": datetime.now(timezone.utc).strftime("%d %B %Y"),
+        "company_name": COMPANY["name"], "company_email": COMPANY["email"],
+        "company_phone": COMPANY["phone"],
+        "company_address": f"{COMPANY['address_line1']}, {COMPANY['address_line2']}",
+        "work_hours": COMPANY["work_hours"], "weekly_off": COMPANY["weekly_off"],
+    }
+    subject = _render_custom_template(template_doc.get("subject") or f"{letter_key.title()} – {COMPANY['name']}", ctx)
+    body_html_inner = _render_custom_template(template_doc.get("body_html") or "", ctx)
+    # Signature block — both employee + authorised signatory, with a date line for wet/digital signature
+    sig_block = f"""<table style='width:100%;border:none;margin:36px 0 14px;font-family:Arial,sans-serif;font-size:12px'>
+<tr>
+<td style='border:none;width:50%;text-align:left;vertical-align:top'>
+<div style='border-top:1px solid #2C3531;padding-top:6px;display:inline-block;min-width:220px'>
+<p style='margin:0;font-weight:600'>{ctx['emp_name']}</p>
+<p style='margin:0;font-size:10px;color:#59615D'>(Employee Signature)</p>
+<p style='margin:8px 0 0;font-size:10px'>Date: ___________________</p>
+</div></td>
+<td style='border:none;width:50%;text-align:right;vertical-align:top'>
+<div style='border-top:1px solid #2C3531;padding-top:6px;display:inline-block;min-width:220px;text-align:left'>
+<p style='margin:0;font-weight:600'>For {COMPANY['name']}</p>
+<p style='margin:0;font-size:10px;color:#59615D'>(Authorised Signatory · HR Department)</p>
+<p style='margin:8px 0 0;font-size:10px'>Date: ___________________</p>
+</div></td>
+</tr></table>"""
+    show_terms = letter_key in ("welcome", "offer", "employment", "agreement")
+    full_html = _letterhead(template_doc.get("subject") or letter_key.title()) + body_html_inner + sig_block + _letterhead_footer(show_terms=show_terms)
+    # Wrap as a printable, self-contained HTML document
+    wrapper = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>{subject}</title>
+<style>@media print {{ @page {{ margin: 16mm; }} body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }} }}
+body{{margin:0;padding:24px;background:#F4F2EC;}} .printbar{{position:fixed;top:12px;right:12px;z-index:9999}}
+.printbar button{{background:#3B5249;color:#fff;border:none;border-radius:999px;padding:8px 18px;font-family:Arial,sans-serif;font-size:12px;cursor:pointer}}
+@media print {{ .printbar{{display:none}} }}
+</style></head><body>
+<div class='printbar'><button onclick='window.print()'>Print / Save as PDF</button></div>
+{full_html}
+</body></html>"""
+    return subject, wrapper
+
+@api_router.get("/hr/document/preview")
+async def preview_document(letter_key: str, employee_id: str, position: Optional[str] = None,
+                            joining_date: Optional[str] = None, effective_date: Optional[str] = None,
+                            old_salary: Optional[int] = 0, new_salary: Optional[int] = 0,
+                            reason: Optional[str] = None, details: Optional[str] = None,
+                            current_user: dict = Depends(get_current_user)):
+    """Render the resolved letter HTML for a specific employee, choosing the role-specific
+    template first, then the global override, then the built-in default. The response is a
+    full HTML document that the browser can print to PDF. Used by the 'Download Letter' UI."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    if letter_key not in DEFAULT_TEMPLATE_BODIES:
+        raise HTTPException(status_code=400, detail=f"Unknown letter key '{letter_key}'")
+    employee = await _find_employee_by_id(employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    template_doc, source = await _resolve_template(letter_key, employee["role"])
+    extra = {"position": position, "joining_date": joining_date, "effective_date": effective_date,
+             "old_salary": old_salary, "new_salary": new_salary, "reason": reason, "details": details}
+    subject, full_html = _render_letter_for_employee(letter_key, template_doc, employee, extra)
+    safe_name = "".join(c for c in (employee.get("name","employee")) if c.isalnum() or c in (" ","-","_")).strip().replace(" ","_") or "employee"
+    fname = f"{employee.get('role','')}_{letter_key}_{safe_name}.html"
+    return Response(content=full_html, media_type="text/html; charset=utf-8",
+                    headers={"Content-Disposition": f"inline; filename=\"{fname}\"",
+                             "X-Template-Source": source, "X-Employee-Role": employee['role']})
+
+@api_router.get("/hr/document/download")
+async def download_document(letter_key: str, employee_id: str, position: Optional[str] = None,
+                             joining_date: Optional[str] = None, effective_date: Optional[str] = None,
+                             old_salary: Optional[int] = 0, new_salary: Optional[int] = 0,
+                             reason: Optional[str] = None, details: Optional[str] = None,
+                             current_user: dict = Depends(get_current_user)):
+    """Same as preview, but with Content-Disposition: attachment so the browser saves the file."""
+    if current_user['role'] not in ['admin', 'hr_manager']:
+        raise HTTPException(status_code=403)
+    if letter_key not in DEFAULT_TEMPLATE_BODIES:
+        raise HTTPException(status_code=400, detail=f"Unknown letter key '{letter_key}'")
+    employee = await _find_employee_by_id(employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    template_doc, source = await _resolve_template(letter_key, employee["role"])
+    extra = {"position": position, "joining_date": joining_date, "effective_date": effective_date,
+             "old_salary": old_salary, "new_salary": new_salary, "reason": reason, "details": details}
+    subject, full_html = _render_letter_for_employee(letter_key, template_doc, employee, extra)
+    safe_name = "".join(c for c in (employee.get("name","employee")) if c.isalnum() or c in (" ","-","_")).strip().replace(" ","_") or "employee"
+    fname = f"{employee.get('role','')}_{letter_key}_{safe_name}.html"
+    return Response(content=full_html, media_type="text/html; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename=\"{fname}\"",
+                             "X-Template-Source": source, "X-Employee-Role": employee['role']})
 
 # ==================== STANDARD EMPLOYMENT TERMS (editable footer block) ====================
 # Built-in defaults — used when no DB override exists. Kept in sync with COMPANY at module load.
@@ -4332,6 +5151,7 @@ async def hr_send_email(data: dict, current_user: dict = Depends(get_current_use
     template = data.get("template", "custom")
     to_email = data.get("to_email", "")
     emp_name = data.get("emp_name", "")
+    emp_role = data.get("emp_role") or data.get("role") or ""  # optional: pick role-specific override
     if not to_email:
         raise HTTPException(status_code=400, detail="Email required")
     position = data.get('position', '—')
@@ -4346,8 +5166,12 @@ async def hr_send_email(data: dict, current_user: dict = Depends(get_current_use
     department = data.get('department', 'Operations')
     reporting_to = data.get('reporting_to', 'HR Manager')
 
-    # Check for custom override first
-    override = await db.document_templates.find_one({"key": template}, {"_id": 0})
+    # Check for custom override first — role-specific takes precedence over global
+    override = None
+    if emp_role and template in DEFAULT_TEMPLATE_BODIES:
+        override = await db.document_templates.find_one({"key": f"{emp_role}:{template}"}, {"_id": 0})
+    if not override:
+        override = await db.document_templates.find_one({"key": template}, {"_id": 0})
     if override and override.get("body_html"):
         ctx = {
             "emp_name": emp_name, "position": position, "salary": f"{salary:,}" if isinstance(salary, (int, float)) else salary,
@@ -6366,13 +7190,32 @@ async def low_stock(current_user: dict = Depends(get_current_user)):
 @api_router.post("/purchase-orders")
 async def create_po(data: dict, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'inventory_manager', 'finance_manager']: raise HTTPException(status_code=403)
+    items = data.get("items", []) or []
+    if not items: raise HTTPException(status_code=400, detail="At least one item is required")
+    # B11.4: validate each item references an existing product + flag items currently below threshold
+    products = {p['id']: p for p in await db.products.find({}, {"_id": 0}).to_list(1000)}
+    enriched_items = []
+    below_threshold_count = 0
+    for item in items:
+        pid = item.get("product_id") or item.get("id") or ""
+        if pid and pid not in products:
+            raise HTTPException(status_code=400, detail=f"Unknown product: {pid}")
+        product = products.get(pid, {})
+        cur_stock = product.get("stock", 0) or 0
+        threshold = product.get("low_stock_threshold", 10) or 10
+        item["below_threshold_at_creation"] = cur_stock <= threshold
+        item["stock_at_creation"] = cur_stock
+        if item["below_threshold_at_creation"]:
+            below_threshold_count += 1
+        enriched_items.append(item)
     po = {"id": f"po-{uuid.uuid4().hex[:8]}", "vendor_id": data.get("vendor_id", ""),
-          "vendor_name": data.get("vendor_name", ""), "items": data.get("items", []),
+          "vendor_name": data.get("vendor_name", ""), "items": enriched_items,
           "total_amount": float(data.get("total_amount", 0)), "status": "pending",
           "expected_date": data.get("expected_date", ""),
+          "low_stock_items": below_threshold_count,
           "created_at": datetime.now(timezone.utc).isoformat(), "created_by": current_user['id']}
     await db.purchase_orders.insert_one(po); po.pop("_id", None)
-    return {"po": po}
+    return {"po": po, "low_stock_items": below_threshold_count}
 
 @api_router.get("/purchase-orders")
 async def get_pos(current_user: dict = Depends(get_current_user)):
@@ -6957,7 +7800,10 @@ async def list_ai_usage(current_user: dict = Depends(get_current_user)):
         by_purpose[it.get("purpose", "generic")] = by_purpose.get(it.get("purpose", "generic"), 0) + 1
     return {"usage": items, "totals": by_purpose, "count": len(items)}
 
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS','*').split(','), allow_methods=["*"], allow_headers=["*"])
+# CORS — whitelist production + preview domains; fallback to '*' only if explicitly set
+_cors = os.environ.get('CORS_ORIGINS', 'https://portal.veegal.com,https://veegal-stage.preview.emergentagent.com,http://localhost:3000').split(',')
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[o.strip() for o in _cors if o.strip()],
+                   allow_methods=["*"], allow_headers=["*"])
 
 # ==================== DELHIVERY SHIPPING INTEGRATION ====================
 DELHIVERY_API_KEY = os.environ.get("DELHIVERY_API_KEY", "")
@@ -7058,6 +7904,41 @@ async def delhivery_ship_order(oid: str, current_user: dict = Depends(get_curren
     await log_audit("ship_order", "order", oid, current_user['id'], current_user.get('name', ''), f"Shipped via Delhivery, AWB {awb}")
     return {"awb_number": awb, "tracking_url": tracking_url, "message": "Shipment created"}
 
+@api_router.post("/shipping/self/ship/{oid}")
+async def self_ship_order(oid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    """Self-shipping (manual / in-house delivery / any non-Delhivery courier).
+    Marks order as shipped without calling Delhivery API. Saves courier name + tracking link if provided."""
+    if current_user['role'] not in ('admin', 'inventory_manager', 'sales_manager', 'district_manager', 'hr_manager'):
+        raise HTTPException(status_code=403, detail="Only Admin / Inventory / SM / DM / HR can self-ship")
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot ship a cancelled order")
+    if order.get("awb_number"):
+        raise HTTPException(status_code=400, detail="Order already has a Delhivery AWB — use Delhivery flow")
+    data = data or {}
+    courier_name = (data.get("courier_name") or "Self Delivery").strip()
+    tracking_number = (data.get("tracking_number") or "").strip()
+    tracking_link = (data.get("tracking_link") or "").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    update = {
+        "status": "shipped",
+        "courier": "self",
+        "courier_name": courier_name,
+        "tracking_number": tracking_number,
+        "tracking_link": tracking_link,
+        "self_shipped": True,
+        "shipped_at": now,
+        "shipped_by": current_user['id'],
+        "shipped_by_name": current_user.get('name', ''),
+        "updated_at": now,
+    }
+    await db.orders.update_one({"id": oid}, {"$set": update})
+    await log_audit("self_ship_order", "order", oid, current_user['id'], current_user.get('name', ''),
+                    f"Self-shipped via {courier_name} {tracking_number}".strip())
+    return {"message": "Order marked as self-shipped", "courier_name": courier_name, "tracking_number": tracking_number}
+
 @api_router.get("/shipping/delhivery/track/{awb}")
 async def delhivery_track(awb: str, current_user: dict = Depends(get_current_user)):
     """Live tracking status from Delhivery. Any authenticated user can view."""
@@ -7145,6 +8026,60 @@ async def delete_collab_contact(cid: str, current_user: dict = Depends(get_curre
 # Register all routes (must be after every @api_router decorator above)
 app.include_router(api_router)
 
+@app.websocket("/api/ws/notifications")
+async def ws_notifications(websocket: WebSocket, token: str = ""):
+    """Real-time notification channel. Pass JWT as `?token=...` query string.
+    Client receives JSON payloads like {type:'notification', title, body, ts}."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("user_id") or payload.get("sub")
+    except Exception:
+        await websocket.close(code=4401)
+        return
+    if not user_id:
+        await websocket.close(code=4401); return
+    await ws_manager.connect(user_id, websocket)
+    try:
+        await websocket.send_json({"type": "connected", "ts": datetime.now(timezone.utc).isoformat()})
+        while True:
+            msg = await websocket.receive_text()
+            if msg == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        ws_manager.disconnect(user_id, websocket)
+    except Exception:
+        ws_manager.disconnect(user_id, websocket)
+# ===== END WebSocket =====
+
+
+
+# ============== UPGRADES MODULE (Phase 1-6 enhancements) ==============
+from upgrades import init_upgrades, start_scheduler as _start_upgrades_scheduler
+_upgrades_router = init_upgrades(
+    db=db,
+    get_current_user=get_current_user,
+    ROLE_COLLECTIONS=ROLE_COLLECTIONS,
+    COMPANY=COMPANY,
+    COMMISSION_RATES=COMMISSION_RATES,
+    EMERGENT_LLM_KEY=EMERGENT_LLM_KEY,
+    SMTP_EMAIL=SMTP_EMAIL,
+    SMTP_PASSWORD=SMTP_PASSWORD,
+    DELHIVERY_API_KEY=os.environ.get("DELHIVERY_API_KEY", ""),
+    DELHIVERY_BASE_URL=os.environ.get("DELHIVERY_BASE_URL", "https://track.delhivery.com"),
+)
+app.include_router(_upgrades_router)
+# ============== END UPGRADES ==============
+
+# ============== PHASE 2 (P0-P3 improvements) ==============
+from phase2 import init_phase2, run_p0_migrations
+_phase2_router = init_phase2(
+    db=db, get_current_user=get_current_user,
+    ROLE_COLLECTIONS=ROLE_COLLECTIONS, COMPANY=COMPANY,
+    EMERGENT_LLM_KEY=EMERGENT_LLM_KEY,
+)
+app.include_router(_phase2_router)
+# ============== END PHASE 2 ==============
+
 
 @app.on_event("startup")
 async def startup():
@@ -7218,6 +8153,16 @@ async def startup():
     await db.advances.create_index("status")
     await db.attendance.create_index("date")
     await db.audit_log.create_index("created_at")
+    # Phase-2 P0 migrations: legacy collection consolidation, phone normalisation, unique commission index, text search indexes
+    try:
+        await run_p0_migrations()
+    except Exception as _e:
+        logger.error(f"P0 migrations: {_e}")
+    # Start background scheduler (Delhivery sync + daily auto-emails)
+    try:
+        _start_upgrades_scheduler()
+    except Exception as _e:
+        logger.error(f"upgrades scheduler: {_e}")
     logger.info("Celesta Glow CRM ready!")
 
 @app.on_event("shutdown")

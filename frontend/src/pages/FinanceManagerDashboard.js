@@ -16,13 +16,16 @@ import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const API = "/api";
 
 export default function FinanceManagerDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [expenses, setExpenses] = useState([]);
@@ -92,14 +95,14 @@ export default function FinanceManagerDashboard() {
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleAddGst = async () => { if (!gstForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/gst`, gstForm); toast.success("Added"); setShowGST(false); setGstForm({type:"sale",amount:0,rate:18,ref_no:"",notes:"",date:new Date().toISOString().slice(0,10)}); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddVendor = async () => { if (!vendorForm.name) return toast.error("Name required"); try { await axios.post(`${API}/vendors`, vendorForm); toast.success("Added"); setShowVendor(false); setVendorForm({name:"",contact:"",phone:"",email:"",address:"",gst_number:"",category:"supplier",balance:0}); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddRecurring = async () => { if (!recurringForm.name) return toast.error("Name required"); try { await axios.post(`${API}/finance/recurring`, recurringForm); toast.success("Added"); setShowRecurring(false); setRecurringForm({name:"",category:"rent",amount:0,frequency:"monthly",next_due_date:""}); fetchData(); } catch { toast.error("Failed"); } };
+  const handleAddGst = async () => { if (!gstForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/gst`, gstForm); toast.success("Added"); setShowGST(false); setGstForm({type:"sale",amount:0,rate:18,ref_no:"",notes:"",date:new Date().toISOString().slice(0,10)}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddVendor = async () => { if (!vendorForm.name) return toast.error("Name required"); try { await axios.post(`${API}/vendors`, vendorForm); toast.success("Added"); setShowVendor(false); setVendorForm({name:"",contact:"",phone:"",email:"",address:"",gst_number:"",category:"supplier",balance:0}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddRecurring = async () => { if (!recurringForm.name) return toast.error("Name required"); try { await axios.post(`${API}/finance/recurring`, recurringForm); toast.success("Added"); setShowRecurring(false); setRecurringForm({name:"",category:"rent",amount:0,frequency:"monthly",next_due_date:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
 
-  const approveExpense = async (id, status, debitFrom) => { try { await axios.put(`${API}/expenses/${id}/approve`, {status, debit_from: debitFrom}); toast.success(`Updated (${debitFrom})`); fetchData(); } catch { toast.error("Failed"); } };
-  const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddExpense = async () => { if (!expForm.title) return toast.error("Title required"); try { await axios.post(`${API}/expenses`, {...expForm,amount:Number(expForm.amount)}); toast.success("Expense added"); setShowAddExpense(false); setExpForm({title:"",amount:0,category:"general",description:""}); fetchData(); } catch { toast.error("Failed"); } };
-  const handleFinTxn = async () => { if (!finTxnForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/transaction`, finTxnForm); toast.success("Recorded"); setShowFinTxn(false); setFinTxnForm({type:"credit",amount:0,category:"manual",description:"",method:"bank"}); fetchData(); } catch { toast.error("Failed"); } };
+  const approveExpense = async (id, status, debitFrom) => { try { await axios.put(`${API}/expenses/${id}/approve`, {status, debit_from: debitFrom}); toast.success(`Updated (${debitFrom})`); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddExpense = async () => { if (!expForm.title) return toast.error("Title required"); try { await axios.post(`${API}/expenses`, {...expForm,amount:Number(expForm.amount)}); toast.success("Expense added"); setShowAddExpense(false); setExpForm({title:"",amount:0,category:"general",description:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleFinTxn = async () => { if (!finTxnForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/transaction`, finTxnForm); toast.success("Recorded"); setShowFinTxn(false); setFinTxnForm({type:"credit",amount:0,category:"manual",description:"",method:"bank"}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
 
@@ -108,7 +111,7 @@ export default function FinanceManagerDashboard() {
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Finance Manager - {user.name}</p></div>
-          <div className="flex items-center gap-2"><GlobalSearch /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB]" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-2"/>Logout</Button></div>
+          <div className="flex items-center gap-2"><GlobalSearch /><DarkModeToggle compact /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB]" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-2"/>Logout</Button></div>
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-6 py-6">
@@ -122,7 +125,7 @@ export default function FinanceManagerDashboard() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[{l:"Total Expenses",v:`Rs.${stats.total_expenses||0}`,i:IndianRupee,c:"#B75D69"},{l:"Pending",v:stats.pending_expenses||0,i:ClipboardList,c:"#D4A373"},{l:"Approved",v:`Rs.${stats.approved_expenses||0}`,i:Check,c:"#6B8E6B"},{l:"Payroll Pending",v:stats.pending_payroll||0,i:CreditCard,c:"#A66E4E"}].map((s,i)=>(
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase mt-1">{s.l}</p></div>
+            <div key={`fmd-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase mt-1">{s.l}</p></div>
           ))}
         </div>
         {/* Monthly Financial Chart */}
@@ -177,17 +180,17 @@ export default function FinanceManagerDashboard() {
           <TabsContent value="funds" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <h3 className="font-heading text-lg font-medium mb-4">Fund Requests</h3>
             {fundRequests.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No fund requests</p>:
-            <div className="space-y-2">{fundRequests.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - {f.category}</p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p></div><div className="flex gap-2 items-center"><Badge className={`text-[9px] ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved from ${v}`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select>}</div></div>))}</div>}
+            <div className="space-y-2">{fundRequests.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - {f.category}</p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p></div><div className="flex gap-2 items-center"><Badge className={`text-[9px] ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved from ${v}`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select>}</div></div>))}</div>}
           </div></TabsContent>
 
           {/* CASH HOLDERS */}
           <TabsContent value="cashholders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading text-lg font-medium">Cash Held by Employees</h3>
-              <Select onValueChange={async(uid)=>{const u=allUsers.find(x=>x.id===uid);if(!u)return;const amt=prompt(`Assign cash to ${u.name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/assign-cash`,{user_id:uid,user_name:u.name,amount:Number(amt)});toast.success(`Rs.${amt} assigned`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-8 w-40 text-xs rounded-full"><SelectValue placeholder="Assign cash to..."/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role!=="admin").map(u=><SelectItem key={u.id} value={u.id} className="text-xs">{u.name} ({u.role?.replace(/_/g," ")})</SelectItem>)}</SelectContent></Select>
+              <Select onValueChange={async(uid)=>{const u=allUsers.find(x=>x.id===uid);if(!u)return;const amt=prompt(`Assign cash to ${u.name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/assign-cash`,{user_id:uid,user_name:u.name,amount:Number(amt)});toast.success(`Rs.${amt} assigned`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-8 w-40 text-xs rounded-full"><SelectValue placeholder="Assign cash to..."/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role!=="admin").map(u=><SelectItem key={u.id} value={u.id} className="text-xs">{u.name} ({u.role?.replace(/_/g," ")})</SelectItem>)}</SelectContent></Select>
             </div>
             {cashHolders.filter(h=>h.amount>0).length===0?<p className="text-center py-6 text-[#59615D] text-sm">No cash held by employees</p>:
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{cashHolders.filter(h=>h.amount>0).map(h=>(<div key={h.user_id} className="border border-[#E5E3DB] rounded-xl p-4 flex justify-between items-center"><div><p className="font-heading font-medium">{h.user_name}</p><p className="font-heading text-xl font-bold text-[#A66E4E]">Rs.{h.amount}</p><p className="text-[10px] text-[#59615D]">{h.updated_at?.slice(0,10)}</p></div><Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{const amt=prompt(`Cash returned by ${h.user_name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/return-cash`,{user_id:h.user_id,user_name:h.user_name,amount:Number(amt)});toast.success("Returned");fetchData();}catch{toast.error("Failed");}}}>Return</Button></div>))}</div>}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{cashHolders.filter(h=>h.amount>0).map(h=>(<div key={h.user_id} className="border border-[#E5E3DB] rounded-xl p-4 flex justify-between items-center"><div><p className="font-heading font-medium">{h.user_name}</p><p className="font-heading text-xl font-bold text-[#A66E4E]">Rs.{h.amount}</p><p className="text-[10px] text-[#59615D]">{h.updated_at?.slice(0,10)}</p></div><Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{const amt=prompt(`Cash returned by ${h.user_name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/return-cash`,{user_id:h.user_id,user_name:h.user_name,amount:Number(amt)});toast.success("Returned");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}>Return</Button></div>))}</div>}
             <div className="mt-4 bg-[#F9F8F6] rounded-xl p-3 text-center"><p className="text-xs text-[#59615D]">Total Cash with Employees</p><p className="font-heading text-lg font-bold text-[#A66E4E]">Rs.{cashHolders.reduce((s,h)=>s+(h.amount>0?h.amount:0),0)}</p></div>
           </div></TabsContent>
 
@@ -265,7 +268,7 @@ export default function FinanceManagerDashboard() {
                   <div><p className="font-medium text-sm">{r.name} <Badge variant="outline" className="text-[8px] ml-1 capitalize">{r.category}</Badge></p>
                     <p className="text-[10px] text-[#59615D]">{r.frequency} | Next due: {r.next_due_date || '—'}</p></div>
                   <div className="flex items-center gap-2"><p className="font-heading text-lg font-semibold text-[#3B5249]">Rs.{r.amount}</p>
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={async()=>{if(window.confirm("Delete?")){await axios.delete(`${API}/finance/recurring/${r.id}`); fetchData();}}}>×</Button></div>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={async()=>{if(await confirm({title:"Delete recurring entry?",danger:true,okLabel:"Delete"})){await axios.delete(`${API}/finance/recurring/${r.id}`); fetchData();}}}>×</Button></div>
                 </div>
               ))}</div>}
           </div></TabsContent>
@@ -276,7 +279,7 @@ export default function FinanceManagerDashboard() {
             <div className="bg-[#F9F8F6] rounded-xl p-3 mb-4 text-center"><p className="text-xs text-[#59615D] uppercase">Average CLV</p><p className="font-heading text-2xl font-bold text-[#3B5249]">Rs.{clv.avg_clv||0}</p></div>
             {(clv.top_customers||[]).length === 0 ? <p className="text-center py-4 text-[#59615D] text-sm">No customer data</p> :
               <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="bg-[#F9F8F6]">{["#","Customer","Phone","Orders","Total Spent"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase">{h}</th>)}</tr></thead>
-                <tbody>{(clv.top_customers||[]).slice(0,50).map((c,i)=>(<tr key={i} className="border-b"><td className="p-2 font-bold">{i+1}</td><td className="p-2 font-medium">{c.name||'—'}</td><td className="p-2">{c.phone}</td><td className="p-2">{c.orders}</td><td className="p-2 font-semibold text-[#3B5249]">Rs.{c.total_spent}</td></tr>))}</tbody></table></div>}
+                <tbody>{(clv.top_customers||[]).slice(0,50).map((c,i)=>(<tr key={`fmd-${i}`} className="border-b"><td className="p-2 font-bold">{i+1}</td><td className="p-2 font-medium">{c.name||'—'}</td><td className="p-2">{c.phone}</td><td className="p-2">{c.orders}</td><td className="p-2 font-semibold text-[#3B5249]">Rs.{c.total_spent}</td></tr>))}</tbody></table></div>}
           </div></TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Finance Manager" /></TabsContent>
         </Tabs>

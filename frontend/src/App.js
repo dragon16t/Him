@@ -4,6 +4,35 @@ import { Toaster } from "@/components/ui/sonner";
 import axios from "axios";
 import UniversalLogin from "@/pages/UniversalLogin";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import { ConfirmProvider } from "@/components/ConfirmDialog";
+import { PageLoader } from "@/components/Skeletons";
+
+// ===== Proxy-tab isolation (FIX: admin's tab no longer gets overwritten on impersonation) =====
+// When a new tab opens via /login?proxy_token=..., we run in "isolated" mode where ALL
+// localStorage reads/writes are transparently redirected to sessionStorage. This prevents
+// the proxy session from corrupting the admin tab's localStorage (they share the same origin).
+(function setupProxyIsolation() {
+  if (typeof window === "undefined") return;
+  const hasProxyParam = new URLSearchParams(window.location.search).has("proxy_token");
+  const alreadyIsolated = sessionStorage.getItem("__cg_isolated") === "1";
+  if (!hasProxyParam && !alreadyIsolated) return;
+  sessionStorage.setItem("__cg_isolated", "1");
+  // Patch localStorage to delegate to sessionStorage for THIS tab only
+  const proxy = new Proxy(window.localStorage, {
+    get(target, prop) {
+      if (prop === "getItem") return (k) => window.sessionStorage.getItem(k);
+      if (prop === "setItem") return (k, v) => window.sessionStorage.setItem(k, v);
+      if (prop === "removeItem") return (k) => window.sessionStorage.removeItem(k);
+      if (prop === "clear") return () => window.sessionStorage.clear();
+      if (prop === "key") return (i) => window.sessionStorage.key(i);
+      if (prop === "length") return window.sessionStorage.length;
+      const v = target[prop];
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  try { Object.defineProperty(window, "localStorage", { value: proxy, configurable: true }); }
+  catch (e) { console.warn("Could not isolate localStorage:", e); }
+})();
 
 const TelecallerDashboard = React.lazy(() => import("@/pages/TelecallerDashboard"));
 const ManagerDashboard = React.lazy(() => import("@/pages/ManagerDashboard"));
@@ -19,8 +48,7 @@ const ContentDeveloperDashboard = React.lazy(() => import("@/pages/ContentDevelo
 const AssistantManagerDashboard = React.lazy(() => import("@/pages/AssistantManagerDashboard"));
 const InventoryManagerDashboard = React.lazy(() => import("@/pages/InventoryManagerDashboard"));
 const DigitalMarketingDashboard = React.lazy(() => import("@/pages/DigitalMarketingDashboard"));
-
-const Loader = () => <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><div className="w-8 h-8 border-2 border-[#3B5249] border-t-transparent rounded-full animate-spin"/></div>;
+const LiveOpsWall = React.lazy(() => import("@/pages/LiveOpsWall"));
 
 axios.defaults.baseURL = process.env.REACT_APP_BACKEND_URL;
 axios.interceptors.request.use((config) => {
@@ -28,10 +56,50 @@ axios.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
-axios.interceptors.response.use(r => r, error => {
-  if (error.response?.status === 401) { localStorage.clear(); window.location.href = "/login"; }
-  return Promise.reject(error);
-});
+
+// Auto-refresh access token on 401 using stored refresh_token. Falls back to logout.
+let _refreshPromise = null;
+async function _doRefresh() {
+  const rt = localStorage.getItem("refresh_token");
+  if (!rt) return null;
+  try {
+    const { data } = await axios.post("/api/auth/refresh", { refresh_token: rt }, {
+      headers: { "X-Skip-Auth-Refresh": "1" },
+    });
+    if (data?.token) {
+      localStorage.setItem("token", data.token);
+      return data.token;
+    }
+  } catch (_) {}
+  return null;
+}
+axios.interceptors.response.use(
+  (r) => r,
+  async (error) => {
+    const original = error.config || {};
+    const status = error.response?.status;
+    const url = original.url || "";
+    // Skip refresh attempts on auth endpoints + already-retried calls
+    const isAuthCall = url.includes("/auth/login") || url.includes("/auth/refresh") || original.headers?.["X-Skip-Auth-Refresh"];
+    if (status === 401 && !isAuthCall && !original._retried) {
+      original._retried = true;
+      _refreshPromise = _refreshPromise || _doRefresh().finally(() => { _refreshPromise = null; });
+      const newToken = await _refreshPromise;
+      if (newToken) {
+        original.headers = original.headers || {};
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return axios(original);
+      }
+      // Refresh failed → logout
+      localStorage.clear();
+      window.location.href = "/login";
+    } else if (status === 401) {
+      localStorage.clear();
+      window.location.href = "/login";
+    }
+    return Promise.reject(error);
+  }
+);
 
 function ProtectedRoute({ children, allowedRoles }) {
   const token = localStorage.getItem("token");
@@ -51,14 +119,52 @@ function useHideBadge() {
   }, []);
 }
 
+function useDarkMode() {
+  React.useEffect(() => {
+    const t = localStorage.getItem("theme");
+    if (t === "dark") document.documentElement.classList.add("dark");
+  }, []);
+}
+
+// Top-level Error Boundary — prevents whole-app white-screen on render errors
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("[ErrorBoundary]", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6] p-6" role="alert">
+          <div className="max-w-md w-full bg-white rounded-2xl border border-[#E5E3DB] p-6 text-center space-y-3" data-testid="error-boundary">
+            <p className="font-heading text-lg font-semibold text-[#2C3531]">Something went wrong</p>
+            <p className="text-sm text-[#59615D]">{this.state.error?.message || "Unexpected error in the app."}</p>
+            <button
+              className="px-4 py-2 rounded-full bg-[#3B5249] text-white text-sm hover:opacity-90"
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              data-testid="error-boundary-reload"
+            >Reload app</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   useHideBadge();
+  useDarkMode();
   return (
+    <ErrorBoundary>
     <BrowserRouter>
+      <ConfirmProvider>
+      <a href="#main-content" className="skip-link" data-testid="skip-to-content">Skip to main content</a>
       <ImpersonationBanner />
-      <Suspense fallback={<Loader />}>
+      <main id="main-content">
+      <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<UniversalLogin />} />
+        <Route path="/live" element={<ProtectedRoute allowedRoles={["admin","sales_manager","district_manager","hr_manager","finance_manager"]}><LiveOpsWall /></ProtectedRoute>} />
         <Route path="/telecaller" element={<ProtectedRoute allowedRoles={["telecaller"]}><TelecallerDashboard /></ProtectedRoute>} />
         <Route path="/manager" element={<ProtectedRoute allowedRoles={["district_manager"]}><ManagerDashboard /></ProtectedRoute>} />
         <Route path="/agent" element={<ProtectedRoute allowedRoles={["agent"]}><AgentPortal /></ProtectedRoute>} />
@@ -78,9 +184,13 @@ function App() {
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
       </Suspense>
-      <Toaster richColors position="top-right" />
+      </main>
+      <Toaster richColors position="top-right" closeButton aria-live="polite" />
+      </ConfirmProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 
 export default App;
+

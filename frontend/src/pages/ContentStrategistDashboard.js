@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogOut, FileText, Loader2, Upload, Link, Video, Film, UserCheck } from "lucide-react";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
 
@@ -53,9 +54,30 @@ export default function ContentStrategistDashboard() {
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Auto-save script draft to localStorage every 5s while writing
+  useEffect(() => {
+    if (!selected?.id || !showScript) return;
+    const key = `cs-script-draft-${selected.id}`;
+    if (script && script.trim()) {
+      const t = setTimeout(() => { try { localStorage.setItem(key, script); } catch {} }, 5000);
+      return () => clearTimeout(t);
+    }
+  }, [script, selected?.id, showScript]);
+  // Restore draft when script dialog opens
+  useEffect(() => {
+    if (showScript && selected?.id) {
+      try { const draft = localStorage.getItem(`cs-script-draft-${selected.id}`); if (draft && !script) setScript(draft); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showScript, selected?.id]);
+
   const handleScript = async () => {
     if (!script || !selected) return toast.error("Write the script");
-    try { await axios.put(`${API}/content-briefs/${selected.id}`, { script, status: "scripted" }); toast.success("Script submitted!"); setShowScript(false); setScript(""); fetchData(); } catch { toast.error("Failed"); }
+    try {
+      await axios.put(`${API}/content-briefs/${selected.id}`, { script, status: "scripted" });
+      try { localStorage.removeItem(`cs-script-draft-${selected.id}`); } catch {}
+      toast.success("Script submitted!"); setShowScript(false); setScript(""); fetchData();
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const handleCreateBrief = async () => {
@@ -67,12 +89,12 @@ export default function ContentStrategistDashboard() {
       else toast.success("Brief created!");
       setShowCreateBrief(false); setBriefForm({ title: "", description: "", content_type: "video", pillar_name: "", script: "", needs_shoot: true, production_notes: "", due_date: "" });
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const handleDeliver = async () => {
     if (!deliveryLink || !selected) return toast.error("Add delivery link");
-    try { await axios.put(`${API}/content-briefs/${selected.id}`, { delivery_link: deliveryLink, status: "completed" }); toast.success("Delivered!"); setShowDeliver(false); setDeliveryLink(""); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/content-briefs/${selected.id}`, { delivery_link: deliveryLink, status: "completed" }); toast.success("Delivered!"); setShowDeliver(false); setDeliveryLink(""); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const handleForwardToProduction = async () => {
@@ -88,7 +110,7 @@ export default function ContentStrategistDashboard() {
       setShowForward(false);
       setForwardForm({ videographer_name: "", editor_name: "", production_notes: "" });
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -104,7 +126,7 @@ export default function ContentStrategistDashboard() {
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-xl sm:text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Content Strategist - {user.name}</p></div>
-          <div className="flex items-center gap-2"><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1 sm:mr-2"/>Logout</Button></div>
+          <div className="flex items-center gap-2"><DarkModeToggle compact /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1 sm:mr-2"/>Logout</Button></div>
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
@@ -185,6 +207,10 @@ export default function ContentStrategistDashboard() {
         <div className="space-y-3">
           <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-xs font-medium">Brief:</p><p className="text-xs text-[#59615D]">{selected?.description}</p><p className="text-xs text-[#A66E4E] mt-1">{selected?.content_type} | {selected?.pillar_name}</p></div>
           <Textarea value={script} onChange={e=>setScript(e.target.value)} placeholder="Write the script here..." className="rounded-xl min-h-[150px]" data-testid="script-input"/>
+          <div className="flex justify-between text-[10px] text-[#59615D]">
+            <span>{script.length} chars · {script.split(/\s+/).filter(Boolean).length} words</span>
+            <span className="italic">Auto-saved as draft every 5s</span>
+          </div>
           <Button onClick={handleScript} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-script-btn">Submit Script</Button>
         </div>
       </DialogContent></Dialog>
@@ -239,8 +265,8 @@ export default function ContentStrategistDashboard() {
           <div><Label className="text-xs font-medium">Script (write here to auto-forward)</Label><Textarea value={briefForm.script} onChange={e=>setBriefForm(f=>({...f,script:e.target.value}))} placeholder="Write the full script..." className="rounded-xl min-h-[100px]"/></div>
           <div className="flex items-center gap-2"><input type="checkbox" checked={briefForm.needs_shoot} onChange={e=>setBriefForm(f=>({...f,needs_shoot:e.target.checked}))} className="rounded" id="needs-shoot"/><Label htmlFor="needs-shoot" className="text-xs">Needs video shoot (auto-forward to Videographer + Editor)</Label></div>
           {briefForm.needs_shoot && <><div><Label className="text-xs font-medium">Production Notes</Label><Input value={briefForm.production_notes} onChange={e=>setBriefForm(f=>({...f,production_notes:e.target.value}))} placeholder="Shooting instructions..." className="rounded-xl"/></div>
-            <div><Label className="text-xs font-medium">Select Videographer</Label><Select value={briefForm.videographer_name} onValueChange={v=>setBriefForm(f=>({...f,videographer_name:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Choose videographer"/></SelectTrigger><SelectContent>{videographers.length>0?videographers.map(v=><SelectItem key={v.id} value={v.name}>{v.name}</SelectItem>):<SelectItem value="Arun Mohan">Arun Mohan</SelectItem>}</SelectContent></Select></div>
-            <div><Label className="text-xs font-medium">Select Editor</Label><Select value={briefForm.editor_name} onValueChange={v=>setBriefForm(f=>({...f,editor_name:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Choose editor"/></SelectTrigger><SelectContent>{editors.length>0?editors.map(e=><SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>):<SelectItem value="Nisha Rajan">Nisha Rajan</SelectItem>}</SelectContent></Select></div></>}
+            <div><Label className="text-xs font-medium">Select Videographer</Label><Select value={briefForm.videographer_name} onValueChange={v=>setBriefForm(f=>({...f,videographer_name:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder={videographers.length>0?"Choose videographer":"No content developers found"}/></SelectTrigger><SelectContent>{videographers.length>0?videographers.map(v=><SelectItem key={v.id} value={v.name}>{v.name}</SelectItem>):<div className="px-2 py-1 text-xs text-[#59615D]">Ask admin to add a Content Developer</div>}</SelectContent></Select></div>
+            <div><Label className="text-xs font-medium">Select Editor</Label><Select value={briefForm.editor_name} onValueChange={v=>setBriefForm(f=>({...f,editor_name:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder={editors.length>0?"Choose editor":"No content developers found"}/></SelectTrigger><SelectContent>{editors.length>0?editors.map(e=><SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>):<div className="px-2 py-1 text-xs text-[#59615D]">Ask admin to add a Content Developer</div>}</SelectContent></Select></div></>}
           <div><Label className="text-xs font-medium">Due Date</Label><Input type="date" value={briefForm.due_date} onChange={e=>setBriefForm(f=>({...f,due_date:e.target.value}))} className="rounded-xl"/></div>
           <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs text-[#59615D]">{briefForm.script && briefForm.needs_shoot ? "Script will be auto-forwarded to Videographer + Editor" : briefForm.script ? "Brief will be saved as scripted" : "Brief will be saved as pending"}</div>
           <Button onClick={handleCreateBrief} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-create-brief-btn">Create & {briefForm.script && briefForm.needs_shoot ? "Auto-Forward" : "Save"}</Button>

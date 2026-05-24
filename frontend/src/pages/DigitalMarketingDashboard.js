@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +18,7 @@ import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
 
@@ -36,6 +38,7 @@ const platformLabel = (p) => p === "meta" ? "📘 Meta" : p === "google" ? "🔴
 
 export default function DigitalMarketingDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [user] = useState(() => JSON.parse(localStorage.getItem("user") || "{}"));
   const [loading, setLoading] = useState(true);
 
@@ -92,13 +95,12 @@ export default function DigitalMarketingDashboard() {
       setShowCampaign(false); setEditingCamp(null);
       setCampForm({ name: "", platform: "meta", sub_platform: "facebook", ad_type: "image", objective: "leads", audience: "", budget: 0, daily_budget: 0, weekly_budget: 0, start_date: "", end_date: "", status: "running", manager_id: "", manager_role: "", manager_name: "" });
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const deleteCampaign = async (cid) => {
-    if (!window.confirm("Delete campaign?")) return;
-    try { await axios.delete(`${API}/campaigns/${cid}`); toast.success("Deleted"); fetchData(); }
-    catch { toast.error("Failed"); }
+    if (!(await confirm({title:"Delete campaign?",danger:true,okLabel:"Confirm"}))) return;
+    try { await axios.delete(`${API}/campaigns/${cid}`); toast.success("Deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const submitTodayUpdate = async () => {
@@ -111,12 +113,11 @@ export default function DigitalMarketingDashboard() {
       toast.success(`Saved ${r.data.saved} campaigns for ${r.data.date}`);
       setTodayUpdate({});
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const updateLeadStatus = async (lid, status) => {
-    try { await axios.put(`${API}/campaign-leads/${lid}`, { status }); toast.success("Updated"); fetchData(); }
-    catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/campaign-leads/${lid}`, { status }); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -143,7 +144,7 @@ export default function DigitalMarketingDashboard() {
             <p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Digital Marketing - {user.name}</p>
           </div>
           <div className="flex items-center gap-2">
-            <NotificationBell />
+            <DarkModeToggle compact /><NotificationBell />
             <AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn">
               <LogOut className="w-4 h-4 mr-1" />Logout

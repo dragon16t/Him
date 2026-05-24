@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,12 +13,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import DailyTaskSheet from "@/components/DailyTaskSheet";
 import EmployeeEfficiency from "@/components/EmployeeEfficiency";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, Loader2, Users, IndianRupee, Check, X, Calendar, Phone, Target, Plus, Mail, Send, FileText, AlertTriangle, CreditCard } from "lucide-react";
+import { LogOut, Loader2, Users, IndianRupee, Check, X, Calendar, Phone, Target, Plus, Mail, Send, FileText, AlertTriangle, CreditCard, FileDown } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import DocumentTemplatesEditor from "../components/DocumentTemplatesEditor";
+import HrEfficiencyPanel from "../components/HrEfficiencyPanel";
+import DailyReportButton from "../components/DailyReportButton";
+import EmployeeProfileDialog from "../components/EmployeeProfileDialog";
+import EmployeeDocumentsDialog from "../components/EmployeeDocumentsDialog";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
@@ -31,6 +37,7 @@ const cleanEmail = (e) => {
 
 export default function HRManagerDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [employees, setEmployees] = useState([]);
   const [payroll, setPayroll] = useState([]);
@@ -106,7 +113,10 @@ export default function HRManagerDashboard() {
   const [salesManagers, setSalesManagers] = useState([]);
   const [districtManagers, setDistrictManagers] = useState([]);
   const [editingEmp, setEditingEmp] = useState(null);
-  const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:"",managed_by:"",managed_by_name:"",managed_by_role:""});
+  const [showProfile, setShowProfile] = useState(false);
+  const [profileEmpId, setProfileEmpId] = useState(null);
+  const [docsEmployee, setDocsEmployee] = useState(null);
+  const [empForm, setEmpForm] = useState({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:"",profile_image:"",managed_by:"",managed_by_name:"",managed_by_role:""});
   const [empSearch, setEmpSearch] = useState("");
   const [empRoleFilter, setEmpRoleFilter] = useState("all");
 
@@ -185,9 +195,9 @@ export default function HRManagerDashboard() {
   useEffect(() => { fetchDailyAtt(attDate); }, [attDate, fetchDailyAtt]);
   useEffect(() => { fetchMonthlyAtt(); }, [fetchMonthlyAtt]);
 
-  const approveLeave = async (id, status) => { try { await axios.put(`${API}/leaves/${id}/approve`, { status }); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); } };
-  const resolveComplaint = async (id) => { try { await axios.put(`${API}/complaints/${id}`, { status: "resolved" }); toast.success("Resolved"); fetchData(); } catch { toast.error("Failed"); } };
-  const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch { toast.error("Failed"); } };
+  const approveLeave = async (id, status) => { try { await axios.put(`${API}/leaves/${id}/approve`, { status }); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const resolveComplaint = async (id) => { try { await axios.put(`${API}/complaints/${id}`, { status: "resolved" }); toast.success("Resolved"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
 
   const handleCreatePayroll = async () => {
     if (!payrollForm.user_id) return toast.error("Select employee");
@@ -261,7 +271,7 @@ export default function HRManagerDashboard() {
       await axios.post(`${API}${path}`, payload);
       toast.success("Employee created. Welcome email sent.");
       setShowAddEmp(false);
-      setEmpForm({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:""});
+      setEmpForm({name:"",email:"",password:"",role:"telecaller",salary:0,incentive:0,phone:"",district:"",area:"",bank_account_name:"",bank_account_number:"",bank_ifsc:"",bank_name:"",upi_id:"",pan_number:"",aadhaar_number:"",address:"",emergency_contact:"",dob:"",joining_date:"",profile_image:""});
       fetchData();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
@@ -289,9 +299,9 @@ export default function HRManagerDashboard() {
   };
 
   const handleDeleteEmp = async (emp) => {
-    const confirmText = window.prompt(`Type DELETE to confirm removing ${emp.name}, then enter master password on next prompt:`);
-    if (confirmText !== "DELETE") { if (confirmText !== null) toast.error("Cancelled"); return; }
-    const pw = window.prompt(`Enter master password to delete ${emp.name}:`);
+    const confirmText = await confirm({title:`Type DELETE to confirm removing ${emp.name}`,description:"Then enter master password on next prompt.",input:{placeholder:"Type DELETE"},okLabel:"Continue"});
+    if (confirmText !== "DELETE") { if (confirmText) toast.error("Cancelled"); return; }
+    const pw = await confirm({title:`Master password for ${emp.name}`,input:{placeholder:"Enter master password",type:"password"},okLabel:"Delete",danger:true});
     if (!pw) return;
     try {
       await axios.delete(`${API}/users/${emp.id}`, { data: { password: pw } });
@@ -389,7 +399,8 @@ export default function HRManagerDashboard() {
           <div><h1 className="font-heading text-xl sm:text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">HR Manager - {user.name}</p></div>
           <div className="flex items-center gap-2">
             <GlobalSearch />
-            <NotificationBell />
+            <DailyReportButton />
+            <DarkModeToggle compact /><NotificationBell />
             <AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1"/>Logout</Button>
           </div>
@@ -447,7 +458,7 @@ export default function HRManagerDashboard() {
               const bulkDelete = async () => {
                 const ids = Array.from(empSelected);
                 if (!ids.length) return;
-                const password = window.prompt(`Delete ${ids.length} employee(s)?\nThis cascades all their orders / leads / commissions / etc. and cannot be undone.\n\nEnter your password to confirm:`);
+                const password = await confirm({title:`Delete ${ids.length} employee(s)?`,description:"This cascades all their orders / leads / commissions / etc. and cannot be undone.",input:{placeholder:"Your password",type:"password"},okLabel:"Delete All",danger:true});
                 if (!password) return;
                 try {
                   const { data } = await axios.post(`${API}/users/bulk-delete`, { ids, password });
@@ -490,6 +501,8 @@ export default function HRManagerDashboard() {
                     </div>
                     {e.district && <p className="text-[10px] text-[#A66E4E] mt-1">{e.area ? `${e.area}, ` : ""}{e.district}</p>}
                     <div className="flex gap-1 mt-2 flex-wrap">
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>{setProfileEmpId(e.id); setShowProfile(true);}} data-testid={`view-profile-${e.id}`}>Profile</Button>
+                      <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>setDocsEmployee(e)} data-testid={`view-docs-${e.id}`}><FileDown className="w-3 h-3 mr-0.5"/>Letters</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setSelectedEmp(e);setSalaryForm({salary:e.salary||0,incentive:e.incentive||0});setShowEditSalary(true);}} data-testid={`edit-salary-${e.id}`}><IndianRupee className="w-3 h-3 mr-0.5"/>Salary</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={()=>{setEditingEmp(e); setEmpForm({name:e.name||"",email:cleanEmail(e.email),password:"",role:e.role||"telecaller",salary:e.salary||0,incentive:e.incentive||0,phone:e.phone||"",district:e.district||"",area:e.area||"",bank_account_name:e.bank_account_name||"",bank_account_number:e.bank_account_number||"",bank_ifsc:e.bank_ifsc||"",bank_name:e.bank_name||"",upi_id:e.upi_id||"",pan_number:e.pan_number||"",aadhaar_number:e.aadhaar_number||"",address:e.address||"",emergency_contact:e.emergency_contact||"",dob:e.dob||"",joining_date:e.joining_date||"",managed_by:e.managed_by||"",managed_by_name:e.managed_by_name||"",managed_by_role:e.managed_by_role||""}); setShowEditEmp(true);}} data-testid={`edit-emp-${e.id}`}>Edit</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>handleDeleteEmp(e)} data-testid={`delete-emp-${e.id}`}>Delete</Button>
@@ -721,7 +734,7 @@ export default function HRManagerDashboard() {
               const bulkDelete = async () => {
                 const ids = Array.from(hiringSelected);
                 if (!ids.length) return;
-                if (!window.confirm(`Delete ${ids.length} candidate(s)? Already-hired ones will be skipped automatically. This cannot be undone.`)) return;
+                if (!(await confirm({title:`Delete ${ids.length} candidate(s)? Already-hired ones will be skipped automatically. This cannot be undone.`,danger:true,okLabel:"Confirm"}))) return;
                 try {
                   const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids });
                   toast.success(data.message || `Deleted ${data.deleted}`);
@@ -784,7 +797,7 @@ export default function HRManagerDashboard() {
                   </div>
                   </div>
                   <div className="flex flex-col gap-1 items-end">
-                    <Select value={c.status} onValueChange={async(v)=>{try{await axios.put(`${API}/hiring/candidates/${c.id}`,{status:v});toast.success("Updated");fetchData();}catch{toast.error("Failed");}}}>
+                    <Select value={c.status} onValueChange={async(v)=>{try{await axios.put(`${API}/hiring/candidates/${c.id}`,{status:v});toast.success("Updated");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}>
                       <SelectTrigger className="h-6 w-32 text-[9px] rounded-full" data-testid={`status-${c.id}`}><SelectValue/></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="contacted" className="text-xs">Contacted</SelectItem>
@@ -802,7 +815,7 @@ export default function HRManagerDashboard() {
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setHrCallForm(f=>({...f,contact_name:c.name,phone:c.phone,linked_candidate_id:c.id,purpose:"candidate_followup"}));setShowHRCall(true);}} data-testid={`call-${c.id}`}><Phone className="w-2.5 h-2.5 mr-1"/>Log Call</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setEditingCandidate(c);setCandidateForm({name:c.name,phone:c.phone,email:c.email||"",position:c.position,location:c.location||"",experience:c.experience||"",qualification:c.qualification||"",skills:c.skills||"",expected_salary:c.expected_salary||0,interview_date:c.interview_date||"",interview_notes:c.interview_notes||"",source:c.source||"direct",status:c.status,notes:c.notes||""});setShowAddCandidate(true);}} data-testid={`edit-${c.id}`}>Edit</Button>
                       <Button size="sm" className="rounded-full text-[9px] h-6 bg-pink-600 text-white" onClick={()=>{setForwardingCandidate(c);setForwardForm({target_user_id:"",target_role:c.position==='agent'?'district_manager':'sales_manager',status:c.status==='contacted'?'interviewed':c.status});setShowForward(true);}} data-testid={`forward-${c.id}`}>Forward</Button>
-                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{if(!window.confirm(`Delete candidate "${c.name}"? This cannot be undone.`))return;try{await axios.delete(`${API}/hiring/candidates/${c.id}`);toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
+                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{if (!(await confirm({title:`Delete candidate "${c.name}"? This cannot be undone.`,danger:true,okLabel:"Confirm"}))) return;try{await axios.delete(`${API}/hiring/candidates/${c.id}`);toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
                     </div>
                     {c.status==='selected' && <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm" onClick={()=>{setHireCandidate(c); setHireMgrId(c.manager_selected_by||""); setShowFinalHire(true);}} data-testid={`hire-${c.id}`}>✓ Final Hire</Button>}
                     {c.status!=='selected' && c.status!=='hired' && c.status!=='rejected' && <p className="text-[9px] text-[#A66E4E] italic">Awaiting manager selection</p>}
@@ -871,7 +884,7 @@ export default function HRManagerDashboard() {
           {/* CALL LOGS UNIFIED */}
           <TabsContent value="calllogs"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
             <div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">All Call Logs (Telecaller + Agent + In-House + HR)</h3>
-              <Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{try{const r=await axios.get(`${API}/call-logs/all`); setCallLogs(r.data.call_logs||[]); toast.success(`Loaded ${r.data.call_logs?.length||0} logs`);}catch{toast.error("Failed");}}}>Refresh</Button>
+              <Button size="sm" variant="outline" className="rounded-full text-xs" onClick={async()=>{try{const r=await axios.get(`${API}/call-logs/all`); setCallLogs(r.data.call_logs||[]); toast.success(`Loaded ${r.data.call_logs?.length||0} logs`);} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}>Refresh</Button>
             </div>
             {callLogs.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No call logs. Click Refresh to fetch all.</p> :
               <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Type","Caller","Contact","Phone","Status","Notes"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase">{h}</th>)}</tr></thead>
@@ -936,7 +949,7 @@ export default function HRManagerDashboard() {
           </div></TabsContent>
 
           {/* TASK SHEETS */}
-          <TabsContent value="efficiency"><EmployeeEfficiency /></TabsContent>
+          <TabsContent value="efficiency"><HrEfficiencyPanel /></TabsContent>
 
           <TabsContent value="mysheet"><DailyTaskSheet titleSuffix="HR Manager" /></TabsContent>
 
@@ -976,7 +989,7 @@ export default function HRManagerDashboard() {
             <h3 className="font-heading text-lg font-medium mb-4">Birthdays & Anniversaries</h3>
             {birthdays.today.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No birthdays/anniversaries today</p> :
               <div className="space-y-2" data-testid="birthday-list">{birthdays.today.map((b,i)=>(
-                <div key={i} className={`border rounded-xl p-3 ${b.type==='birthday'?'border-pink-300 bg-pink-50':'border-blue-300 bg-blue-50'}`}>
+                <div key={`hrmd-${i}`} className={`border rounded-xl p-3 ${b.type==='birthday'?'border-pink-300 bg-pink-50':'border-blue-300 bg-blue-50'}`}>
                   <div className="flex justify-between items-center"><p className="font-medium text-sm">{b.name} <Badge className={`text-[8px] ml-2 ${b.type==='birthday'?'bg-pink-200':'bg-blue-200'}`}>{b.type==='birthday'?'🎂 Birthday':`🎉 ${b.years}yr Anniversary`}</Badge></p><p className="text-xs text-[#59615D]">{b.email}</p></div>
                 </div>
               ))}</div>}
@@ -1271,7 +1284,7 @@ export default function HRManagerDashboard() {
           <div><Label className="text-xs">Date</Label><Input type="date" value={attForm.date} onChange={e=>setAttForm(f=>({...f,date:e.target.value}))} className="rounded-xl"/></div>
           <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Login Time</Label><Input type="time" value={attForm.login_time} onChange={e=>setAttForm(f=>({...f,login_time:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Logout Time</Label><Input type="time" value={attForm.logout_time} onChange={e=>setAttForm(f=>({...f,logout_time:e.target.value}))} className="rounded-xl"/></div></div>
           <div><Label className="text-xs">Status</Label><Select value={attForm.status} onValueChange={v=>setAttForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="present">Present</SelectItem><SelectItem value="half_day">Half Day</SelectItem><SelectItem value="absent">Absent</SelectItem><SelectItem value="leave">On Leave</SelectItem></SelectContent></Select></div>
-          <Button onClick={async()=>{if(!attForm.user_id)return toast.error("Select employee");try{await axios.post(`${API}/attendance`,attForm);toast.success("Attendance marked!");setShowAttendance(false);fetchData();}catch{toast.error("Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white">Mark Attendance</Button>
+          <Button onClick={async()=>{if(!attForm.user_id)return toast.error("Select employee");try{await axios.post(`${API}/attendance`,attForm);toast.success("Attendance marked!");setShowAttendance(false);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} className="w-full rounded-full bg-[#3B5249] text-white">Mark Attendance</Button>
         </div>
       </DialogContent></Dialog>
 
@@ -1325,7 +1338,7 @@ export default function HRManagerDashboard() {
           </div>
           <Input placeholder="Next action (e.g., schedule interview)" value={hrCallForm.next_action} onChange={e=>setHrCallForm(f=>({...f,next_action:e.target.value}))} className="rounded-xl"/>
           <Textarea placeholder="Call notes" value={hrCallForm.notes} onChange={e=>setHrCallForm(f=>({...f,notes:e.target.value}))} className="rounded-xl" rows={3}/>
-          <Button onClick={async()=>{if(!hrCallForm.contact_name||!hrCallForm.phone)return toast.error("Name & phone required");try{await axios.post(`${API}/hr/call-logs`,hrCallForm); toast.success("Call logged"); setShowHRCall(false); setHrCallForm({contact_name:"",phone:"",purpose:"candidate_followup",linked_candidate_id:"",duration_min:0,outcome:"contacted",next_action:"",next_action_date:"",notes:""}); fetchData();}catch{toast.error("Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="hrcall-submit">Log Call</Button>
+          <Button onClick={async()=>{if(!hrCallForm.contact_name||!hrCallForm.phone)return toast.error("Name & phone required");try{await axios.post(`${API}/hr/call-logs`,hrCallForm); toast.success("Call logged"); setShowHRCall(false); setHrCallForm({contact_name:"",phone:"",purpose:"candidate_followup",linked_candidate_id:"",duration_min:0,outcome:"contacted",next_action:"",next_action_date:"",notes:""}); fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="hrcall-submit">Log Call</Button>
         </div>
       </DialogContent></Dialog>
 
@@ -1345,6 +1358,26 @@ export default function HRManagerDashboard() {
       {/* ADD EMPLOYEE DIALOG */}
       <Dialog open={showAddEmp} onOpenChange={setShowAddEmp}><DialogContent className="rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="add-emp-dialog"><DialogHeader><DialogTitle className="font-heading">Add Employee</DialogTitle></DialogHeader>
         <div className="space-y-2">
+          {/* Photo upload */}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-[#F9F8F6] border border-[#E5E3DB]">
+            <div className="relative">
+              {empForm.profile_image ? (
+                <img src={empForm.profile_image} alt="preview" className="w-16 h-16 rounded-xl object-cover border border-[#E5E3DB]" data-testid="emp-photo-preview" />
+              ) : (
+                <div className="w-16 h-16 rounded-xl bg-[#3B5249] text-[#F4ECD2] flex items-center justify-center text-lg font-bold border border-[#E5E3DB]" data-testid="emp-photo-placeholder">
+                  {(empForm.name || "?").split(" ").map(s=>s[0]).slice(0,2).join("").toUpperCase()}
+                </div>
+              )}
+            </div>
+            <div className="flex-1">
+              <Label className="text-[10px] uppercase tracking-wider text-[#3B5249] font-semibold">Employee Photo (optional)</Label>
+              <p className="text-[10px] text-[#59615D] mt-0.5">JPG/PNG, max 800KB. Will be embedded in profile PDFs.</p>
+              <div className="flex gap-1 mt-1">
+                <Input type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0]; if(!f) return; if(f.size>800000){toast.error("Max 800KB"); e.target.value=""; return;} const r=new FileReader(); r.onload=ev=>setEmpForm(s=>({...s,profile_image:ev.target.result})); r.readAsDataURL(f);}} className="rounded-xl text-xs h-7" data-testid="emp-photo-input"/>
+                {empForm.profile_image && <Button type="button" size="sm" variant="outline" className="rounded-full h-7 text-[10px]" onClick={()=>setEmpForm(s=>({...s,profile_image:""}))} data-testid="emp-photo-clear">Clear</Button>}
+              </div>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <Input placeholder="Full Name *" value={empForm.name} onChange={e=>setEmpForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="emp-name-input"/>
             <Input placeholder="Email (optional)" value={empForm.email} onChange={e=>setEmpForm(f=>({...f,email:e.target.value}))} className="rounded-xl" data-testid="emp-email-input"/>
@@ -1511,6 +1544,20 @@ export default function HRManagerDashboard() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* Employee Profile Dialog (View All Details + Photo + PDF Download) */}
+      <EmployeeProfileDialog
+        open={showProfile}
+        onOpenChange={(o)=>{setShowProfile(o); if(!o) setProfileEmpId(null);}}
+        employeeId={profileEmpId}
+      />
+
+      {/* Employee Letters & Documents Dialog (role-specific templates, signature-ready download) */}
+      <EmployeeDocumentsDialog
+        open={!!docsEmployee}
+        onOpenChange={(o)=>{ if(!o) setDocsEmployee(null); }}
+        employee={docsEmployee}
+      />
     </div>
   );
 }

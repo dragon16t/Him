@@ -15,6 +15,8 @@ import { LogOut, Loader2, Phone, Plus, Target, Calendar, ClipboardList, UserPlus
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
+import { PageLoader } from "../components/Skeletons";
 
 const API = "/api";
 
@@ -63,7 +65,11 @@ export default function InHouseTelecallerDashboard() {
 
   const logInfluencer = async () => {
     if (!infForm.influencer_name) return toast.error("Name required");
-    try { await axios.post(`${API}/influencer/outreach`, infForm); toast.success("Influencer logged!"); setShowInfluencer(false); setInfForm({ influencer_name: "", platform: "instagram", followers: 0, category: "nano", contact: "", status: "contacted", barter_type: "", response: "", notes: "" }); fetchData(); } catch (e) { toast.error("Failed"); }
+    // Dedup: same name + platform already logged
+    const nameKey = infForm.influencer_name.trim().toLowerCase();
+    const dup = influencerEntries.find(e => (e.influencer_name||"").trim().toLowerCase() === nameKey && e.platform === infForm.platform);
+    if (dup) return toast.error(`Already logged on ${infForm.platform} (status: ${dup.status})`);
+    try { await axios.post(`${API}/influencer/outreach`, infForm); toast.success("Influencer logged!"); setShowInfluencer(false); setInfForm({ influencer_name: "", platform: "instagram", followers: 0, category: "nano", contact: "", status: "contacted", barter_type: "", response: "", notes: "" }); fetchData(); } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const logHiring = async () => {
@@ -72,19 +78,19 @@ export default function InHouseTelecallerDashboard() {
   };
 
   const setGoal = async () => {
-    try { await axios.post(`${API}/inhouse/daily-goals`, goalForm); toast.success("Goal set!"); setShowGoal(false); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/inhouse/daily-goals`, goalForm); toast.success("Goal set!"); setShowGoal(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const updateInfluencerStatus = async (id, status) => {
-    try { await axios.put(`${API}/influencer/outreach/${id}`, { status }); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/influencer/outreach/${id}`, { status }); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const updateHiringStatus = async (id, status) => {
-    try { await axios.put(`${API}/hiring/candidates/${id}`, { status }); toast.success("Updated"); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/hiring/candidates/${id}`, { status }); toast.success("Updated"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
+  if (loading) return <PageLoader label="Loading…" />;
 
   const today = new Date().toISOString().slice(0, 10);
   const todayCalls = callLogs.filter(c => c.created_at?.slice(0, 10) === today);
@@ -95,7 +101,7 @@ export default function InHouseTelecallerDashboard() {
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">In-House Telecaller - {user.name}</p></div>
-          <div className="flex items-center gap-2"><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm"><LogOut className="w-4 h-4 mr-1" />Logout</Button></div>
+          <div className="flex items-center gap-2"><DarkModeToggle compact /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm"><LogOut className="w-4 h-4 mr-1" />Logout</Button></div>
         </div>
       </div>
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4">
@@ -128,7 +134,7 @@ export default function InHouseTelecallerDashboard() {
             </div>
             <div className="grid grid-cols-5 gap-2 mb-4">
               {[{ l: "Called", v: influencerStats.total || 0, c: "#59615D" }, { l: "Responded", v: influencerStats.responded || 0, c: "#3B5249" }, { l: "Converted", v: influencerStats.converted || 0, c: "#6B8E6B" }, { l: "Product Sent", v: influencerStats.product_sent || 0, c: "#A66E4E" }, { l: "Rate", v: influencerStats.total ? Math.round((influencerStats.converted || 0) / influencerStats.total * 100) + "%" : "0%", c: "#D4A373" }].map((s, i) => (
-                <div key={i} className="bg-[#F9F8F6] rounded-lg p-2 text-center"><p className="text-[9px] text-[#59615D] uppercase">{s.l}</p><p className="font-heading text-sm font-bold" style={{ color: s.c }}>{s.v}</p></div>
+                <div key={`ihtd-${i}`} className="bg-[#F9F8F6] rounded-lg p-2 text-center"><p className="text-[9px] text-[#59615D] uppercase">{s.l}</p><p className="font-heading text-sm font-bold" style={{ color: s.c }}>{s.v}</p></div>
               ))}
             </div>
             {influencerEntries.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No outreach yet. Start finding influencers!</p> :
@@ -157,7 +163,7 @@ export default function InHouseTelecallerDashboard() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-4">
               {[{ l: "Total", v: hiringEntries.length, k:"all" }, { l: "Contacted", v: hiringEntries.filter(e=>e.status==='contacted').length, k:"contacted" }, { l: "Not Answering", v: hiringEntries.filter(e=>e.status==='not_answering').length, k:"not_answering" }, { l: "Interested", v: hiringEntries.filter(e=>e.status==='interested').length, k:"interested" }, { l: "Interviewed", v: hiringEntries.filter(e=>e.status==='interviewed').length, k:"interviewed" }, { l: "Hired", v: hiringEntries.filter(e=>e.status==='hired').length, k:"hired" }, { l: "Rejected", v: hiringEntries.filter(e=>e.status==='rejected').length, k:"rejected" }].map((s, i) => (
-                <button key={i} onClick={()=>setHireFilter(s.k)} data-testid={`ih-hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hireFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hireFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-sm font-bold">{s.v}</p></button>
+                <button key={`ihtd-${i}`} onClick={()=>setHireFilter(s.k)} data-testid={`ih-hf-${s.k}`} className={`rounded-lg p-2 text-center transition-all ${hireFilter===s.k?"bg-[#3B5249] text-white shadow-sm":"bg-[#F9F8F6] hover:bg-[#E5E3DB]"}`}><p className={`text-[9px] uppercase ${hireFilter===s.k?"text-white/80":"text-[#59615D]"}`}>{s.l}</p><p className="font-heading text-sm font-bold">{s.v}</p></button>
               ))}
             </div>
             <div className="flex items-center gap-2 mb-3 flex-wrap">

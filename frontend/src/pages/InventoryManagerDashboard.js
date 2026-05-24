@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { LogOut, Loader2, Package, Truck, Check, AlertTriangle, Search } from "lucide-react";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
@@ -61,21 +62,30 @@ export default function InventoryManagerDashboard() {
     setLoading(false);
   }, []);
 
-  const updateStock = async () => { if(!stockForm.pid) return toast.error("Select product"); try { await axios.put(`${API}/products/${stockForm.pid}/stock`, {stock:stockForm.stock,low_stock_threshold:stockForm.low_stock_threshold}); toast.success("Stock updated"); setShowStock(false); fetchData(); } catch { toast.error("Failed"); } };
-  const handlePO = async () => { if(!poForm.vendor_name||!poForm.total_amount) return toast.error("Fill fields"); try { await axios.post(`${API}/purchase-orders`, poForm); toast.success("PO created"); setShowPO(false); setPoForm({vendor_id:"",vendor_name:"",total_amount:0,expected_date:"",items:[]}); fetchData(); } catch { toast.error("Failed"); } };
-  const handleReturn = async () => { if(!returnForm.order_id||!returnForm.reason) return toast.error("Fill fields"); try { await axios.post(`${API}/returns`, returnForm); toast.success("Return logged"); setShowReturn(false); setReturnForm({order_id:"",reason:"",type:"return",amount:0,notes:""}); fetchData(); } catch { toast.error("Failed"); } };
+  const updateStock = async () => {
+    if(!stockForm.pid) return toast.error("Select product");
+    const stockNum = Number(stockForm.stock);
+    const threshNum = Number(stockForm.low_stock_threshold);
+    if (Number.isNaN(stockNum) || stockNum < 0) return toast.error("Stock must be 0 or higher");
+    if (Number.isNaN(threshNum) || threshNum < 0) return toast.error("Threshold must be 0 or higher");
+    try { await axios.put(`${API}/products/${stockForm.pid}/stock`, {stock:stockNum, low_stock_threshold:threshNum}); toast.success("Stock updated"); setShowStock(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const handlePO = async () => { if(!poForm.vendor_name||!poForm.total_amount) return toast.error("Fill fields"); try { await axios.post(`${API}/purchase-orders`, poForm); toast.success("PO created"); setShowPO(false); setPoForm({vendor_id:"",vendor_name:"",total_amount:0,expected_date:"",items:[]}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleReturn = async () => { if(!returnForm.order_id||!returnForm.reason) return toast.error("Fill fields"); try { await axios.post(`${API}/returns`, returnForm); toast.success("Return logged"); setShowReturn(false); setReturnForm({order_id:"",reason:"",type:"return",amount:0,notes:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const markShipped = (o) => { setShipOrder(o); setShipForm({tracking_link:"",courier_name:"",tracking_number:""}); setShowShipDialog(true); };
   const submitShip = async () => {
-    if (!shipForm.tracking_link.trim()) return toast.error("Tracking link is required");
+    const link = (shipForm.tracking_link || "").trim();
+    if (!link) return toast.error("Tracking link is required");
+    try { new URL(link); } catch { return toast.error("Tracking link must be a valid URL (https://...)"); }
     try {
-      await axios.put(`${API}/inventory/orders/${shipOrder.id}/ship`, shipForm);
+      await axios.put(`${API}/inventory/orders/${shipOrder.id}/ship`, {...shipForm, tracking_link: link});
       toast.success("Shipped! Tracking saved.");
       setShowShipDialog(false); fetchData();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
-  const markDelivered = async (oid) => { try { await axios.put(`${API}/inventory/orders/${oid}/deliver`); toast.success("Delivered! Commission credited."); fetchData(); } catch { toast.error("Failed"); } };
+  const markDelivered = async (oid) => { try { await axios.put(`${API}/inventory/orders/${oid}/deliver`); toast.success("Delivered! Commission credited."); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const openDetail = (o) => { setDetailOrder(o); setShowOrderDetail(true); };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -96,7 +106,7 @@ export default function InventoryManagerDashboard() {
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Inventory Manager - {user.name}</p></div>
-          <div className="flex items-center gap-2"><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm"><LogOut className="w-4 h-4 mr-1"/>Logout</Button></div>
+          <div className="flex items-center gap-2"><DarkModeToggle compact /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm"><LogOut className="w-4 h-4 mr-1"/>Logout</Button></div>
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
@@ -274,7 +284,7 @@ export default function InventoryManagerDashboard() {
             <p className="text-xs text-[#3B5249] mt-1">📍 <b>Full Address:</b><br/>{detailOrder.customer_address}{detailOrder.customer_city?`, ${detailOrder.customer_city}`:""}{detailOrder.customer_pincode?` - ${detailOrder.customer_pincode}`:""}</p>
             {detailOrder.customer_landmark && <p className="text-[10px] text-[#A66E4E]">Landmark: {detailOrder.customer_landmark}</p>}
           </div>
-          <div className="text-xs"><b>Items:</b><ul className="list-disc ml-4 mt-1">{(detailOrder.items||[]).map((it,i)=>(<li key={i}>{it.name} × {it.quantity} = Rs.{it.price*it.quantity}</li>))}</ul></div>
+          <div className="text-xs"><b>Items:</b><ul className="list-disc ml-4 mt-1">{(detailOrder.items||[]).map((it,i)=>(<li key={`imd-${i}`}>{it.name} × {it.quantity} = Rs.{it.price*it.quantity}</li>))}</ul></div>
           <div className="grid grid-cols-2 gap-2 text-xs"><div>Total: <b>Rs.{detailOrder.total_amount}</b></div><div>Payment: <b>{detailOrder.payment_type?.toUpperCase()}</b></div></div>
           <div className="text-xs"><b>Created by:</b> {detailOrder.created_by_name||'-'} ({detailOrder.created_by_role}) on {detailOrder.created_at?.slice(0,16).replace('T',' ')}</div>
           {detailOrder.tracking_link && <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 text-xs"><b>📦 Tracking:</b> {detailOrder.courier_name||""} {detailOrder.tracking_number||""}<br/><a href={detailOrder.tracking_link} target="_blank" rel="noreferrer" className="text-purple-700 underline">{detailOrder.tracking_link}</a><br/>{detailOrder.shipped_by_name && <span className="text-[10px] text-[#59615D]">Shipped by: {detailOrder.shipped_by_name} on {detailOrder.shipped_at?.slice(0,16).replace('T',' ')}</span>}</div>}

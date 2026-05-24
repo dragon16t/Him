@@ -13,6 +13,9 @@ import { LogOut, ShoppingBag, IndianRupee, MapPin, Plus, X, Loader2, TrendingUp,
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
+import MobileBottomNav from "../components/MobileBottomNav";
+import { PageLoader } from "../components/Skeletons";
 
 const API = "/api";
 
@@ -32,7 +35,7 @@ export default function AgentPortal() {
   const [showOrder, setShowOrder] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showFundRequest, setShowFundRequest] = useState(false);
-  const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", items: [], payment_type: "cod" });
+  const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], payment_type: "cod" });
   const [fundForm, setFundForm] = useState({ amount: 0, reason: "", category: "travel" });
   const [pwForm, setPwForm] = useState({ old_password: "", new_password: "" });
 
@@ -53,29 +56,32 @@ export default function AgentPortal() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const addItem = (p) => { const ex = orderForm.items.find(i=>i.product_id===p.id); if(ex) setOrderForm(f=>({...f,items:f.items.map(i=>i.product_id===p.id?{...i,quantity:i.quantity+1}:i)})); else setOrderForm(f=>({...f,items:[...f.items,{product_id:p.id,product_name:p.name,price:p.price,quantity:1}]})); };
-  const updateQty = (pid, delta) => setOrderForm(f => ({...f, items: f.items.map(i => i.product_id===pid ? {...i, quantity: Math.max(0, (i.quantity||1)+delta)} : i).filter(i => i.quantity > 0)}));
-  const setQty = (pid, q) => { const qq = Math.max(0, parseInt(q || 0)); setOrderForm(f => ({...f, items: f.items.map(i => i.product_id===pid ? {...i, quantity: qq} : i).filter(i => i.quantity > 0)})); };
+  const updateQty = (pid, delta) => setOrderForm(f => ({...f, items: f.items.map(i => i.product_id===pid ? {...i, quantity: Math.max(1, (i.quantity||1)+delta)} : i)}));
+  const setQty = (pid, q) => { const p = parseInt(q, 10); const qq = Number.isFinite(p) ? Math.max(1, p) : 1; setOrderForm(f => ({...f, items: f.items.map(i => i.product_id===pid ? {...i, quantity: qq} : i)})); };
   const removeItem = (pid) => setOrderForm(f => ({...f, items: f.items.filter(i => i.product_id !== pid)}));
   const handleCreateOrder = async () => {
     if (!orderForm.customer_name) return toast.error("Customer name is required");
     if (!orderForm.customer_phone) return toast.error("Customer phone is required");
     if (!orderForm.customer_address || orderForm.customer_address.trim().length < 8) return toast.error("Customer address is required (min 8 chars)");
+    if (!orderForm.customer_pincode || !/^\d{6}$/.test(orderForm.customer_pincode)) return toast.error("6-digit pincode is required for shipping");
+    if (!orderForm.customer_city) return toast.error("City is required");
     if (orderForm.items.length === 0) return toast.error("Add at least one product");
     const total = orderForm.items.reduce((s,i)=>s+i.price*i.quantity,0);
     if (total <= 0) return toast.error("Total must be greater than 0");
-    try { await axios.post(`${API}/orders`, {...orderForm, total_amount: total}); toast.success(`Order created · Rs.${total}`); setShowOrder(false); setOrderForm({customer_name:"",customer_phone:"",customer_address:"",items:[],payment_type:"cod"}); fetchData(); }
-    catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/orders`, {...orderForm, total_amount: total}); toast.success(`Order created · Rs.${total}`); setShowOrder(false); setOrderForm({customer_name:"",customer_phone:"",customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],payment_type:"cod"}); fetchData(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Failed to create order"); }
   };
   const handleFundRequest = async () => {
     if (!fundForm.amount || !fundForm.reason) return toast.error("Fill details");
-    try { await axios.post(`${API}/fund-requests`, fundForm); toast.success("Sent!"); setShowFundRequest(false); setFundForm({amount:0,reason:"",category:"travel"}); } catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/fund-requests`, fundForm); toast.success("Sent!"); setShowFundRequest(false); setFundForm({amount:0,reason:"",category:"travel"}); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const handlePwChange = async () => {
     if (!pwForm.old_password || !pwForm.new_password) return toast.error("Fill both");
-    try { await axios.put(`${API}/profile/password`, pwForm); toast.success("Changed!"); setPwForm({old_password:"",new_password:""}); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); }
+    if (pwForm.new_password.length < 6) return toast.error("New password must be at least 6 characters");
+    try { await axios.put(`${API}/profile/password`, pwForm); toast.success("Changed!"); setPwForm({old_password:"",new_password:""}); setShowProfile(false); } catch (e) { toast.error(e.response?.data?.detail||"Failed"); }
   };
   const logout = () => { localStorage.clear(); navigate("/login"); };
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
+  if (loading) return <PageLoader label="Loading your portal…" />;
 
   const pendingTasks = tasks.filter(t => t.status === "pending");
 
@@ -87,7 +93,7 @@ export default function AgentPortal() {
             <div><p className="text-[10px] sm:text-xs uppercase tracking-[0.2em] text-white/70">Field Agent</p><h2 className="font-heading text-lg sm:text-2xl font-medium">{user.name}</h2><div className="flex items-center gap-1 mt-1 text-white/80 text-xs sm:text-sm"><MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5"/>{user.area}, {user.district}</div></div>
             <div className="flex gap-1 sm:gap-2">
               <AttendanceCheckIn />
-              <NotificationBell />
+              <DarkModeToggle compact /><NotificationBell />
               <Button variant="ghost" size="icon" onClick={()=>setShowProfile(true)} className="text-white hover:bg-white/20 rounded-full h-9 w-9" data-testid="profile-btn"><User className="w-4 h-4 sm:w-5 sm:h-5"/></Button>
               <Button variant="ghost" size="icon" onClick={logout} className="text-white hover:bg-white/20 rounded-full h-9 w-9" data-testid="logout-btn"><LogOut className="w-4 h-4 sm:w-5 sm:h-5"/></Button>
             </div>
@@ -170,7 +176,12 @@ export default function AgentPortal() {
         <div className="space-y-3">
           <div><Label className="text-xs">Customer</Label><Input value={orderForm.customer_name} onChange={e=>setOrderForm(f=>({...f,customer_name:e.target.value}))} className="rounded-xl" data-testid="order-name-input"/></div>
           <div><Label className="text-xs">Phone</Label><Input value={orderForm.customer_phone} onChange={e=>setOrderForm(f=>({...f,customer_phone:e.target.value}))} className="rounded-xl" data-testid="order-phone-input"/></div>
-          <div><Label className="text-xs">Address</Label><Textarea value={orderForm.customer_address} onChange={e=>setOrderForm(f=>({...f,customer_address:e.target.value}))} className="rounded-xl" data-testid="order-address-input"/></div>
+          <div><Label className="text-xs">Address *</Label><Textarea value={orderForm.customer_address} onChange={e=>setOrderForm(f=>({...f,customer_address:e.target.value}))} className="rounded-xl" data-testid="order-address-input" placeholder="House/Flat, Street, Locality"/></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">City *</Label><Input value={orderForm.customer_city} onChange={e=>setOrderForm(f=>({...f,customer_city:e.target.value}))} className="rounded-xl" placeholder="Calicut" data-testid="order-city-input"/></div>
+            <div><Label className="text-xs text-[#B75D69]">Pincode * (6 digits)</Label><Input value={orderForm.customer_pincode} onChange={e=>setOrderForm(f=>({...f,customer_pincode:e.target.value.replace(/\D/g,"").slice(0,6)}))} className="rounded-xl" placeholder="673001" maxLength={6} inputMode="numeric" data-testid="order-pincode-input"/></div>
+          </div>
+          <div><Label className="text-xs">Landmark (optional)</Label><Input value={orderForm.customer_landmark} onChange={e=>setOrderForm(f=>({...f,customer_landmark:e.target.value}))} className="rounded-xl" placeholder="Near XYZ school" data-testid="order-landmark-input"/></div>
           <Label className="text-xs">Products</Label>
           <div className="space-y-1.5 max-h-40 overflow-y-auto">{products.map(p=>(<div key={p.id} className="flex items-center justify-between bg-[#F9F8F6] rounded-xl p-2"><div><p className="text-xs font-medium">{p.name}</p><p className="text-[10px] text-[#59615D]">Rs.{p.price} | Stock: {p.stock}</p></div><Button size="sm" variant="outline" className="rounded-full h-7 text-xs" onClick={()=>addItem(p)} data-testid={`add-product-${p.id}`}><Plus className="w-3 h-3"/></Button></div>))}</div>
           {orderForm.items.length>0&&<div className="border border-[#E5E3DB] rounded-xl p-3 space-y-2">{orderForm.items.map(i=>(
@@ -215,6 +226,23 @@ export default function AgentPortal() {
           </div>
         </div>
       </DialogContent></Dialog>
+
+      {/* Mobile bottom nav (visible on small screens only) */}
+      <MobileBottomNav
+        activeKey="home"
+        onSelect={(k) => {
+          if (k === "order") setShowOrder(true);
+          else if (k === "fund") setShowFundRequest(true);
+          else if (k === "profile") setShowProfile(true);
+        }}
+        items={[
+          { key: "home", label: "Home", icon: MapPin },
+          { key: "order", label: "Order", icon: Plus },
+          { key: "fund", label: "Fund", icon: Wallet },
+          { key: "profile", label: "Profile", icon: User, badge: pendingTasks.length },
+        ]}
+      />
+      <div className="md:hidden h-16" aria-hidden="true" />
     </div>
   );
 }

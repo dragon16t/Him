@@ -45,6 +45,7 @@ export default function UniversalLogin() {
     try {
       const { data } = await axios.post(`${API}/auth/login`, { email, password });
       localStorage.setItem("token", data.token);
+      if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
       localStorage.setItem("user", JSON.stringify(data.user));
       toast.success(`Welcome, ${data.user.name || data.user.email}!`);
       navigate(ROLE_ROUTES[data.user.role] || "/login");

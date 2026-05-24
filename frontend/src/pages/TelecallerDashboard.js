@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -14,14 +15,36 @@ import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupe
 import RoleGuidelines from "../components/RoleGuidelines";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
+import { useConfirm } from "../components/ConfirmDialog";
+import VoiceNoteButton from "../components/VoiceNoteButton";
+import LeadScoreBadge from "../components/LeadScoreBadge";
+import MobileBottomNav from "../components/MobileBottomNav";
+import WhatsAppCTA from "../components/WhatsAppCTA";
+import StatusBadge from "../components/StatusBadge";
+import { PageLoader } from "../components/Skeletons";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
-const STATUS_COLORS = { new: "bg-blue-100 text-blue-800", interested: "bg-green-100 text-green-800", follow_up: "bg-yellow-100 text-yellow-800", not_interested: "bg-red-100 text-red-800", ordered: "bg-emerald-100 text-emerald-800" };
+const STATUS_COLORS = {
+  new: "bg-blue-100 text-blue-800",
+  interested: "bg-green-100 text-green-800",
+  follow_up: "bg-yellow-100 text-yellow-800",
+  not_interested: "bg-red-100 text-red-800",
+  ordered: "bg-emerald-100 text-emerald-800",
+  no_response: "bg-orange-100 text-orange-800",
+  busy: "bg-amber-100 text-amber-800",
+  callback: "bg-cyan-100 text-cyan-800",
+  order_created: "bg-emerald-100 text-emerald-800",
+  converted: "bg-emerald-200 text-emerald-900",
+  delivered: "bg-emerald-200 text-emerald-900",
+  routed_to_collab: "bg-violet-100 text-violet-800",
+};
 
 export default function TelecallerDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [leads, setLeads] = useState([]);
@@ -117,7 +140,7 @@ export default function TelecallerDashboard() {
     return 5;
   };
 
-  const filteredLeads = leads.filter(l => {
+  const filteredLeads = React.useMemo(() => leads.filter(l => {
     // Hide leads routed to collab and recently-ordered leads from active views
     if (l.status === "routed_to_collab") return false;
     if (isRecentlyOrdered(l)) return false;
@@ -140,7 +163,8 @@ export default function TelecallerDashboard() {
     if (pa !== pb) return pa - pb;
     // Within the same priority, newer leads first (created_at desc)
     return (b.created_at || "").localeCompare(a.created_at || "");
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [leads, statusFilter, dateFilter, searchQuery, tab, today]);
 
   const handleAddLead = async () => {
     if (!leadForm.phone_number) return toast.error("Phone number required");
@@ -189,18 +213,21 @@ export default function TelecallerDashboard() {
         setShowOrder(true);
       }
       fetchData();
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const handleCreateOrder = async () => {
     const computedTotal = orderForm.items.reduce((s,i)=>s+i.price*i.quantity, 0);
     const finalTotal = computedTotal > 0 ? computedTotal : Number(orderForm.total_amount || 0);
-    if (!orderForm.customer_name) return toast.error("Customer name is required");
+    const cleanName = (orderForm.customer_name || "").trim();
+    if (!cleanName || cleanName.toLowerCase() === "unknown") return toast.error("Please capture the customer's real name before creating the order");
     if (orderForm.items.length === 0 && finalTotal <= 0) return toast.error("Add at least one product or enter manual amount");
     if (finalTotal <= 0) return toast.error("Total amount must be greater than 0");
     if (!orderForm.customer_address || orderForm.customer_address.trim().length < 8) return toast.error("Customer address is required (min 8 chars)");
+    if (!orderForm.customer_pincode || !/^\d{6}$/.test(orderForm.customer_pincode)) return toast.error("6-digit pincode is required for shipping");
+    if (!orderForm.customer_city) return toast.error("City is required");
     try {
-      await axios.post(`${API}/orders`, { ...orderForm, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
+      await axios.post(`${API}/orders`, { ...orderForm, customer_name: cleanName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
       toast.success(`Order created! Total: Rs.${finalTotal}`);
       setShowOrder(false);
       fetchData();
@@ -211,15 +238,15 @@ export default function TelecallerDashboard() {
     setOrderForm(f => ({
       ...f,
       items: f.items
-        .map(i => i.product_id === pid ? { ...i, quantity: Math.max(0, (i.quantity || 1) + delta) } : i)
-        .filter(i => i.quantity > 0)
+        .map(i => i.product_id === pid ? { ...i, quantity: Math.max(1, (i.quantity || 1) + delta) } : i)
     }));
   };
   const setItemQty = (pid, qty) => {
-    const q = Math.max(0, parseInt(qty || 0));
+    const parsed = parseInt(qty, 10);
+    const q = Number.isFinite(parsed) ? Math.max(1, parsed) : 1;
     setOrderForm(f => ({
       ...f,
-      items: f.items.map(i => i.product_id === pid ? { ...i, quantity: q } : i).filter(i => i.quantity > 0)
+      items: f.items.map(i => i.product_id === pid ? { ...i, quantity: q } : i)
     }));
   };
   const addProduct = (p) => {
@@ -231,7 +258,7 @@ export default function TelecallerDashboard() {
   };
 
   const markCalled = async (lid) => {
-    try { await axios.put(`${API}/relationship-calls/${lid}/mark-called`, {remarks:"Called"}); toast.success("Marked"); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/relationship-calls/${lid}/mark-called`, {remarks:"Called"}); toast.success("Marked"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const toggleProduct = (pName) => {
@@ -239,14 +266,14 @@ export default function TelecallerDashboard() {
   };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
+  if (loading) return <PageLoader label="Loading dashboard…" />;
 
   return (
     <div className="min-h-screen bg-[#F9F8F6]" data-testid="telecaller-dashboard">
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div><h1 className="font-heading text-lg font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-[10px] text-[#59615D] uppercase tracking-[0.15em]">Telecaller - {user.name}</p></div>
-          <div className="flex items-center gap-2"><GlobalSearch /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-xs h-8"><LogOut className="w-3 h-3 mr-1"/>Logout</Button></div>
+          <div className="flex items-center gap-2"><GlobalSearch /><DarkModeToggle compact /><NotificationBell /><AttendanceCheckIn /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-xs h-8"><LogOut className="w-3 h-3 mr-1"/>Logout</Button></div>
         </div>
       </div>
       <div className="max-w-5xl mx-auto px-4 py-4">
@@ -414,7 +441,7 @@ export default function TelecallerDashboard() {
                 {t:"Lead Conversion Script",c:"'Hi [Name], this is [You] from Celesta Glow. I'm calling about our [Product]. Many customers like you have seen amazing results. Can I share how it can help you?'"},
                 {t:"Objection Handling",c:"Price: 'I understand. Let me explain the value you get...'\nNot interested: 'May I ask what concerns you? Perhaps I can address that.'\nBusy: 'When would be a better time to call?'"},
                 {t:"Follow-up Best Practices",c:"- Call within 15 minutes of lead creation\n- Always note preferred call time\n- Change approach for repeat calls\n- Share customer success stories"}
-              ].map((ins,i)=>(<div key={i} className="border border-[#E5E3DB] rounded-lg p-3"><p className="font-heading font-medium text-xs mb-1">{ins.t}</p><pre className="text-[10px] text-[#59615D] whitespace-pre-wrap font-sans">{ins.c}</pre></div>))}
+              ].map((ins,i)=>(<div key={`td-${i}`} className="border border-[#E5E3DB] rounded-lg p-3"><p className="font-heading font-medium text-xs mb-1">{ins.t}</p><pre className="text-[10px] text-[#59615D] whitespace-pre-wrap font-sans">{ins.c}</pre></div>))}
               {instructions.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-lg p-3"><p className="font-heading font-medium text-xs">{i.title}</p><p className="text-[10px] text-[#59615D]">{i.content}</p></div>))}
             </div>
           </div>
@@ -479,7 +506,8 @@ export default function TelecallerDashboard() {
                     {lead.product_interest && lead.product_interest !== "general" && <p className="text-[10px] text-[#A66E4E]">Products: {lead.product_interest}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <Badge className={`${STATUS_COLORS[lead.status] || "bg-gray-100"} text-[10px]`}>{lead.status?.replace("_", " ")}</Badge>
+                    <LeadScoreBadge leadId={lead.id} compact />
+                    <StatusBadge status={lead.status} />
                     {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
                     {lead.last_order_date && <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">REPEAT CUSTOMER</Badge>}
                     {lead.next_repeat_order_date && lead.next_repeat_order_date <= today && <Badge className="bg-orange-100 text-orange-800 text-[10px]">REPEAT DUE</Badge>}
@@ -490,8 +518,12 @@ export default function TelecallerDashboard() {
                 {lead.remarks && <p className="text-xs text-[#59615D] mb-2">{lead.remarks}</p>}
                 <div className="flex gap-2 flex-wrap">
                   <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:"",next_follow_up_time:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <WhatsAppCTA
+                    phone={lead.phone_number}
+                    message={`Hi ${lead.name && lead.name!=="Unknown" ? lead.name : ""}, this is from Celesta Glow. ${lead.status === "interested" ? "Just following up — would you like to place your order today?" : "Just checking in — how can we help?"}`}
+                  />
                   {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
-                  <Button size="sm" variant="outline" className="rounded-full text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 h-7 w-7 p-0" onClick={async()=>{ if(!window.confirm(`Delete this lead permanently? It will not reappear.`)) return; try { await axios.delete(`${API}/leads/${lead.id}`); toast.success("Lead deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } }} data-testid={`del-lead-${lead.id}`} title="Delete lead"><X className="w-3 h-3"/></Button>
+                  <Button size="sm" variant="outline" className="rounded-full text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 h-7 w-7 p-0" onClick={async()=>{ const ok = await confirm({title:"Delete this lead?",description:"This lead will be permanently removed and won't reappear.",danger:true,okLabel:"Delete"}); if(!ok) return; try { await axios.delete(`${API}/leads/${lead.id}`); toast.success("Lead deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } }} data-testid={`del-lead-${lead.id}`} title="Delete lead"><X className="w-3 h-3"/></Button>
                 </div>
               </div>
             ))}
@@ -541,7 +573,9 @@ export default function TelecallerDashboard() {
             )}
           </div>
           <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent>{callForm.enquiry_type === "orders" ? <><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="ordered">Order Created</SelectItem></> : <><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="no_response">No Response</SelectItem></>}</SelectContent></Select></div>
-          <div><Label className="text-xs">Notes / Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did they say? Any context for the manager…"/></div>
+          <div><Label className="text-xs">Notes / Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did they say? Any context for the manager…"/>
+            <div className="flex justify-end mt-1"><VoiceNoteButton compact label="Dictate notes" onTranscribed={(text)=>setCallForm(f=>({...f,customer_remarks:(f.customer_remarks?f.customer_remarks+" ":"")+text}))} /></div>
+          </div>
           {callForm.enquiry_type === "orders" && (
             <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
           )}
@@ -595,9 +629,23 @@ export default function TelecallerDashboard() {
         <div className="space-y-3">
           <div><Label className="text-xs">Amount</Label><Input type="number" value={fundForm.amount} onChange={e=>setFundForm(f=>({...f,amount:Number(e.target.value)}))} className="rounded-xl"/></div>
           <div><Label className="text-xs">Reason</Label><Input value={fundForm.reason} onChange={e=>setFundForm(f=>({...f,reason:e.target.value}))} className="rounded-xl"/></div>
-          <Button onClick={async()=>{if(!fundForm.amount)return toast.error("Amount required");try{await axios.post(`${API}/fund-requests`,fundForm);toast.success("Sent!");setShowFundRequest(false);}catch{toast.error("Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white">Submit</Button>
+          <Button onClick={async()=>{if(!fundForm.amount)return toast.error("Amount required");try{await axios.post(`${API}/fund-requests`,fundForm);toast.success("Sent!");setShowFundRequest(false);} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} className="w-full rounded-full bg-[#3B5249] text-white">Submit</Button>
         </div>
       </DialogContent></Dialog>
+
+      {/* Mobile bottom nav (visible on small screens only) */}
+      <MobileBottomNav
+        activeKey={tab}
+        onSelect={setTab}
+        items={[
+          { key: "today", label: "Today", icon: Phone, badge: leads.filter(l=>l.status==="new"||l.next_follow_up_date===today).length },
+          { key: "all", label: "Leads", icon: Users, badge: leads.length },
+          { key: "orders", label: "Orders", icon: TrendingUp, badge: orders.length },
+          { key: "commissions", label: "Earned", icon: IndianRupee },
+          { key: "instructions", label: "Guide", icon: ClipboardList },
+        ]}
+      />
+      <div className="md:hidden h-16" aria-hidden="true" />
     </div>
   );
 }

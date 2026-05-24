@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +18,18 @@ import AdminCallLogs from "../components/AdminCallLogs";
 import OrderEditDialog from "../components/OrderEditDialog";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
+import OrdersPanel from "../components/OrdersPanel";
+import DailyReportButton from "../components/DailyReportButton";
+import AdminEmployeesPanel from "../components/AdminEmployeesPanel";
+import ForecastChart from "../components/ForecastChart";
+import HrEfficiencyPanel from "../components/HrEfficiencyPanel";
+import DarkModeToggle from "../components/DarkModeToggle";
+import TotpSetupButton from "../components/TotpSetupButton";
+import LeadKanban from "../components/LeadKanban";
+import TrashView from "../components/TrashView";
+import CsvExportButton from "../components/CsvExportButton";
+import BulkLeadImportButton from "../components/BulkLeadImportButton";
+import CustomerHistoryModal from "../components/CustomerHistoryModal";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 const API = "/api";
@@ -40,6 +53,7 @@ const ROLE_OPTIONS = [
 
 export default function AdminCRMPanel() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [allUsers, setAllUsers] = useState([]);
@@ -118,13 +132,13 @@ export default function AdminCRMPanel() {
     setTplLoading(false);
   };
   const resetDocTemplate = async () => {
-    if (!window.confirm("Revert to built-in default? Your custom version will be deleted.")) return;
+    if (!(await confirm({title:"Revert to built-in default? Your custom version will be deleted.",danger:true,okLabel:"Confirm"}))) return;
     try {
       await axios.delete(`${API}/hr/document-templates/${activeTplKey}`);
       setTplForm({subject:"",body_html:""});
       loadDocTemplates();
       toast.success("Reverted to built-in default");
-    } catch { toast.error("Failed"); }
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -283,15 +297,15 @@ export default function AdminCRMPanel() {
       toast.success(`Opening ${u.name}'s dashboard`);
     } catch(e) { if (newTab) newTab.close(); toast.error(e.response?.data?.detail || "Failed"); }
   };
-  const approveFund = async(id,status)=>{try{await axios.put(`${API}/fund-requests/${id}/approve`,{status});toast.success("Updated");fetchData();}catch{toast.error("Failed");}};
-  const approveExpense = async(id,status)=>{try{await axios.put(`${API}/expenses/${id}/approve`,{status});toast.success("Updated");fetchData();}catch{toast.error("Failed");}};
-  const handleExpense = async()=>{if(!expenseForm.title)return toast.error("Title required");try{await axios.post(`${API}/expenses`,{...expenseForm,amount:Number(expenseForm.amount)});toast.success(expenseForm.paid_to_name?`Created — to be paid to ${expenseForm.paid_to_name}`:"Created");setShowExpense(false);setExpenseForm({title:"",amount:0,category:"general",description:"",proof_path:"",paid_to_name:"",paid_to_user_id:"",paid_to_phone:""});fetchData();}catch{toast.error("Failed");}};
-  const markExpensePaid = async(id, name)=>{if(!window.confirm(`Mark this expense as paid to ${name||"payee"}?`))return;try{await axios.put(`${API}/expenses/${id}/mark-paid`,{method:"cash"});toast.success("Marked as paid");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}};
-  const handlePayroll = async()=>{if(!payrollForm.user_id)return toast.error("Select employee");try{await axios.post(`${API}/payroll`,{...payrollForm,basic_salary:Number(payrollForm.basic_salary),bonus:Number(payrollForm.bonus),deductions:Number(payrollForm.deductions),commission:Number(payrollForm.commission)});toast.success("Created");setShowPayroll(false);fetchData();}catch{toast.error("Failed");}};
-  const handleInvestment = async()=>{try{await axios.post(`${API}/investments`,{...investForm,amount:Number(investForm.amount)});toast.success("Added");setShowInvestment(false);setInvestForm({title:"",amount:0,source:"",date:"",notes:"",partner_type:"main"});fetchData();}catch{toast.error("Failed");}};
-  const handleHrMember = async()=>{if(!hrForm.name)return toast.error("Name required");try{await axios.post(`${API}/hr-team`,{...hrForm,salary:Number(hrForm.salary)});toast.success("Added");setShowHrMember(false);fetchData();}catch{toast.error("Failed");}};
-  const handleContent = async()=>{try{await axios.post(`${API}/content`,{...contentForm,budget:Number(contentForm.budget)});toast.success("Added");setShowContent(false);fetchData();}catch{toast.error("Failed");}};
-  const handleState = async()=>{if(!stateForm.name)return toast.error("State name required");try{await axios.post(`${API}/states`,{name:stateForm.name,districts:stateForm.districts.split(",").map(d=>d.trim()).filter(Boolean)});toast.success("State created");setShowState(false);setStateForm({name:"",districts:""});fetchData();}catch{toast.error("Failed");}};
+  const approveFund = async(id,status)=>{try{await axios.put(`${API}/fund-requests/${id}/approve`,{status});toast.success("Updated");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const approveExpense = async(id,status)=>{try{await axios.put(`${API}/expenses/${id}/approve`,{status});toast.success("Updated");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const handleExpense = async()=>{if(!expenseForm.title)return toast.error("Title required");try{await axios.post(`${API}/expenses`,{...expenseForm,amount:Number(expenseForm.amount)});toast.success(expenseForm.paid_to_name?`Created — to be paid to ${expenseForm.paid_to_name}`:"Created");setShowExpense(false);setExpenseForm({title:"",amount:0,category:"general",description:"",proof_path:"",paid_to_name:"",paid_to_user_id:"",paid_to_phone:""});fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const markExpensePaid = async(id, name)=>{if (!(await confirm({title:`Mark this expense as paid to ${name||"payee"}?`,danger:true,okLabel:"Confirm"}))) return;try{await axios.put(`${API}/expenses/${id}/mark-paid`,{method:"cash"});toast.success("Marked as paid");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}};
+  const handlePayroll = async()=>{if(!payrollForm.user_id)return toast.error("Select employee");try{await axios.post(`${API}/payroll`,{...payrollForm,basic_salary:Number(payrollForm.basic_salary),bonus:Number(payrollForm.bonus),deductions:Number(payrollForm.deductions),commission:Number(payrollForm.commission)});toast.success("Created");setShowPayroll(false);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const handleInvestment = async()=>{try{await axios.post(`${API}/investments`,{...investForm,amount:Number(investForm.amount)});toast.success("Added");setShowInvestment(false);setInvestForm({title:"",amount:0,source:"",date:"",notes:"",partner_type:"main"});fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const handleHrMember = async()=>{if(!hrForm.name)return toast.error("Name required");try{await axios.post(`${API}/hr-team`,{...hrForm,salary:Number(hrForm.salary)});toast.success("Added");setShowHrMember(false);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const handleContent = async()=>{try{await axios.post(`${API}/content`,{...contentForm,budget:Number(contentForm.budget)});toast.success("Added");setShowContent(false);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const handleState = async()=>{if(!stateForm.name)return toast.error("State name required");try{await axios.post(`${API}/states`,{name:stateForm.name,districts:stateForm.districts.split(",").map(d=>d.trim()).filter(Boolean)});toast.success("State created");setShowState(false);setStateForm({name:"",districts:""});fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
   const autoGenerateDistricts = async()=>{if(!stateForm.name)return toast.error("Enter state name first");setStateLoading(true);try{const{data}=await axios.get(`${API}/ai/generate-districts/${encodeURIComponent(stateForm.name)}`);if(data.districts?.length>0){setStateForm(f=>({...f,districts:data.districts.join(", ")}));toast.success(`${data.districts.length} districts loaded`);}else{toast.error("No districts found");}}catch{toast.error("Generation failed");}setStateLoading(false);};  const handleProduct = async()=>{
     if(!productForm.name)return toast.error("Product name required");
     const payload = {...productForm,price:Number(productForm.price),stock:Number(productForm.stock)};
@@ -299,13 +313,13 @@ export default function AdminCRMPanel() {
       if(editingProduct) { await axios.put(`${API}/products/${editingProduct.id}`, payload); toast.success("Product updated!"); }
       else { await axios.post(`${API}/products`, payload); toast.success("Product created!"); }
       setShowProduct(false);setEditingProduct(null);setProductForm({name:"",category:"sunscreen",price:0,description:"",stock:0});fetchData();
-    } catch{toast.error("Failed");}
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
-  const deleteProduct = async(id)=>{try{await axios.delete(`${API}/products/${id}`);toast.success("Deleted");fetchData();}catch{toast.error("Failed");}};
-  const processPayroll = async(id)=>{try{await axios.put(`${API}/payroll/${id}/process`,{});toast.success("Processed");fetchData();}catch{toast.error("Failed");}};
+  const deleteProduct = async(id)=>{try{await axios.delete(`${API}/products/${id}`);toast.success("Deleted");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
+  const processPayroll = async(id)=>{try{await axios.put(`${API}/payroll/${id}/process`,{});toast.success("Processed");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }};
   const handleFundRequest = async()=>{
     if(!fundForm.amount||!fundForm.reason)return toast.error("Fill amount and reason");
-    try{await axios.post(`${API}/fund-requests`,fundForm);toast.success("Fund request submitted!");setShowFundRequest(false);setFundForm({amount:0,reason:"",category:"general"});fetchData();}catch{toast.error("Failed");}
+    try{await axios.post(`${API}/fund-requests`,fundForm);toast.success("Fund request submitted!");setShowFundRequest(false);setFundForm({amount:0,reason:"",category:"general"});fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const handleFinTxn = async()=>{
     if(!finTxnForm.amount||finTxnForm.amount<=0)return toast.error("Enter valid amount");
@@ -330,7 +344,7 @@ export default function AdminCRMPanel() {
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-[#F9F8F6]/80 border-b border-[#E5E3DB]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div><h1 className="font-heading text-xl sm:text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Admin Control</p></div>
-          <div className="flex items-center gap-2"><GlobalSearch /><NotificationBell /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1"/>Logout</Button></div>
+          <div className="flex items-center gap-2"><GlobalSearch /><DailyReportButton /><DarkModeToggle /><TotpSetupButton /><NotificationBell /><Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB] text-sm" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-1"/>Logout</Button></div>
         </div>
       </div>
       {resetStatus?.pending && (
@@ -344,18 +358,18 @@ export default function AdminCRMPanel() {
         {/* Stats */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
           {[{l:"Leads",v:stats.total_leads||0},{l:"Orders",v:stats.total_orders||0},{l:"Revenue",v:`Rs.${stats.total_revenue||0}`},{l:"Expenses",v:`Rs.${stats.total_expenses||0}`},{l:"Investment",v:`Rs.${stats.total_investment||0}`},{l:"Pending",v:stats.pending_fund_requests||0}].map((s,i)=>(
-            <div key={i} className="bg-white rounded-xl border border-[#E5E3DB] p-3 sm:p-4"><p className="font-heading text-lg sm:text-xl font-semibold">{s.v}</p><p className="text-[10px] text-[#59615D] uppercase">{s.l}</p></div>
+            <div key={`acrmp-${i}`} className="bg-white rounded-xl border border-[#E5E3DB] p-3 sm:p-4"><p className="font-heading text-lg sm:text-xl font-semibold">{s.v}</p><p className="text-[10px] text-[#59615D] uppercase">{s.l}</p></div>
           ))}
         </div>
         {/* Charts */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="bg-white rounded-xl border border-[#E5E3DB] p-4"><h3 className="font-heading text-sm font-medium mb-3">Lead Status</h3>{leadStatusData.length>0?<ResponsiveContainer width="100%" height={180}><PieChart><Pie data={leadStatusData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" label={({name,value})=>`${name}:${value}`}>{leadStatusData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer>:<p className="text-center py-6 text-[#59615D] text-sm">No data</p>}</div>
+          <div className="bg-white rounded-xl border border-[#E5E3DB] p-4"><h3 className="font-heading text-sm font-medium mb-3">Lead Status</h3>{leadStatusData.length>0?<ResponsiveContainer width="100%" height={180}><PieChart><Pie data={leadStatusData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" label={({name,value})=>`${name}:${value}`}>{leadStatusData.map((_,i)=><Cell key={`acrmp-${i}`} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer>:<p className="text-center py-6 text-[#59615D] text-sm">No data</p>}</div>
           <div className="bg-white rounded-xl border border-[#E5E3DB] p-4"><h3 className="font-heading text-sm font-medium mb-3">Orders</h3>{orderStatusData.length>0?<ResponsiveContainer width="100%" height={180}><BarChart data={orderStatusData}><CartesianGrid strokeDasharray="3 3" stroke="#E5E3DB"/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip/><Bar dataKey="value" fill="#3B5249" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer>:<p className="text-center py-6 text-[#59615D] text-sm">No data</p>}</div>
         </div>
 
         <Tabs defaultValue="users" className="space-y-4">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"users",l:"Users"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"}].map(t=>(
+            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -389,7 +403,7 @@ export default function AdminCRMPanel() {
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>openEditUser(u)} data-testid={`edit-user-${u.id}`}><Edit className="w-3 h-3"/></Button>
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>proxyLogin(u)} data-testid={`view-dashboard-${u.id}`} title="Open dashboard in new tab"><Shield className="w-3 h-3"/></Button>
                           {u.role==="sales_manager" && (
-                            <Button size="sm" variant="ghost" className={`h-7 w-7 p-0 text-[10px] ${u.is_head_of_sales?"text-[#A66E4E] bg-[#F4ECD2]":"text-[#3B5249]"}`} title={u.is_head_of_sales?"Already Head of Sales":"Promote to Head of Sales"} onClick={async()=>{ if(!window.confirm(`Promote ${u.name} to Head of Sales? Any existing Head of Sales will be unset.`))return; try{ await axios.post(`${API}/admin/set-head-of-sales/${u.id}`); toast.success(`${u.name} is now Head of Sales`); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } }} data-testid={`set-hos-${u.id}`}>👑</Button>
+                            <Button size="sm" variant="ghost" className={`h-7 w-7 p-0 text-[10px] ${u.is_head_of_sales?"text-[#A66E4E] bg-[#F4ECD2]":"text-[#3B5249]"}`} title={u.is_head_of_sales?"Already Head of Sales":"Promote to Head of Sales"} onClick={async()=>{ if (!(await confirm({title:`Promote ${u.name} to Head of Sales? Any existing Head of Sales will be unset.`,danger:true,okLabel:"Confirm"}))) return; try{ await axios.post(`${API}/admin/set-head-of-sales/${u.id}`); toast.success(`${u.name} is now Head of Sales`); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } }} data-testid={`set-hos-${u.id}`}>👑</Button>
                           )}
                           {u.role!=="admin"&&<Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600" onClick={async()=>{try{const{data}=await axios.get(`${API}/users/${u.id}/cascade-preview`);setCascadeUser(u);setCascadePreview(data);}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-user-${u.id}`} title="Delete user with cascade"><X className="w-3 h-3"/></Button>}
                         </div>
@@ -464,10 +478,10 @@ export default function AdminCRMPanel() {
             </>) : <p className="text-center py-8 text-[#59615D] text-sm">Loading P&L...</p>}
             {/* External Revenue Entries */}
             {revEntries.length>0&&<div className="mt-4"><h4 className="font-heading text-sm font-medium mb-2">External Revenue Entries</h4>
-              <div className="space-y-1">{revEntries.slice(0,10).map(r=>(<div key={r.id} className="border border-[#E5E3DB] rounded-lg p-2 flex justify-between items-center text-xs"><div><Badge variant="outline" className="text-[8px] capitalize mr-1">{r.platform}</Badge><span>{r.order_ref||r.notes||"Entry"}</span><span className="text-[#59615D] ml-2">{r.date}</span></div><div className="flex items-center gap-2"><span className="font-semibold">Rs.{r.sale_amount} → Net Rs.{r.net_received}</span><Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-400" onClick={async()=>{try{await axios.delete(`${API}/revenue-entries/${r.id}`);toast.success("Deleted");fetchData();}catch{toast.error("Failed");}}}><X className="w-3 h-3"/></Button></div></div>))}</div>
+              <div className="space-y-1">{revEntries.slice(0,10).map(r=>(<div key={r.id} className="border border-[#E5E3DB] rounded-lg p-2 flex justify-between items-center text-xs"><div><Badge variant="outline" className="text-[8px] capitalize mr-1">{r.platform}</Badge><span>{r.order_ref||r.notes||"Entry"}</span><span className="text-[#59615D] ml-2">{r.date}</span></div><div className="flex items-center gap-2"><span className="font-semibold">Rs.{r.sale_amount} → Net Rs.{r.net_received}</span><Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-400" onClick={async()=>{try{await axios.delete(`${API}/revenue-entries/${r.id}`);toast.success("Deleted");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><X className="w-3 h-3"/></Button></div></div>))}</div>
             </div>}
             {/* Hard Reset Status */}
-            {resetStatus?.pending&&<div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4"><p className="text-sm font-medium text-red-800">Hard Reset Scheduled</p><p className="text-xs text-red-600">Executes at: {resetStatus.execute_at?.slice(0,19).replace("T"," ")}</p><div className="flex gap-2 mt-2"><Button size="sm" variant="outline" className="rounded-full text-xs border-red-300 text-red-600" onClick={async()=>{try{await axios.post(`${API}/admin/hard-reset/cancel`);toast.success("Reset cancelled");fetchData();}catch{toast.error("Failed");}}} data-testid="cancel-reset-btn">Cancel Reset</Button><Button size="sm" className="rounded-full text-xs bg-red-600 text-white" onClick={async()=>{const pw=prompt("Re-enter password to execute NOW:");if(!pw)return;try{await axios.post(`${API}/admin/hard-reset/execute`,{password:pw});toast.success("Data cleared!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid="execute-reset-btn">Execute Now</Button></div></div>}
+            {resetStatus?.pending&&<div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4"><p className="text-sm font-medium text-red-800">Hard Reset Scheduled</p><p className="text-xs text-red-600">Executes at: {resetStatus.execute_at?.slice(0,19).replace("T"," ")}</p><div className="flex gap-2 mt-2"><Button size="sm" variant="outline" className="rounded-full text-xs border-red-300 text-red-600" onClick={async()=>{try{await axios.post(`${API}/admin/hard-reset/cancel`);toast.success("Reset cancelled");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} data-testid="cancel-reset-btn">Cancel Reset</Button><Button size="sm" className="rounded-full text-xs bg-red-600 text-white" onClick={async()=>{const pw=await confirm({title:"Re-enter password to execute NOW:",input:{}});if(!pw)return;try{await axios.post(`${API}/admin/hard-reset/execute`,{password:pw});toast.success("Data cleared!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid="execute-reset-btn">Execute Now</Button></div></div>}
           </div></TabsContent>
 
           {/* STATES TAB - with district auto-load and agent/manager assignment */}
@@ -480,12 +494,12 @@ export default function AdminCRMPanel() {
                   {s.districts?.map((d,i)=>{
                     const assigned = s.district_managers?.[d];
                     const districtAgents = allUsers.filter(u=>u.role==='agent'&&u.district===d);
-                    return (<div key={i} className="bg-[#F9F8F6] rounded-lg p-3">
+                    return (<div key={`acrmp-${i}`} className="bg-[#F9F8F6] rounded-lg p-3">
                       <div className="flex justify-between items-center flex-wrap gap-2">
                         <p className="font-medium text-sm">{d}</p>
                         <div className="flex gap-2 items-center">
                           {assigned?<Badge className="bg-[#3B5249] text-white text-[9px]">{assigned.manager_name} (DM)</Badge>:
-                          <Select onValueChange={async(mid)=>{const m=allUsers.find(u=>u.id===mid);try{await axios.put(`${API}/states/${s.id}/assign-manager`,{district:d,manager_id:mid,manager_name:m?.name||""});toast.success(`${m?.name} assigned`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-32 text-[9px] rounded-full"><SelectValue placeholder="Assign DM"/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role==="district_manager").map(m=><SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>)}</SelectContent></Select>}
+                          <Select onValueChange={async(mid)=>{const m=allUsers.find(u=>u.id===mid);try{await axios.put(`${API}/states/${s.id}/assign-manager`,{district:d,manager_id:mid,manager_name:m?.name||""});toast.success(`${m?.name} assigned`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-6 w-32 text-[9px] rounded-full"><SelectValue placeholder="Assign DM"/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role==="district_manager").map(m=><SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>)}</SelectContent></Select>}
                           <span className="text-[10px] text-[#59615D]">{districtAgents.length} agents</span>
                         </div>
                       </div>
@@ -498,18 +512,18 @@ export default function AdminCRMPanel() {
             </div>
             <div className="mt-6"><h4 className="font-heading text-base font-medium mb-3">Regions & Localities ({regions.length})</h4>
               <div className="space-y-4">{regions.map(r=>(<div key={r.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`region-${r.id}`}>
-                <div className="flex justify-between items-start mb-2"><div><p className="font-heading font-medium">{r.name}</p><p className="text-xs text-[#59615D]">{r.district}, {r.state} - {r.pincode}</p></div><div className="flex flex-wrap gap-1">{r.areas?.map((a,i)=><Badge key={i} variant="outline" className="text-[9px]">{a}</Badge>)}</div></div>
+                <div className="flex justify-between items-start mb-2"><div><p className="font-heading font-medium">{r.name}</p><p className="text-xs text-[#59615D]">{r.district}, {r.state} - {r.pincode}</p></div><div className="flex flex-wrap gap-1">{r.areas?.map((a,i)=><Badge key={`acrmp-${i}`} variant="outline" className="text-[9px]">{a}</Badge>)}</div></div>
                 {/* Localities with agent assignment */}
                 <div className="space-y-2 mt-3">
                   <div className="flex justify-between items-center"><p className="text-xs font-medium text-[#59615D]">Localities ({r.localities?.length || 0})</p>
-                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={async()=>{const name=prompt("Locality name:");if(!name)return;const type=prompt("Type (taluk/village/ward):","village");try{await axios.post(`${API}/regions/${r.id}/localities`,{name,type});toast.success("Added");fetchData();}catch{toast.error("Failed");}}} data-testid={`add-locality-${r.id}`}><Plus className="w-3 h-3 mr-0.5"/>Add</Button></div>
+                    <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6 px-2" onClick={async()=>{const name=await confirm({title:"Locality name:",input:{}});if(!name)return;const type=await confirm({title:"Type (taluk/village/ward):",input:{defaultValue:"village"}});try{await axios.post(`${API}/regions/${r.id}/localities`,{name,type});toast.success("Added");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} data-testid={`add-locality-${r.id}`}><Plus className="w-3 h-3 mr-0.5"/>Add</Button></div>
                   {r.localities?.map((loc,idx)=>(
-                    <div key={idx} className="bg-[#F9F8F6] rounded-lg p-3">
+                    <div key={`acrmp-${idx}`} className="bg-[#F9F8F6] rounded-lg p-3">
                       <div className="flex justify-between items-start">
                         <div><p className="font-medium text-sm">{typeof loc==="string"?loc:loc.name} {typeof loc!=="string"&&loc.type&&<Badge variant="outline" className="text-[8px] ml-1 capitalize">{loc.type}</Badge>}</p></div>
-                        <Select onValueChange={async(agentId)=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/assign-agent`,{agent_id:agentId});toast.success("Agent assigned!");fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-32 text-[10px] rounded-lg"><SelectValue placeholder="Assign agent"/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role==="agent").map(a=><SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>)}</SelectContent></Select>
+                        <Select onValueChange={async(agentId)=>{try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/assign-agent`,{agent_id:agentId});toast.success("Agent assigned!");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-6 w-32 text-[10px] rounded-lg"><SelectValue placeholder="Assign agent"/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role==="agent").map(a=><SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>)}</SelectContent></Select>
                       </div>
-                      {typeof loc!=="string"&&loc.agents?.length>0&&<div className="flex flex-wrap gap-1 mt-1.5">{loc.agents.map(aid=>{const ag=allUsers.find(u=>u.id===aid);return <Badge key={aid} className="bg-[#3B5249] text-white text-[9px]">{ag?.name||aid} <X className="w-2.5 h-2.5 ml-1 cursor-pointer" onClick={async(e)=>{e.stopPropagation();try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/remove-agent`,{agent_id:aid});toast.success("Removed");fetchData();}catch{toast.error("Failed");}}}/></Badge>;})}</div>}
+                      {typeof loc!=="string"&&loc.agents?.length>0&&<div className="flex flex-wrap gap-1 mt-1.5">{loc.agents.map(aid=>{const ag=allUsers.find(u=>u.id===aid);return <Badge key={aid} className="bg-[#3B5249] text-white text-[9px]">{ag?.name||aid} <X className="w-2.5 h-2.5 ml-1 cursor-pointer" onClick={async(e)=>{e.stopPropagation();try{await axios.put(`${API}/regions/${r.id}/localities/${idx}/remove-agent`,{agent_id:aid});toast.success("Removed");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}/></Badge>;})}</div>}
                     </div>
                   ))}
                 </div>
@@ -518,55 +532,48 @@ export default function AdminCRMPanel() {
           </div></TabsContent>
 
           {/* ORDERS TAB — full workflow */}
-          <TabsContent value="orders"><div className="bg-white rounded-xl border border-[#E5E3DB] p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h3 className="font-heading text-lg font-medium">Orders</h3>
-              <Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowOrderDlg(true)} data-testid="admin-create-order-btn"><Plus className="w-4 h-4 mr-1"/>Create Order</Button>
-            </div>
-            <MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/>
-            {(() => {
-              const list = filterByMonth(orders||[], genMonth, genYear, "created_at", genDay).filter(o=>!search||o.customer_name?.toLowerCase().includes(search.toLowerCase())||o.id?.includes(search));
-              const totalRev = list.filter(o=>o.status==="delivered").reduce((s,o)=>s+(Number(o.total_amount)||0),0);
-              return (
-                <>
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Orders</p><p className="font-heading font-semibold">{list.length}</p></div>
-                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Delivered Revenue</p><p className="font-heading font-semibold text-[#3B5249]">Rs.{totalRev.toLocaleString()}</p></div>
-                    <div className="bg-[#F9F8F6] rounded-xl p-3"><p className="text-[9px] uppercase text-[#59615D]">Pending</p><p className="font-heading font-semibold">{list.filter(o=>o.status==="pending").length}</p></div>
-                  </div>
-                  {list.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No orders match the selected filters</p>:
-                  <div className="space-y-3">{list.map(o=>(
-              <div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`order-${o.id}`}>
-                <div className="flex flex-col sm:flex-row justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-mono text-xs font-medium">{o.id}</p>
-                      <Badge className={`text-[9px] whitespace-nowrap ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-blue-100 text-blue-800":o.status==="confirmed"?"bg-emerald-100 text-emerald-800":o.status==="pending"?"bg-yellow-100 text-yellow-800":"bg-red-100 text-red-800"}`}>{o.status?.toUpperCase()}</Badge>
-                    </div>
-                    <p className="font-medium text-sm mt-1">{o.customer_name}</p>
-                    <p className="text-xs text-[#59615D]">{o.customer_phone} | {o.customer_address}</p>
-                    {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
-                    <p className="font-heading font-semibold text-[#3B5249] mt-1">Total: Rs.{o.total_amount} <span className="font-normal text-xs text-[#59615D]">({o.payment_type})</span></p>
-                    <p className="text-[10px] text-[#59615D] mt-1">By: {o.created_by_name || o.created_by_role || "—"} | {o.created_at?.slice(0,10)}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-start">
-                    {!["shipped","delivered","rejected","cancelled"].includes(o.status) && <Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>setEditOrder(o)} data-testid={`edit-order-${o.id}`}>✏️ Edit</Button>}
-                    {o.status==="pending"&&<><Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/approve`);toast.success("Approved!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`approve-order-${o.id}`}><Check className="w-3 h-3 mr-1"/>Approve</Button><Button size="sm" variant="outline" className="rounded-full text-xs h-7 text-red-500" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/reject`,{reason:"Rejected"});toast.success("Rejected");fetchData();}catch{toast.error("Failed");}}}><X className="w-3 h-3"/></Button></>}
-                    {o.status==="confirmed"&&<Button size="sm" className="rounded-full text-xs bg-[#3B5249] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/ship-and-deliver`);toast.success("Delivered! Commission credited");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`deliver-${o.id}`}><Check className="w-3 h-3 mr-1"/>Delivered</Button>}
-                    <DelhiveryShipActions order={o} role="admin" onChange={fetchData} compact />
-                    {o.status==="shipped"&&<Button size="sm" className="rounded-full text-xs bg-[#3B5249] text-white h-7" onClick={async()=>{try{await axios.put(`${API}/orders/${o.id}/deliver`);toast.success("Delivered! Commission credited");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`deliver-order-${o.id}`}><Check className="w-3 h-3 mr-1"/>Delivered</Button>}
-                    <Button size="sm" variant="ghost" className="rounded-full text-[10px] text-red-400 h-7" onClick={async()=>{const pw=prompt("Enter master password to delete order:");if(!pw)return;try{await axios.delete(`${API}/orders/${o.id}`,{data:{password:pw}});toast.success("Order deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-order-${o.id}`}><X className="w-3 h-3"/></Button>
-                  </div>
-                </div>
-              </div>
-            ))}</div>}
-                </>
-              );
-            })()}
-          </div></TabsContent>
+          <TabsContent value="orders"><OrdersPanel role="admin" showCreateButton onCreateOrder={() => setShowOrderDlg(true)} /></TabsContent>
+
+          {/* EMPLOYEES TAB — Employee 360° */}
+          <TabsContent value="employees"><AdminEmployeesPanel /></TabsContent>
+
+          {/* EFFICIENCY TAB — HR-style efficiency for admin */}
+          <TabsContent value="efficiency"><HrEfficiencyPanel /></TabsContent>
+
+          {/* FORECAST TAB */}
+          <TabsContent value="forecast"><ForecastChart /></TabsContent>
+
+          {/* PIPELINE TAB (Kanban) */}
+          <TabsContent value="pipeline"><LeadKanban /></TabsContent>
+
+          {/* TRASH TAB */}
+          <TabsContent value="trash"><TrashView /></TabsContent>
 
           {/* LEADS TAB */}
-          <TabsContent value="leads"><div className="bg-white rounded-xl border border-[#E5E3DB] overflow-x-auto"><div className="p-4 border-b border-[#E5E3DB] flex justify-between items-center flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Leads</h3></div>
+          <TabsContent value="leads"><div className="bg-white rounded-xl border border-[#E5E3DB] overflow-x-auto"><div className="p-4 border-b border-[#E5E3DB] flex justify-between items-center flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">Leads</h3>
+            <div className="flex gap-1.5 flex-wrap" data-testid="leads-quick-filters">
+              <button
+                onClick={()=>{const t=new Date();setGenYear(String(t.getFullYear()));setGenMonth(String(t.getMonth()+1));setGenDay(String(t.getDate()));}}
+                data-testid="leads-filter-today"
+                className={`px-3 py-1 rounded-full text-[10px] font-medium border transition-colors ${(()=>{const t=new Date();return genYear===String(t.getFullYear())&&genMonth===String(t.getMonth()+1)&&genDay===String(t.getDate());})()?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white border-[#E5E3DB] text-[#3B5249] hover:bg-[#F4F2EC]"}`}
+              >Today</button>
+              <button
+                onClick={()=>{const t=new Date(Date.now()-86400000);setGenYear(String(t.getFullYear()));setGenMonth(String(t.getMonth()+1));setGenDay(String(t.getDate()));}}
+                data-testid="leads-filter-yesterday"
+                className="px-3 py-1 rounded-full text-[10px] font-medium border bg-white border-[#E5E3DB] text-[#3B5249] hover:bg-[#F4F2EC]"
+              >Yesterday</button>
+              <button
+                onClick={()=>{const t=new Date();setGenYear(String(t.getFullYear()));setGenMonth(String(t.getMonth()+1));setGenDay("all");}}
+                data-testid="leads-filter-month"
+                className="px-3 py-1 rounded-full text-[10px] font-medium border bg-white border-[#E5E3DB] text-[#3B5249] hover:bg-[#F4F2EC]"
+              >This Month</button>
+              <button
+                onClick={()=>{setGenMonth("all");setGenDay("all");}}
+                data-testid="leads-filter-all"
+                className={`px-3 py-1 rounded-full text-[10px] font-medium border ${genMonth==="all"?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white border-[#E5E3DB] text-[#3B5249] hover:bg-[#F4F2EC]"}`}
+              >All Time</button>
+            </div>
+          </div>
             <div className="px-4 pt-3"><MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/></div>
             {(() => {
               const list = filterByMonth(leads||[], genMonth, genYear, "created_at", genDay).filter(l=>!search||l.name?.toLowerCase().includes(search.toLowerCase())||l.phone_number?.includes(search)||l.assigned_to_name?.toLowerCase().includes(search.toLowerCase()));
@@ -588,7 +595,7 @@ export default function AdminCRMPanel() {
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading text-lg font-medium">Cash & Bank Balance</h3>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="rounded-full text-xs text-red-500 border-red-200" onClick={async()=>{const pw=prompt("Enter admin delete password to reset ALL finance:");if(!pw)return;try{await axios.post(`${API}/finance/reset`,{password:pw});toast.success("Finance reset to zero");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid="reset-finance-btn">Reset</Button>
+                <Button size="sm" variant="outline" className="rounded-full text-xs text-red-500 border-red-200" onClick={async()=>{const pw=await confirm({title:"Enter admin delete password to reset ALL finance:",input:{}});if(!pw)return;try{await axios.post(`${API}/finance/reset`,{password:pw});toast.success("Finance reset to zero");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid="reset-finance-btn">Reset</Button>
                 <Button size="sm" variant="outline" className="rounded-full text-xs" onClick={()=>setShowFinTransfer(true)} data-testid="transfer-btn">Transfer</Button>
                 <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowFinTxn(true)} data-testid="add-txn-btn"><Plus className="w-3 h-3 mr-1"/>Add Entry</Button>
               </div>
@@ -617,9 +624,9 @@ export default function AdminCRMPanel() {
             )}
             {/* Cash Holders */}
             <div className="mt-4 mb-4"><div className="flex justify-between items-center mb-2"><h4 className="font-heading text-sm font-medium">Cash Holders (Employees)</h4>
-              <Select onValueChange={async(uid)=>{const u=allUsers.find(x=>x.id===uid);if(!u)return;const amt=prompt(`Assign cash to ${u.name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/assign-cash`,{user_id:uid,user_name:u.name,amount:Number(amt)});toast.success(`Rs.${amt} assigned to ${u.name}`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-7 w-36 text-[10px] rounded-full"><SelectValue placeholder="Assign cash to..."/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role!=="admin").map(u=><SelectItem key={u.id} value={u.id} className="text-xs">{u.name}</SelectItem>)}</SelectContent></Select></div>
+              <Select onValueChange={async(uid)=>{const u=allUsers.find(x=>x.id===uid);if(!u)return;const amt=prompt(`Assign cash to ${u.name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/assign-cash`,{user_id:uid,user_name:u.name,amount:Number(amt)});toast.success(`Rs.${amt} assigned to ${u.name}`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-7 w-36 text-[10px] rounded-full"><SelectValue placeholder="Assign cash to..."/></SelectTrigger><SelectContent>{allUsers.filter(u=>u.role!=="admin").map(u=><SelectItem key={u.id} value={u.id} className="text-xs">{u.name}</SelectItem>)}</SelectContent></Select></div>
               {cashHolders.length===0?<p className="text-xs text-[#59615D]">No cash assigned</p>:
-              <div className="flex flex-wrap gap-2">{cashHolders.filter(h=>h.amount>0).map(h=>(<div key={h.user_id} className="bg-[#F9F8F6] rounded-lg px-3 py-2 flex items-center gap-2"><span className="text-xs font-medium">{h.user_name}</span><span className="font-heading text-sm font-semibold text-[#A66E4E]">Rs.{h.amount}</span><Button size="sm" variant="ghost" className="h-5 text-[9px] text-[#3B5249] px-1" onClick={async()=>{const amt=prompt(`Return cash from ${h.user_name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/return-cash`,{user_id:h.user_id,user_name:h.user_name,amount:Number(amt)});toast.success(`Rs.${amt} returned`);fetchData();}catch{toast.error("Failed");}}}>Return</Button></div>))}</div>}
+              <div className="flex flex-wrap gap-2">{cashHolders.filter(h=>h.amount>0).map(h=>(<div key={h.user_id} className="bg-[#F9F8F6] rounded-lg px-3 py-2 flex items-center gap-2"><span className="text-xs font-medium">{h.user_name}</span><span className="font-heading text-sm font-semibold text-[#A66E4E]">Rs.{h.amount}</span><Button size="sm" variant="ghost" className="h-5 text-[9px] text-[#3B5249] px-1" onClick={async()=>{const amt=prompt(`Return cash from ${h.user_name} (Rs.):`);if(!amt)return;try{await axios.post(`${API}/finance/return-cash`,{user_id:h.user_id,user_name:h.user_name,amount:Number(amt)});toast.success(`Rs.${amt} returned`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}>Return</Button></div>))}</div>}
             </div>
             <h4 className="font-heading text-sm font-medium mb-3">Transaction History</h4>
             {finLedger.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No transactions yet</p>:
@@ -636,7 +643,7 @@ export default function AdminCRMPanel() {
                 </div>
                 <div className="flex items-center gap-2">
                   <p className={`font-heading font-semibold ${t.type==="credit"?"text-[#6B8E6B]":"text-[#B75D69]"}`}>{t.type==="credit"?"+":t.type==="debit"?"-":""}Rs.{t.amount}</p>
-                  <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-300 hover:text-red-500" onClick={async()=>{const pw=prompt("Delete password:");if(!pw)return;try{await axios.delete(`${API}/finance/transaction/${t.id}`,{data:{password:pw}});toast.success("Deleted & reversed");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}}><X className="w-3 h-3"/></Button>
+                  <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-300 hover:text-red-500" onClick={async()=>{const pw=await confirm({title:"Delete password:",input:{}});if(!pw)return;try{await axios.delete(`${API}/finance/transaction/${t.id}`,{data:{password:pw}});toast.success("Deleted & reversed");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}}><X className="w-3 h-3"/></Button>
                 </div>
               </div>
             ))}</div>}
@@ -656,7 +663,7 @@ export default function AdminCRMPanel() {
             </div>
             {/* Settlement Config */}
             <div className="bg-[#F9F8F6] rounded-xl p-3 mb-4 flex justify-between items-center"><div className="text-xs"><b>Settlement Charge:</b> {settlementCfg.type==="percentage"?`${settlementCfg.value}%`:`Rs.${settlementCfg.value}`} per order</div>
-              <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6" onClick={async()=>{const t=prompt("Type (percentage or amount):",settlementCfg.type);const v=prompt("Value:",settlementCfg.value);if(t&&v){try{await axios.put(`${API}/config/settlement`,{type:t,value:Number(v)});toast.success("Updated!");fetchData();}catch{toast.error("Failed");}}}} data-testid="edit-settlement">Edit</Button>
+              <Button size="sm" variant="outline" className="rounded-full text-[10px] h-6" onClick={async()=>{const t=prompt("Type (percentage or amount):",settlementCfg.type);const v=prompt("Value:",settlementCfg.value);if(t&&v){try{await axios.put(`${API}/config/settlement`,{type:t,value:Number(v)});toast.success("Updated!");fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}} data-testid="edit-settlement">Edit</Button>
             </div>
             {/* Daily Breakdown */}
             {commSummary.daily_breakdown?.length>0&&<div className="mb-4"><p className="text-xs font-medium text-[#59615D] mb-2">Per Day</p><div className="flex flex-wrap gap-2">{commSummary.daily_breakdown?.slice(0,7).map(d=>(<div key={d.date} className="bg-[#F9F8F6] rounded-lg px-3 py-1.5 text-center"><p className="text-[9px] text-[#59615D]">{d.date?.slice(5)}</p><p className="font-heading text-sm font-semibold">Rs.{d.amount}</p></div>))}</div></div>}
@@ -677,7 +684,7 @@ export default function AdminCRMPanel() {
                 {commExpanded===a.user_id&&<div className="border-t border-[#E5E3DB] bg-[#F9F8F6] p-3 max-h-48 overflow-y-auto">
                   {a.daily?.length>0&&<div className="flex flex-wrap gap-1 mb-2">{a.daily.slice(0,7).map(d=>(<Badge key={d.date} variant="outline" className="text-[9px]">{d.date?.slice(5)}: Rs.{d.amount}</Badge>))}</div>}
                   <p className="text-[10px] text-[#59615D] uppercase mb-1">Orders</p>
-                  {a.orders?.map((o,i)=>(<div key={i} className="flex justify-between text-xs py-1 border-b border-[#E5E3DB] last:border-0"><span className="font-mono">{o.order_id} ({o.date})</span><span>Rs.{o.order_amount} → <b>Rs.{o.amount}</b> <Badge className={`text-[8px] ${o.status==="paid"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></span></div>))}
+                  {a.orders?.map((o,i)=>(<div key={`acrmp-${i}`} className="flex justify-between text-xs py-1 border-b border-[#E5E3DB] last:border-0"><span className="font-mono">{o.order_id} ({o.date})</span><span>Rs.{o.order_amount} → <b>Rs.{o.amount}</b> <Badge className={`text-[8px] ${o.status==="paid"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></span></div>))}
                 </div>}
               </div>
             ))}</div>}
@@ -701,7 +708,7 @@ export default function AdminCRMPanel() {
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3"><p className="text-[9px] uppercase text-yellow-700">Pending</p><p className="font-heading font-semibold text-yellow-700">Rs.{totalPending.toLocaleString()}</p></div>
                   </div>
                   {list.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No fund requests match the selected filters</p>:
-                  <div className="space-y-2">{list.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - <span className="capitalize">{f.category}</span></p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p><p className="text-[10px] text-[#59615D] mt-0.5">{f.created_at?.slice(0,10)}</p></div><div className="flex gap-2 items-center flex-wrap"><Badge className={`text-[9px] whitespace-nowrap ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<><Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">From Cash</SelectItem><SelectItem value="bank">From Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>approveFund(f.id,"rejected")}>Reject</Button></>}</div></div>))}</div>}
+                  <div className="space-y-2">{list.map(f=>(<div key={f.id} className="border border-[#E5E3DB] rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"><div><p className="font-medium text-sm">Rs.{f.amount} - <span className="capitalize">{f.category}</span></p><p className="text-xs text-[#59615D]">{f.requested_by_name} ({f.requested_by_role?.replace(/_/g," ")}) | {f.reason}</p><p className="text-[10px] text-[#59615D] mt-0.5">{f.created_at?.slice(0,10)}</p></div><div className="flex gap-2 items-center flex-wrap"><Badge className={`text-[9px] whitespace-nowrap ${f.status==="approved"?"bg-green-100 text-green-800":f.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{f.status}</Badge>{f.status==="pending"&&<><Select onValueChange={async(v)=>{try{await axios.put(`${API}/fund-requests/${f.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-7 w-28 text-[10px] rounded-full"><SelectValue placeholder="Approve from"/></SelectTrigger><SelectContent><SelectItem value="cash">From Cash</SelectItem><SelectItem value="bank">From Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-7" onClick={()=>approveFund(f.id,"rejected")}>Reject</Button></>}</div></div>))}</div>}
                 </>
               );
             })()}
@@ -745,11 +752,11 @@ export default function AdminCRMPanel() {
                         <td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${e.status==="approved"?"bg-green-100 text-green-800":e.status==="rejected"?"bg-red-100 text-red-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td>
                         <td className="p-3"><div className="flex gap-1 flex-wrap">
                           {e.status==="pending" && <>
-                            <Select onValueChange={async(v)=>{try{await axios.put(`${API}/expenses/${e.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();}catch{toast.error("Failed");}}}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select>
+                            <Select onValueChange={async(v)=>{try{await axios.put(`${API}/expenses/${e.id}/approve`,{status:"approved",debit_from:v});toast.success(`Approved (${v})`);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select>
                             <Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected")} title="Reject"><X className="w-3 h-3"/></Button>
                           </>}
                           {(e.paid_to_name||e.paid_to_user_id) && e.reimburse_status!=="paid" && <Button size="sm" className="rounded-full text-[9px] h-6 bg-orange-600 hover:bg-orange-700 text-white" onClick={()=>markExpensePaid(e.id, e.paid_to_name)} data-testid={`mark-paid-${e.id}`}>Mark Paid</Button>}
-                          <Button size="sm" variant="ghost" className="h-6 text-[10px] text-red-400" onClick={async()=>{const pw=prompt("Enter delete password:");if(!pw)return;try{await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pw}});toast.success("Deleted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Failed");}}} data-testid={`del-expense-${e.id}`} title="Delete"><X className="w-3 h-3"/></Button>
+                          <Button size="sm" variant="ghost" className="h-6 text-[10px] text-red-400" onClick={async()=>{const pw=await confirm({title:"Enter delete password:",input:{}});if(!pw)return;try{await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pw}});toast.success("Deleted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Failed");}}} data-testid={`del-expense-${e.id}`} title="Delete"><X className="w-3 h-3"/></Button>
                         </div></td>
                       </tr>
                     ))}</tbody></table></div>}
@@ -792,7 +799,7 @@ export default function AdminCRMPanel() {
               <div className="bg-[#F9F8F6] rounded-xl p-4 text-center"><p className="text-[10px] text-[#59615D] uppercase">Sub Partner</p><p className="font-heading text-xl font-bold text-[#A66E4E]">Rs.{investments.filter(i=>i.partner_type==="sub").reduce((s,i)=>s+i.amount,0)}</p></div>
             </div>
             <div className="bg-[#3B5249] rounded-xl p-4 text-center mb-4"><p className="text-xs text-white/70 uppercase">Total Investment</p><p className="font-heading text-2xl font-bold text-white">Rs.{investments.reduce((s,i)=>s+i.amount,0)}</p></div>
-            <div className="space-y-2">{investments.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-3 flex justify-between items-start"><div><p className="font-medium text-sm">{i.title}</p><p className="text-xs text-[#59615D]">{i.source} | {i.date}</p><Badge variant="outline" className="text-[9px] capitalize mt-1">{i.partner_type||"main"} partner</Badge></div><div className="flex items-center gap-2"><p className="font-heading font-semibold text-[#3B5249]">Rs.{i.amount}</p><Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={async()=>{const pw=prompt("Enter delete password:");if(!pw)return;try{await axios.delete(`${API}/investments/${i.id}`,{data:{password:pw}});toast.success("Deleted & balance adjusted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Wrong password");}}} data-testid={`del-invest-${i.id}`}><X className="w-3 h-3"/></Button></div></div>))}</div>
+            <div className="space-y-2">{investments.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-3 flex justify-between items-start"><div><p className="font-medium text-sm">{i.title}</p><p className="text-xs text-[#59615D]">{i.source} | {i.date}</p><Badge variant="outline" className="text-[9px] capitalize mt-1">{i.partner_type||"main"} partner</Badge></div><div className="flex items-center gap-2"><p className="font-heading font-semibold text-[#3B5249]">Rs.{i.amount}</p><Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={async()=>{const pw=await confirm({title:"Enter delete password:",input:{}});if(!pw)return;try{await axios.delete(`${API}/investments/${i.id}`,{data:{password:pw}});toast.success("Deleted & balance adjusted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Wrong password");}}} data-testid={`del-invest-${i.id}`}><X className="w-3 h-3"/></Button></div></div>))}</div>
           </div></TabsContent>
 
           {/* CONTENT TAB */}
@@ -1051,7 +1058,7 @@ export default function AdminCRMPanel() {
           <div><Label className="text-xs font-medium">DM gets from Asst DM (%)</Label><Input type="number" value={rateForm.dm_from_adm} onChange={e=>setRateForm(f=>({...f,dm_from_adm:Number(e.target.value)}))} className="rounded-xl"/></div>
           <div><Label className="text-xs font-medium">SM gets from Asst SM (%)</Label><Input type="number" value={rateForm.sm_from_asm} onChange={e=>setRateForm(f=>({...f,sm_from_asm:Number(e.target.value)}))} className="rounded-xl"/></div>
           <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs"><p>TC {rateForm.telecaller}% | Agent {rateForm.agent}% | DM {rateForm.district_manager}%+{rateForm.dm_from_adm}% | SM {rateForm.sales_manager}%+{rateForm.sm_from_asm}% | Asst DM {rateForm.assistant_district_manager}% | Asst SM {rateForm.assistant_sales_manager}%</p></div>
-          <Button onClick={async()=>{try{await axios.put(`${API}/config/commission-rates`,{rates:rateForm});toast.success("Commission rates updated!");setShowRateEditor(false);fetchData();}catch{toast.error("Failed");}}} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="save-rates-btn">Save Rates</Button>
+          <Button onClick={async()=>{try{await axios.put(`${API}/config/commission-rates`,{rates:rateForm});toast.success("Commission rates updated!");setShowRateEditor(false);fetchData();} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="save-rates-btn">Save Rates</Button>
         </div>
       </DialogContent></Dialog>
 
@@ -1209,7 +1216,7 @@ export default function AdminCRMPanel() {
           <div className="flex gap-2">
             {!hardResetStatus?.pending && <Button onClick={async()=>{try{const{data}=await axios.post(`${API}/admin/hard-reset`,{password:hardResetPw});toast.success(data.message);setHardResetStatus({pending:true,execute_at:data.execute_at});setHardResetPw("");}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} className="flex-1 rounded-full bg-orange-600 text-white" data-testid="hard-reset-schedule">Schedule 48h Reset</Button>}
             {hardResetStatus?.pending && <>
-              <Button onClick={async()=>{try{await axios.post(`${API}/admin/hard-reset/cancel`);toast.success("Reset cancelled");setHardResetStatus({pending:false});}catch{toast.error("Failed");}}} variant="outline" className="flex-1 rounded-full" data-testid="hard-reset-cancel">Cancel</Button>
+              <Button onClick={async()=>{try{await axios.post(`${API}/admin/hard-reset/cancel`);toast.success("Reset cancelled");setHardResetStatus({pending:false});} catch(e) { toast.error(e.response?.data?.detail || "Failed"); }}} variant="outline" className="flex-1 rounded-full" data-testid="hard-reset-cancel">Cancel</Button>
               <Button onClick={async()=>{try{await axios.post(`${API}/admin/hard-reset/execute`,{password:hardResetPw});toast.success("Data cleared!");setHardResetStatus({pending:false});setHardResetPw("");setShowHardReset(false);fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} className="flex-1 rounded-full bg-red-600 text-white" data-testid="hard-reset-execute">Execute Now</Button>
             </>}
           </div>
@@ -1230,7 +1237,7 @@ export default function AdminCRMPanel() {
             <p className="font-semibold mt-2">Sample data will NOT be re-seeded after restart.</p>
           </div>
           <Input type="password" placeholder="Master hard-reset password" value={hardResetPw} onChange={e=>setHardResetPw(e.target.value)} className="rounded-xl" data-testid="instant-wipe-pw"/>
-          <Button onClick={async()=>{if(!window.confirm("This is irreversible. Wipe everything except admin?"))return;try{const{data}=await axios.post(`${API}/admin/instant-wipe`,{password:hardResetPw});toast.success(data.message);setHardResetPw("");setShowInstantWipe(false);setTimeout(()=>window.location.reload(),1500);}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} className="w-full rounded-full bg-red-600 text-white" data-testid="instant-wipe-confirm">🔥 WIPE EVERYTHING NOW</Button>
+          <Button onClick={async()=>{if (!(await confirm({title:"This is irreversible. Wipe everything except admin?",danger:true,okLabel:"Confirm"}))) return;try{const{data}=await axios.post(`${API}/admin/instant-wipe`,{password:hardResetPw});toast.success(data.message);setHardResetPw("");setShowInstantWipe(false);setTimeout(()=>window.location.reload(),1500);}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} className="w-full rounded-full bg-red-600 text-white" data-testid="instant-wipe-confirm">🔥 WIPE EVERYTHING NOW</Button>
         </div>
       </DialogContent></Dialog>
 

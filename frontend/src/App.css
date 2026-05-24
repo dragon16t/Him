@@ -30,3 +30,19 @@
 .animate-fade-in {
     opacity: 1;
 }
+
+/* ============ DARK MODE ============ */
+html.dark { color-scheme: dark; }
+html.dark body { background: #0F1714; color: #E5E3DB; }
+html.dark .bg-white { background-color: #1A2421 !important; }
+html.dark .bg-\[\#F9F8F6\] { background-color: #131A18 !important; }
+html.dark .bg-\[\#FDF6F0\] { background-color: #1F2A26 !important; }
+html.dark .text-\[\#3B5249\] { color: #D4A373 !important; }
+html.dark .text-\[\#59615D\] { color: #9CA8A2 !important; }
+html.dark .text-\[\#2C3531\] { color: #E5E3DB !important; }
+html.dark .border-\[\#E5E3DB\] { border-color: #2D3A36 !important; }
+html.dark .bg-gradient-to-br { background-image: linear-gradient(to bottom right, #1A2421, #0F1714) !important; }
+html.dark .from-white { --tw-gradient-from: #1A2421 !important; --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, transparent) !important; }
+html.dark .to-white { --tw-gradient-to: #1A2421 !important; }
+html.dark input, html.dark select, html.dark textarea { background-color: #131A18 !important; color: #E5E3DB !important; border-color: #2D3A36 !important; }
+html.dark [data-radix-popper-content-wrapper] > * { background: #1A2421 !important; color: #E5E3DB !important; }

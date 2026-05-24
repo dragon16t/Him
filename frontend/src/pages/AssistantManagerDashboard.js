@@ -77,14 +77,14 @@ export default function AssistantManagerDashboard({ type = "district" }) {
   };
   const createTask = async () => {
     if (!taskForm.title) return toast.error("Title required");
-    try { await axios.post(`${API}/tasks`, taskForm); toast.success("Task created!"); setShowTask(false); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/tasks`, taskForm); toast.success("Task created!"); setShowTask(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const requestFund = async () => {
     if (!fundForm.amount) return toast.error("Amount required");
-    try { await axios.post(`${API}/fund-requests`, fundForm); toast.success("Fund requested!"); setShowFund(false); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.post(`${API}/fund-requests`, fundForm); toast.success("Fund requested!"); setShowFund(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const markCalled = async (lid) => {
-    try { await axios.put(`${API}/relationship-calls/${lid}/mark-called`, {remarks:"Called"}); toast.success("Marked"); fetchData(); } catch { toast.error("Failed"); }
+    try { await axios.put(`${API}/relationship-calls/${lid}/mark-called`, {remarks:"Called"}); toast.success("Marked"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };

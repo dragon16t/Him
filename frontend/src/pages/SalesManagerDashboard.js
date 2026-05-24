@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,11 +17,14 @@ import RoleGuidelines from "../components/RoleGuidelines";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import CollaborationContactsPanel from "../components/CollaborationContactsPanel";
+import OrdersPanel from "../components/OrdersPanel";
+import DailyReportButton from "../components/DailyReportButton";
 
 const API = "/api";
 
@@ -34,6 +38,7 @@ const cleanEmail = (e) => {
 
 export default function SalesManagerDashboard() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
   const [telecallers, setTelecallers] = useState([]);
@@ -136,8 +141,8 @@ export default function SalesManagerDashboard() {
       fetchData();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
-  const handleAddTask = async () => { if (!taskForm.title||!taskForm.assigned_to) return toast.error("Fill fields"); try { await axios.post(`${API}/tasks`, taskForm); toast.success("Created"); setShowAddTask(false); fetchData(); } catch { toast.error("Failed"); } };
-  const handleAddInstruction = async () => { if (!instForm.title||!instForm.content) return toast.error("Fill fields"); try { await axios.post(`${API}/instructions`, instForm); toast.success("Created"); setShowAddInstruction(false); setInstForm({title:"",content:"",category:"calling",target_role:"telecaller"}); fetchData(); } catch { toast.error("Failed"); } };
+  const handleAddTask = async () => { if (!taskForm.title||!taskForm.assigned_to) return toast.error("Fill fields"); try { await axios.post(`${API}/tasks`, taskForm); toast.success("Created"); setShowAddTask(false); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddInstruction = async () => { if (!instForm.title||!instForm.content) return toast.error("Fill fields"); try { await axios.post(`${API}/instructions`, instForm); toast.success("Created"); setShowAddInstruction(false); setInstForm({title:"",content:"",category:"calling",target_role:"telecaller"}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
 
   const filteredOrders = filterByMonth(orders, month, year);
   const filteredCommissions = filterByMonth(commissions, month, year);
@@ -146,8 +151,8 @@ export default function SalesManagerDashboard() {
   const tcCandidates = hiringCandidates.filter(c => c.status !== "hired" && c.status !== "rejected");
 
   const hireCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"select"}); toast.success("Selected — HR will finalize hiring"); fetchData(); } catch(e){ toast.error(e.response?.data?.detail||"Failed"); } };
-  const rejectCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"reject"}); toast.success("Rejected"); fetchData(); } catch{ toast.error("Failed"); } };
-  const handleAddContact = async () => { if (!contactForm.name) return toast.error("Name required"); try { await axios.post(`${API}/contacts`, contactForm); toast.success("Added"); setShowAddContact(false); setContactForm({name:"",phone:"",email:"",type:"influencer",notes:""}); fetchData(); } catch { toast.error("Failed"); } };
+  const rejectCandidate = async (cid) => { try { await axios.post(`${API}/hiring/approve/${cid}`,{action:"reject"}); toast.success("Rejected"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddContact = async () => { if (!contactForm.name) return toast.error("Name required"); try { await axios.post(`${API}/contacts`, contactForm); toast.success("Added"); setShowAddContact(false); setContactForm({name:"",phone:"",email:"",type:"influencer",notes:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const handleAddAsm = async () => {
     if (!asmForm.name || !asmForm.email || !asmForm.phone) return toast.error("Name, email and phone are required");
     try {
@@ -199,7 +204,7 @@ export default function SalesManagerDashboard() {
       fetchData();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to create order"); }
   };
-  const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch { toast.error("Failed"); } };
+  const markPaid = async (id) => { try { await axios.put(`${API}/commissions/${id}/pay`, {paid_via:"bank_transfer"}); toast.success("Paid"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
 
@@ -210,7 +215,8 @@ export default function SalesManagerDashboard() {
           <div><h1 className="font-heading text-2xl font-medium text-[#2C3531]">Celesta <span className="text-[#3B5249] font-semibold">Glow</span></h1><p className="text-xs text-[#59615D] uppercase tracking-[0.15em]">Sales Manager - {user.name}</p></div>
           <div className="flex items-center gap-2">
             <GlobalSearch />
-            <NotificationBell />
+            <DailyReportButton />
+            <DarkModeToggle compact /><NotificationBell />
             <AttendanceCheckIn />
             <Button variant="outline" onClick={logout} className="rounded-full border-[#E5E3DB]" data-testid="logout-btn"><LogOut className="w-4 h-4 mr-2"/>Logout</Button>
           </div>
@@ -221,7 +227,7 @@ export default function SalesManagerDashboard() {
         <MonthFilter month={month} year={year} onMonthChange={setMonth} onYearChange={setYear} />
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[{l:"Orders (Month)",v:filteredOrders.length,sub:`All: ${orders.length}`,i:ShoppingBag},{l:"Pending",v:filteredOrders.filter(o=>o.status==='pending').length,sub:`All: ${orders.filter(o=>o.status==='pending').length}`,i:ClipboardList},{l:"Telecallers",v:telecallers.length,sub:"All-time",i:Users},{l:"Hire Queue",v:tcCandidates.length,sub:"Active",i:PhoneCall},{l:"Revenue (Month)",v:`Rs.${monthRevenue}`,sub:`All: Rs.${orders.filter(o=>o.status==='delivered').reduce((s,o)=>s+(o.total_amount||0),0)}`,i:IndianRupee}].map((s,i)=>(
-            <div key={i} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3 text-[#3B5249]"/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase">{s.l}</p><p className="text-[10px] text-[#A66E4E] mt-1">{s.sub}</p></div>
+            <div key={`smd-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3 text-[#3B5249]"/><p className="font-heading text-2xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase">{s.l}</p><p className="text-[10px] text-[#A66E4E] mt-1">{s.sub}</p></div>
           ))}
         </div>
 
@@ -461,7 +467,7 @@ export default function SalesManagerDashboard() {
                   ⏰ <b>{tc.stale_interested}</b> interested lead(s) not called in 7+ days
                 </div>
               )}
-              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if(!window.confirm(`Promote ${tc.name} to Asst Sales Manager?`))return;try{await axios.post(`${API}/promote/tc-to-asm`,{telecaller_id:tc.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-tc-${tc.id}`}>Promote to Asst SM</Button>
+              <Button size="sm" variant="outline" className="rounded-full text-[10px] mt-2 h-6 text-[#A66E4E] border-[#A66E4E]" onClick={async()=>{if (!(await confirm({title:`Promote ${tc.name} to Asst Sales Manager?`,danger:true,okLabel:"Confirm"}))) return;try{await axios.post(`${API}/promote/tc-to-asm`,{telecaller_id:tc.id});toast.success("Promoted!");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`promote-tc-${tc.id}`}>Promote to Asst SM</Button>
             </div>))}</div>
             {/* End of Telecaller Cards */}
           </div></TabsContent>
@@ -556,27 +562,9 @@ export default function SalesManagerDashboard() {
           <TabsContent value="instructions" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5"><div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Instructions</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white" onClick={()=>setShowAddInstruction(true)} data-testid="add-instruction-btn"><Plus className="w-4 h-4 mr-1"/>Create</Button></div>
             <div className="space-y-3">{instructions.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-4"><div className="flex justify-between"><p className="font-heading font-medium">{i.title}</p><Badge variant="outline" className="text-[10px]">{i.category}</Badge></div><p className="text-sm text-[#59615D] mt-2 whitespace-pre-wrap">{i.content}</p><p className="text-xs text-[#A66E4E] mt-1">For: {i.target_role}s | By: {i.created_by_name}</p></div>))}</div>
           </div></TabsContent>
-          <TabsContent value="orders" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-              <h3 className="font-heading text-lg font-medium">Orders ({orders.filter(o=>o.status==="pending").length} pending)</h3>
-              <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setOrderForm({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 });setShowCreateOrder(true);}} data-testid="sm-create-order-btn"><Plus className="w-3 h-3 mr-1"/>Create Order</Button>
-            </div>
-            <div className="space-y-3">{orders.map(o=>(<div key={o.id} className="border border-[#E5E3DB] rounded-xl p-4">
-              <div className="flex flex-col sm:flex-row justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap"><p className="font-mono text-xs">{o.id}</p><Badge className={`text-[9px] whitespace-nowrap ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-blue-100 text-blue-800":o.status==="confirmed"?"bg-emerald-100 text-emerald-800":o.status==="pending"?"bg-yellow-100 text-yellow-800":"bg-red-100 text-red-800"}`}>{o.status?.toUpperCase()}</Badge></div>
-                  <p className="font-medium text-sm mt-1">{o.customer_name} | {o.customer_phone}</p>
-                  <p className="text-xs text-[#59615D]">{o.customer_address}</p>
-                  {o.items?.map((item,idx)=>(<p key={idx} className="text-xs text-[#59615D]">{item.product_name} x{item.quantity} = Rs.{item.price*item.quantity}</p>))}
-                  <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount} ({o.payment_type}) | By: {o.created_by_name || "—"}</p>
-                </div>
-                <div className="flex gap-2 items-start flex-wrap">
-                  {o.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>approveOrder(o.id)}>Approve</Button>}
-                  <DelhiveryShipActions order={o} role="sales_manager" onChange={fetchData} compact />
-                </div>
-              </div>
-            </div>))}</div>
-          </div></TabsContent>
+          <TabsContent value="orders" className="animate-fade-in">
+            <OrdersPanel role="sales_manager" showCreateButton onCreateOrder={() => { setOrderForm({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 }); setShowCreateOrder(true); }} />
+          </TabsContent>
           <TabsContent value="commissions" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] overflow-x-auto"><div className="p-5 border-b border-[#E5E3DB]"><h3 className="font-heading text-lg font-medium">Commissions</h3></div>
             <table className="w-full"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","User","Order","Commission","Status","Action"].map(h=><th key={h} className="text-left p-4 text-xs uppercase text-[#59615D]">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-[#E5E3DB]">{commissions.map(c=>(<tr key={c.id}><td className="p-4 text-sm">{c.created_at?.slice(0,10)}</td><td className="p-4 text-sm">{c.user_name} <Badge variant="outline" className="text-[10px]">{c.user_role}</Badge></td><td className="p-4 text-xs font-mono">{c.order_id}</td><td className="p-4 text-sm font-semibold text-[#3B5249]">Rs.{c.commission_amount}</td><td className="p-4"><Badge className={`text-[10px] ${c.status==="paid"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{c.status}</Badge></td><td className="p-4">{c.status==="pending"&&<Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white" onClick={()=>markPaid(c.id)}>Pay</Button>}</td></tr>))}</tbody></table>
@@ -634,7 +622,7 @@ export default function SalesManagerDashboard() {
               )}
               <div className="space-y-2">
                 {callViewerLogs.map((c, i) => (
-                  <div key={i} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`tc-call-row-${i}`}>
+                  <div key={`smd-${i}`} className="border border-[#E5E3DB] rounded-xl p-3" data-testid={`tc-call-row-${i}`}>
                     <div className="flex justify-between gap-2 flex-wrap items-start">
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm">{c.customer_name || "—"} <span className="text-[#59615D] text-xs font-normal">· {c.customer_phone || "—"}</span></p>
