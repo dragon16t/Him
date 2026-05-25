@@ -2979,7 +2979,9 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         }
     elif role == 'admin':
         delivered = await db.orders.find({"status":"delivered"},{"_id":0,"total_amount":1}).to_list(1000)
-        total_expenses = await db.expenses.find({},{"_id":0,"amount":1}).to_list(1000)
+        # Only APPROVED expenses count toward the books — pending are awaiting decision and must not skew totals.
+        approved_expenses_docs = await db.expenses.find({"status":"approved"},{"_id":0,"amount":1}).to_list(2000)
+        pending_expenses_docs = await db.expenses.find({"status":"pending"},{"_id":0,"amount":1}).to_list(2000)
         total_investments = await db.investments.find({},{"_id":0,"amount":1}).to_list(500)
         stats = {
             "total_leads": await db.leads.count_documents({}),
@@ -2990,16 +2992,23 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
             "agent_count": await db.agents.count_documents({}),
             "pending_orders": await db.orders.count_documents({"status":"pending"}),
             "pending_fund_requests": await db.fund_requests.count_documents({"status":"pending"}),
-            "total_expenses": round(sum(e.get("amount",0) for e in total_expenses),2),
+            # ⬇️ Only approved amounts are debited from working capital — pending are surfaced separately
+            "total_expenses": round(sum(e.get("amount",0) for e in approved_expenses_docs),2),
+            "pending_expenses_amount": round(sum(e.get("amount",0) for e in pending_expenses_docs),2),
             "total_investment": round(sum(i.get("amount",0) for i in total_investments),2),
-            "pending_expenses": await db.expenses.count_documents({"status":"pending"})
+            "pending_expenses": len(pending_expenses_docs),
         }
     elif role == 'finance_manager':
-        total_expenses = await db.expenses.find({},{"_id":0,"amount":1,"status":1}).to_list(1000)
+        # Same precedence as admin — total_expenses now reflects only approved (which is what is actually debited).
+        all_expenses = await db.expenses.find({},{"_id":0,"amount":1,"status":1}).to_list(2000)
+        approved_amt = sum(e.get("amount",0) for e in all_expenses if e.get("status")=="approved")
+        pending_list = [e for e in all_expenses if e.get("status")=="pending"]
         stats = {
-            "total_expenses": round(sum(e.get("amount",0) for e in total_expenses),2),
-            "pending_expenses": len([e for e in total_expenses if e.get("status")=="pending"]),
-            "approved_expenses": round(sum(e['amount'] for e in total_expenses if e.get("status")=="approved"),2),
+            "total_expenses": round(approved_amt, 2),       # ⬅️ APPROVED only — never pending
+            "pending_expenses": len(pending_list),
+            "pending_expenses_amount": round(sum(e.get("amount",0) for e in pending_list), 2),
+            "approved_expenses": round(approved_amt, 2),
+            "rejected_expenses": round(sum(e.get("amount",0) for e in all_expenses if e.get("status")=="rejected"),2),
             "pending_payroll": await db.payroll.count_documents({"status":"pending"})
         }
     return {"stats": stats}

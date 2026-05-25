@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { cachedGet, invalidate as invalidateApiCache } from "@/lib/apiCache";
 import { toast } from "sonner";
 import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -220,32 +221,137 @@ export default function AdminCRMPanel() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
-  const fetchData = useCallback(async () => {
-    try {
-      const r = await Promise.all([
-        axios.get(`${API}/dashboard/stats`),axios.get(`${API}/all-users`),axios.get(`${API}/leads`),axios.get(`${API}/orders`),
-        axios.get(`${API}/fund-requests`),axios.get(`${API}/expenses`),axios.get(`${API}/payroll`),
-        axios.get(`${API}/investments`),axios.get(`${API}/hr-team`),axios.get(`${API}/content`),
-        axios.get(`${API}/states`),axios.get(`${API}/regions`),axios.get(`${API}/audit-logs`),axios.get(`${API}/products`)
-      ]);
-      setStats(r[0].data.stats);setAllUsers(r[1].data.users);setLeads(r[2].data.leads);setOrders(r[3].data.orders);
-      setFundRequests(r[4].data.fund_requests);setExpenses(r[5].data.expenses);setPayroll(r[6].data.payroll);
-      setInvestments(r[7].data.investments);setHrTeam(r[8].data.hr_team);setContent(r[9].data.content);
-      setStates(r[10].data.states);setRegions(r[11].data.regions);setAuditLogs(r[12].data.audit_logs);setProducts(r[13].data.products);
-      try { const instr = await axios.get(`${API}/instructions`); setInstructions(instr.data.instructions); } catch {}
-      // Fetch finance data
-      try { const [fb, fl, cs, sc, ch, ms] = await Promise.all([axios.get(`${API}/finance/balance`), axios.get(`${API}/finance/ledger`), axios.get(`${API}/commissions/summary`), axios.get(`${API}/config/settlement`), axios.get(`${API}/finance/cash-holders`), axios.get(`${API}/finance/monthly-stats`).catch(()=>({data:{monthly_stats:[]}}))]);
-        setFinBalance(fb.data.balance); setFinLedger(fl.data.transactions); setCommSummary(cs.data); setSettlementCfg(sc.data.settlement); setCashHolders(ch.data.holders); setMonthlyStats(ms.data.monthly_stats||[]);
-        try { const [p, re, rs] = await Promise.all([axios.get(`${API}/pnl?month=${(new Date().getMonth()+1)}&year=${new Date().getFullYear()}`).catch(()=>({data:null})), axios.get(`${API}/revenue-entries`).catch(()=>({data:{entries:[]}})), axios.get(`${API}/admin/hard-reset/status`).catch(()=>({data:{pending:false}}))]);
-          setPnl(p.data); setRevEntries(re.data.entries||[]); setResetStatus(rs.data);
-        } catch {}
-        try { const cr = await axios.get(`${API}/config/commission-rates`); if(cr.data.config?.rates) setRateForm(prev=>({...prev,...cr.data.config.rates})); } catch{}
-      } catch(e) { console.error("Finance fetch:", e); }
-    } catch(e){console.error(e);}
+  // ------------- LAZY LOAD STRATEGY -------------
+  // Old version did 14+ parallel calls on mount and ANY failing call would leave the UI
+  // looking blank. New version:
+  //   1. On mount fetch only "core" KPIs/users needed for the Overview tab.
+  //   2. Each tab triggers its own fetch when activated for the first time.
+  //   3. Each axios call is independently handled via Promise.allSettled — a single
+  //      slow / failing endpoint never breaks the rest.
+  //   4. Each GET goes through cachedGet (stale-while-revalidate). Subsequent navigations
+  //      between tabs return cached data INSTANTLY while a fresh fetch updates in background.
+  const fetchSafe = async (url) => {
+    try { return await cachedGet(`/api${url}`); }
+    catch (e) { console.warn(`[lazy-fetch] ${url} failed:`, e?.response?.status || e?.message); return null; }
+  };
+  const loadedTabsRef = React.useRef(new Set());
+  const [activeTab, setActiveTab] = useState("users");
+
+  // ---- CORE — runs once on mount, blocks UI while loading ----
+  // Includes leads + orders because the Overview KPI cards + status charts depend on them.
+  // Uses Promise.allSettled so a single 502/timeout doesn't blank the dashboard.
+  const fetchCore = useCallback(async () => {
+    setLoading(true);
+    const endpoints = [
+      "/api/dashboard/stats", "/api/all-users", "/api/products",
+      "/api/states", "/api/regions", "/api/leads", "/api/orders",
+    ];
+    const results = await Promise.allSettled(endpoints.map(u => cachedGet(u)));
+    const pick = (i, k, fallback) => results[i].status === "fulfilled" ? (results[i].value?.[k] ?? fallback) : fallback;
+    setStats(results[0].status === "fulfilled" ? results[0].value.stats : {});
+    setAllUsers(pick(1, "users", []));
+    setProducts(pick(2, "products", []));
+    setStates(pick(3, "states", []));
+    setRegions(pick(4, "regions", []));
+    setLeads(pick(5, "leads", []));
+    setOrders(pick(6, "orders", []));
+    // Mark leads/orders tabs as already loaded since core loaded them
+    loadedTabsRef.current.add("leads");
+    loadedTabsRef.current.add("orders");
     setLoading(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
-  useEffect(()=>{fetchData();},[fetchData]);
+  }, []);
+
+  // ---- PER-TAB LAZY FETCHES ----
+  const fetchOrders = useCallback(async () => {
+    const d = await fetchSafe("/orders", "orders"); if (d) setOrders(d.orders || []);
+  }, []);
+  const fetchLeads = useCallback(async () => {
+    const d = await fetchSafe("/leads", "leads"); if (d) setLeads(d.leads || []);
+  }, []);
+  const fetchHrTeam = useCallback(async () => {
+    const d = await fetchSafe("/hr-team", "hr_team"); if (d) setHrTeam(d.hr_team || []);
+  }, []);
+  const fetchFunds = useCallback(async () => {
+    const d = await fetchSafe("/fund-requests", "fund_requests"); if (d) setFundRequests(d.fund_requests || []);
+  }, []);
+  const fetchExpenses = useCallback(async () => {
+    const d = await fetchSafe("/expenses", "expenses"); if (d) setExpenses(d.expenses || []);
+  }, []);
+  const fetchPayroll = useCallback(async () => {
+    const d = await fetchSafe("/payroll", "payroll"); if (d) setPayroll(d.payroll || []);
+  }, []);
+  const fetchInvestments = useCallback(async () => {
+    const d = await fetchSafe("/investments", "investments"); if (d) setInvestments(d.investments || []);
+  }, []);
+  const fetchContent = useCallback(async () => {
+    const d = await fetchSafe("/content", "content"); if (d) setContent(d.content || []);
+  }, []);
+  const fetchAuditLogs = useCallback(async () => {
+    const d = await fetchSafe("/audit-logs", "audit_logs"); if (d) setAuditLogs(d.audit_logs || []);
+  }, []);
+  const fetchFinanceBundle = useCallback(async () => {
+    // Finance tab is the heaviest — split into independent calls so one slow endpoint doesn't stall the rest.
+    const [fb, fl, cs, sc, ch, ms, p, re, rs, cr, instr] = await Promise.allSettled([
+      axios.get(`${API}/finance/balance`),
+      axios.get(`${API}/finance/ledger`),
+      axios.get(`${API}/commissions/summary`),
+      axios.get(`${API}/config/settlement`),
+      axios.get(`${API}/finance/cash-holders`),
+      axios.get(`${API}/finance/monthly-stats`),
+      axios.get(`${API}/pnl?month=${new Date().getMonth()+1}&year=${new Date().getFullYear()}`),
+      axios.get(`${API}/revenue-entries`),
+      axios.get(`${API}/admin/hard-reset/status`),
+      axios.get(`${API}/config/commission-rates`),
+      axios.get(`${API}/instructions`),
+    ]);
+    if (fb.status === "fulfilled") setFinBalance(fb.value.data.balance);
+    if (fl.status === "fulfilled") setFinLedger(fl.value.data.transactions || []);
+    if (cs.status === "fulfilled") setCommSummary(cs.value.data || {});
+    if (sc.status === "fulfilled") setSettlementCfg(sc.value.data.settlement || {});
+    if (ch.status === "fulfilled") setCashHolders(ch.value.data.holders || []);
+    if (ms.status === "fulfilled") setMonthlyStats(ms.value.data.monthly_stats || []);
+    if (p.status === "fulfilled") setPnl(p.value.data);
+    if (re.status === "fulfilled") setRevEntries(re.value.data.entries || []);
+    if (rs.status === "fulfilled") setResetStatus(rs.value.data);
+    if (cr.status === "fulfilled" && cr.value.data.config?.rates) setRateForm(prev => ({...prev, ...cr.value.data.config.rates}));
+    if (instr.status === "fulfilled") setInstructions(instr.value.data.instructions);
+  }, []);
+
+  // Tab → lazy fetch map (only fires once per tab; subsequent visits use cache).
+  // After mutations call refetchActiveTab() or specific fetchXxx() to refresh.
+  const tabFetchMap = useMemo(() => ({
+    leads: fetchLeads,
+    orders: fetchOrders,
+    employees: fetchHrTeam,
+    funds: fetchFunds,
+    expenses: fetchExpenses,
+    payroll: fetchPayroll,
+    investments: fetchInvestments,
+    finance: fetchFinanceBundle,
+    audit: fetchAuditLogs,
+    content: fetchContent,
+  }), [fetchLeads, fetchOrders, fetchHrTeam, fetchFunds, fetchExpenses, fetchPayroll, fetchInvestments, fetchFinanceBundle, fetchAuditLogs, fetchContent]);
+
+  // When tab changes, fetch its data (once)
+  useEffect(() => {
+    if (!activeTab || loadedTabsRef.current.has(activeTab)) return;
+    const fn = tabFetchMap[activeTab];
+    if (fn) { loadedTabsRef.current.add(activeTab); fn(); }
+  }, [activeTab, tabFetchMap]);
+
+  // Legacy refetch helper — used after mutations.
+  // Old behavior: refetch everything. New behavior: invalidate the SWR cache, refetch core
+  // (fresh stats + users) + the currently active tab. This guarantees mutation reflects
+  // immediately in the UI rather than coming back from a 5-minute stale cache.
+  const fetchData = useCallback(async () => {
+    invalidateApiCache("/api/");
+    await fetchCore();
+    const fn = tabFetchMap[activeTab];
+    if (fn) { loadedTabsRef.current.add(activeTab); fn(); }
+  }, [fetchCore, tabFetchMap, activeTab]);
+
+  useEffect(() => { fetchCore(); /* on mount only */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handlers
   const handleCreateUser = async () => {
@@ -329,14 +435,25 @@ export default function AdminCRMPanel() {
     if(!finTransferForm.amount||finTransferForm.amount<=0)return toast.error("Enter valid amount");
     try{await axios.post(`${API}/finance/transfer`,finTransferForm);toast.success("Transfer complete!");setShowFinTransfer(false);setFinTransferForm({amount:0,direction:"cash_to_bank"});fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}
   };
+  // Memoised derived data — placed BEFORE the early-return guard so the hook count
+  // is identical on every render (React Rules of Hooks). Previously these recomputed
+  // on every render (every keystroke in search); now only when their inputs change.
+  const leadStatusData = useMemo(() => ["new","interested","not_interested","follow_up","converted"].map(s=>({name:s.replace(/_/g," "),value:leads.filter(l=>l.status===s).length})).filter(d=>d.value>0), [leads]);
+  const orderStatusData = useMemo(() => ["pending","confirmed","rejected"].map(s=>({name:s,value:orders.filter(o=>o.status===s).length})).filter(d=>d.value>0), [orders]);
+  const filteredUsers = useMemo(() => {
+    const q = (search || "").toLowerCase();
+    if (!q) return allUsers;
+    return allUsers.filter(u => u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.role?.includes(q));
+  }, [allUsers, search]);
+  const usersByRole = useMemo(() => {
+    const m = {};
+    for (const u of filteredUsers) { (m[u.role] = m[u.role] || []).push(u); }
+    return m;
+  }, [filteredUsers]);
+
   const logout = () => {localStorage.clear();navigate("/login");};
   if(loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]"/></div>;
 
-  const leadStatusData = ["new","interested","not_interested","follow_up","converted"].map(s=>({name:s.replace(/_/g," "),value:leads.filter(l=>l.status===s).length})).filter(d=>d.value>0);
-  const orderStatusData = ["pending","confirmed","rejected"].map(s=>({name:s,value:orders.filter(o=>o.status===s).length})).filter(d=>d.value>0);
-  const filteredUsers = allUsers.filter(u=>!search||u.name?.toLowerCase().includes(search.toLowerCase())||u.email?.includes(search)||u.role?.includes(search));
-  const usersByRole = {};
-  filteredUsers.forEach(u=>{if(!usersByRole[u.role])usersByRole[u.role]=[];usersByRole[u.role].push(u);});
   const netSalary = Number(payrollForm.basic_salary)+Number(payrollForm.bonus)+Number(payrollForm.commission)-Number(payrollForm.deductions);
 
   return (
@@ -357,8 +474,8 @@ export default function AdminCRMPanel() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Stats */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
-          {[{l:"Leads",v:stats.total_leads||0},{l:"Orders",v:stats.total_orders||0},{l:"Revenue",v:`Rs.${stats.total_revenue||0}`},{l:"Expenses",v:`Rs.${stats.total_expenses||0}`},{l:"Investment",v:`Rs.${stats.total_investment||0}`},{l:"Pending",v:stats.pending_fund_requests||0}].map((s,i)=>(
-            <div key={`acrmp-${i}`} className="bg-white rounded-xl border border-[#E5E3DB] p-3 sm:p-4"><p className="font-heading text-lg sm:text-xl font-semibold">{s.v}</p><p className="text-[10px] text-[#59615D] uppercase">{s.l}</p></div>
+          {[{l:"Leads",v:stats.total_leads||0},{l:"Orders",v:stats.total_orders||0},{l:"Revenue",v:`Rs.${stats.total_revenue||0}`},{l:"Expenses ✓",v:`Rs.${stats.total_expenses||0}`,sub:stats.pending_expenses_amount?`+ Rs.${stats.pending_expenses_amount} pending`:null},{l:"Investment",v:`Rs.${stats.total_investment||0}`},{l:"Pending Funds",v:stats.pending_fund_requests||0}].map((s,i)=>(
+            <div key={`acrmp-${i}`} className="bg-white rounded-xl border border-[#E5E3DB] p-3 sm:p-4"><p className="font-heading text-lg sm:text-xl font-semibold">{s.v}</p><p className="text-[10px] text-[#59615D] uppercase">{s.l}</p>{s.sub && <p className="text-[9px] text-orange-600 mt-0.5" data-testid={`kpi-sub-${i}`}>{s.sub}</p>}</div>
           ))}
         </div>
         {/* Charts */}
@@ -367,7 +484,7 @@ export default function AdminCRMPanel() {
           <div className="bg-white rounded-xl border border-[#E5E3DB] p-4"><h3 className="font-heading text-sm font-medium mb-3">Orders</h3>{orderStatusData.length>0?<ResponsiveContainer width="100%" height={180}><BarChart data={orderStatusData}><CartesianGrid strokeDasharray="3 3" stroke="#E5E3DB"/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip/><Bar dataKey="value" fill="#3B5249" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer>:<p className="text-center py-6 text-[#59615D] text-sm">No data</p>}</div>
         </div>
 
-        <Tabs defaultValue="users" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
             {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>

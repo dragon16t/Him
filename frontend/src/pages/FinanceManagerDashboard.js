@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { cachedGet, invalidate as invalidateApiCache } from "@/lib/apiCache";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,35 +64,53 @@ export default function FinanceManagerDashboard() {
   const [vendorForm, setVendorForm] = useState({name:"",contact:"",phone:"",email:"",address:"",gst_number:"",category:"supplier",balance:0});
   const [recurringForm, setRecurringForm] = useState({name:"",category:"rent",amount:0,frequency:"monthly",next_due_date:""});
 
+  // Lazy-load strategy: each API call is independent so a single failure (502/timeout) does NOT
+  // leave the dashboard stuck on the loader. Heavy tabs (GST, vendors, recurring, CLV) are
+  // batched into Promise.allSettled and load in parallel without blocking the core view.
+  // All GETs go through cachedGet (stale-while-revalidate) so re-visits feel instant.
+  // After a mutation we invalidate the SWR cache so the next fetchData() pulls fresh data.
   const fetchData = useCallback(async () => {
-    try {
-      const [s, e, p] = await Promise.all([
-        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/expenses`),
-        axios.get(`${API}/payroll`)
-      ]);
-      setStats(s.data.stats); setExpenses(e.data.expenses); setPayroll(p.data.payroll);
-      try { const [fb, fl] = await Promise.all([axios.get(`${API}/finance/balance`), axios.get(`${API}/finance/ledger`)]);
-        setFinBalance(fb.data.balance); setFinLedger(fl.data.transactions);
-        try { const [fr, ch, cs, au, ms] = await Promise.all([axios.get(`${API}/fund-requests`), axios.get(`${API}/finance/cash-holders`), axios.get(`${API}/commissions/summary`).catch(()=>({data:{agents:[],total_weekly:0,total_monthly:0,total_today:0}})), axios.get(`${API}/all-users`).catch(()=>({data:{users:[]}})), axios.get(`${API}/finance/monthly-stats`).catch(()=>({data:{monthly_stats:[]}}))]);
-          setFundRequests(fr.data.fund_requests); setCashHolders(ch.data.holders); setCommSummary(cs.data); setAllUsers(au.data.users||[]); setMonthlyStats(ms.data.monthly_stats||[]);
-          try { const [p, re] = await Promise.all([axios.get(`${API}/pnl?month=${(new Date().getMonth()+1)}&year=${new Date().getFullYear()}`).catch(()=>({data:null})), axios.get(`${API}/revenue-entries`).catch(()=>({data:{entries:[]}}))]);
-            setPnl(p.data); setRevEntries(re.data.entries||[]);
-          } catch {}
-        } catch {}
-      } catch(e2) { console.error(e2); }
-    } catch (err) { console.error(err); }
-    try {
-      const [g, v, rec, c] = await Promise.all([
-        axios.get(`${API}/finance/gst`).catch(()=>({data:{entries:[],output_gst:0,input_gst:0,net_payable:0}})),
-        axios.get(`${API}/vendors`).catch(()=>({data:{vendors:[]}})),
-        axios.get(`${API}/finance/recurring`).catch(()=>({data:{recurring:[]}})),
-        axios.get(`${API}/analytics/clv`).catch(()=>({data:{top_customers:[],avg_clv:0}}))
-      ]);
-      setGstEntries(g.data.entries||[]); setGstSummary({output_gst:g.data.output_gst,input_gst:g.data.input_gst,net_payable:g.data.net_payable});
-      setVendors(v.data.vendors||[]); setRecurring(rec.data.recurring||[]); setClv(c.data);
-    } catch {}
-    setLoading(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    invalidateApiCache("/api/");
+    setLoading(true);
+    const coreUrls = [
+      "/api/dashboard/stats", "/api/expenses", "/api/payroll",
+      "/api/finance/balance", "/api/finance/ledger", "/api/fund-requests",
+      "/api/finance/cash-holders", "/api/commissions/summary", "/api/all-users",
+      "/api/finance/monthly-stats",
+      `/api/pnl?month=${new Date().getMonth()+1}&year=${new Date().getFullYear()}`,
+      "/api/revenue-entries",
+    ];
+    const core = await Promise.allSettled(coreUrls.map(u => cachedGet(u)));
+    const ok = (i) => core[i].status === "fulfilled" ? core[i].value : null;
+    if (ok(0)) setStats(ok(0).stats);
+    if (ok(1)) setExpenses(ok(1).expenses || []);
+    if (ok(2)) setPayroll(ok(2).payroll || []);
+    if (ok(3)) setFinBalance(ok(3).balance);
+    if (ok(4)) setFinLedger(ok(4).transactions || []);
+    if (ok(5)) setFundRequests(ok(5).fund_requests || []);
+    if (ok(6)) setCashHolders(ok(6).holders || []);
+    if (ok(7)) setCommSummary(ok(7) || {agents:[],total_weekly:0,total_monthly:0,total_today:0});
+    if (ok(8)) setAllUsers(ok(8).users || []);
+    if (ok(9)) setMonthlyStats(ok(9).monthly_stats || []);
+    if (ok(10)) setPnl(ok(10));
+    if (ok(11)) setRevEntries(ok(11).entries || []);
+    setLoading(false); // unblock the UI ASAP
+    // Tail-load the optional analytics endpoints in the background — these are non-critical
+    // and shouldn't gate the main view from rendering.
+    Promise.allSettled([
+      cachedGet("/api/finance/gst"),
+      cachedGet("/api/vendors"),
+      cachedGet("/api/finance/recurring"),
+      cachedGet("/api/analytics/clv"),
+    ]).then(([g, v, rec, c]) => {
+      if (g.status === "fulfilled") {
+        setGstEntries(g.value.entries || []);
+        setGstSummary({ output_gst: g.value.output_gst, input_gst: g.value.input_gst, net_payable: g.value.net_payable });
+      }
+      if (v.status === "fulfilled") setVendors(v.value.vendors || []);
+      if (rec.status === "fulfilled") setRecurring(rec.value.recurring || []);
+      if (c.status === "fulfilled") setClv(c.value);
+    });
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
 

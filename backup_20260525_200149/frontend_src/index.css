@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 44 19% 97%;
+        --foreground: 153 9% 19%;
+        --card: 0 0% 100%;
+        --card-foreground: 153 9% 19%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 153 9% 19%;
+        --primary: 156 16% 28%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 22 36% 48%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 44 10% 93%;
+        --muted-foreground: 150 3% 37%;
+        --accent: 44 10% 93%;
+        --accent-foreground: 153 9% 19%;
+        --destructive: 349 33% 54%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 48 16% 88%;
+        --input: 48 16% 88%;
+        --ring: 156 16% 28%;
+        --chart-1: 156 16% 28%;
+        --chart-2: 22 36% 48%;
+        --chart-3: 120 14% 49%;
+        --chart-4: 29 51% 64%;
+        --chart-5: 349 33% 54%;
+        --radius: 0.75rem;
+    }
+    .dark {
+        --background: 153 12% 9%;
+        --foreground: 44 19% 92%;
+        --card: 153 10% 13%;
+        --card-foreground: 44 19% 92%;
+        --popover: 153 10% 13%;
+        --popover-foreground: 44 19% 92%;
+        --primary: 156 16% 60%;
+        --primary-foreground: 153 12% 9%;
+        --secondary: 22 36% 60%;
+        --secondary-foreground: 153 12% 9%;
+        --muted: 153 8% 18%;
+        --muted-foreground: 44 8% 70%;
+        --accent: 153 8% 22%;
+        --accent-foreground: 44 19% 92%;
+        --destructive: 349 33% 60%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 153 8% 22%;
+        --input: 153 8% 22%;
+        --ring: 156 16% 60%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        /* Safe-area for iPhone notches in PWA mode */
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+    h1, h2, h3, h4, h5, h6, .font-heading {
+        font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    /* Accessibility: visible focus rings on every interactive element */
+    :is(button, a, [role="button"], input, select, textarea, [tabindex]):focus-visible {
+        outline: 2px solid hsl(var(--primary));
+        outline-offset: 2px;
+        border-radius: 0.25rem;
+    }
+    /* Larger tap targets on mobile (44px Apple HIG / 48dp Material) */
+    @media (max-width: 768px) {
+        button, [role="button"], a.btn { min-height: 44px; }
+    }
+    /* Skip link for keyboard users */
+    .skip-link {
+        position: absolute; left: -9999px; top: 0;
+        background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+        padding: 0.5rem 1rem; z-index: 9999; border-radius: 0 0 0.5rem 0;
+    }
+    .skip-link:focus { left: 0; }
+}
+
+/* Dark-mode aware shell colors used across dashboards.
+   We override the hardcoded #F9F8F6 / #E5E3DB / etc only when html.dark is set */
+.dark .bg-\[\#F9F8F6\] { background-color: hsl(var(--background)); }
+.dark .bg-\[\#FAFAF8\] { background-color: hsl(var(--background)); }
+.dark .bg-\[\#FFFFFF\], .dark .bg-white { background-color: hsl(var(--card)); }
+.dark .text-\[\#2C3531\] { color: hsl(var(--foreground)); }
+.dark .text-\[\#3B5249\] { color: hsl(var(--primary)); }
+.dark .text-\[\#59615D\] { color: hsl(var(--muted-foreground)); }
+.dark .text-\[\#A0A39E\] { color: hsl(var(--muted-foreground)); }
+.dark .border-\[\#E5E3DB\] { border-color: hsl(var(--border)); }
+.dark .border-\[\#D8D4C6\] { border-color: hsl(var(--border)); }
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit; margin-right: inherit; margin-top: inherit; margin-bottom: inherit;
+        padding-left: inherit; padding-right: inherit; padding-top: inherit; padding-bottom: inherit;
+        column-gap: inherit; row-gap: inherit; gap: inherit;
+        border-left-width: inherit; border-right-width: inherit; border-top-width: inherit; border-bottom-width: inherit;
+        border-left-style: inherit; border-right-style: inherit; border-top-style: inherit; border-bottom-style: inherit;
+        border-left-color: inherit; border-right-color: inherit; border-top-color: inherit; border-bottom-color: inherit;
+    }
+}
+
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit; margin-right: inherit; margin-top: inherit; margin-bottom: inherit;
+        padding-left: inherit; padding-right: inherit; padding-top: inherit; padding-bottom: inherit;
+        column-gap: inherit; row-gap: inherit; gap: inherit;
+        border-left-width: inherit; border-right-width: inherit; border-top-width: inherit; border-bottom-width: inherit;
+        border-left-style: inherit; border-right-style: inherit; border-top-style: inherit; border-bottom-style: inherit;
+        border-left-color: inherit; border-right-color: inherit; border-top-color: inherit; border-bottom-color: inherit;
+    }
+}

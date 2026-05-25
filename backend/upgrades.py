@@ -632,6 +632,12 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
         user_ids = await _dm_team_ids(uid)
     elif role == "hr_manager":
         user_ids = None  # all employees
+    elif role in ("digital_marketing_manager", "social_media_manager", "content_strategist",
+                  "content_developer", "finance_manager", "inventory_manager"):
+        # These roles look at org-wide / department-wide activity in their own section,
+        # NOT just their personal leads — leave lead/order context broad and rely on the
+        # role-specific section below for the real KPIs.
+        user_ids = None
     else:
         user_ids = [uid]
     lead_q = {"created_at": {"$gte": day, "$lt": day + "T99"}, "deleted": {"$ne": True}}
@@ -668,12 +674,168 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
         new_candidates = await db.hiring_candidates.find({"created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
         hr_calls = await db.hr_call_logs.find({"call_date": day}, {"_id": 0}).to_list(500)
         hired = await db.hiring_candidates.find({"hired_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
+        attendance_today = await db.attendance.find({"date": day}, {"_id": 0}).to_list(500)
+        leaves_today = await db.leaves.find({"start_date": {"$lte": day}, "end_date": {"$gte": day}, "status": "approved"}, {"_id": 0}).to_list(200)
         hr_section = {
             "candidates_added": len(new_candidates),
             "hr_calls": len(hr_calls),
             "hired_today": len(hired),
             "hired_list": hired,
+            "checkins": len([a for a in attendance_today if a.get("check_in")]),
+            "on_leave": len(leaves_today),
         }
+
+    # Sales-manager-specific section: orders booked, telecaller calls, leads under SM team.
+    sales_section = {}
+    if role in ("sales_manager", "admin"):
+        # For SM, the scope is already filtered by team via lead_q/order_q above. For admin we sum org-wide.
+        tc_call_q = {"created_at": {"$gte": day, "$lt": day + "T99"}}
+        if role == "sales_manager":
+            tc_ids = user_ids or []
+            tc_call_q["caller_id"] = {"$in": tc_ids}
+        tc_calls = await db.inhouse_call_logs.count_documents(tc_call_q)
+        confirmed_orders = sum(1 for o in orders if o.get("status") in ("confirmed", "shipped", "delivered"))
+        # collect call_logs entries from the leads themselves (telecaller follow-ups)
+        lead_call_count = 0
+        for l in leads:
+            for cl in (l.get("call_logs") or []):
+                if cl.get("logged_at", "")[:10] == day:
+                    lead_call_count += 1
+        sales_section = {
+            "leads_taken": len(leads),
+            "telecaller_calls": tc_calls + lead_call_count,
+            "orders_booked": len(orders),
+            "orders_confirmed": confirmed_orders,
+            "delivered": sum(1 for o in orders if o.get("status") == "delivered"),
+        }
+
+    # Digital marketing-specific section: ad campaigns + leads sourced from ads, daily ad spend.
+    digital_section = {}
+    if role in ("digital_marketing_manager", "admin"):
+        camps_q = {"created_at": {"$gte": day, "$lt": day + "T99"}}
+        new_camps = await db.campaigns.count_documents(camps_q)
+        active_camps = await db.campaigns.count_documents({"status": "active"})
+        # Ad spend from any campaign that has a daily_spend field for `day`
+        all_camps = await db.campaigns.find({}, {"_id": 0}).to_list(500)
+        spend_today = 0.0
+        for c in all_camps:
+            for sp in (c.get("daily_spend") or []):
+                if sp.get("date") == day:
+                    spend_today += float(sp.get("amount", 0) or 0)
+            # Fall back: a single created-today spend
+            if c.get("created_at", "")[:10] == day:
+                spend_today += float(c.get("budget", 0) or 0) / max(int(c.get("duration_days", 30) or 30), 1)
+        ad_leads = await db.leads.count_documents({**lead_q, "source": {"$in": ["facebook", "instagram", "google_ads", "meta_ads"]}})
+        digital_section = {
+            "new_campaigns": new_camps,
+            "active_campaigns": active_camps,
+            "ad_spend_today": round(spend_today, 2),
+            "leads_from_ads": ad_leads,
+        }
+
+    # Social media-specific section: posts published, scripts, briefs created.
+    social_section = {}
+    if role in ("social_media_manager", "admin"):
+        new_briefs = await db.content_briefs.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}})
+        new_scripts = await db.content_scripts.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}})
+        posted_today = await db.content_scripts.count_documents({"status": "posted", "posted_at": {"$gte": day, "$lt": day + "T99"}})
+        pending_review = await db.content_scripts.count_documents({"status": "pending_approval"})
+        infl_added = await db.influencers.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}}) if (await db.influencers.estimated_document_count() > 0) else 0
+        social_section = {
+            "briefs_created": new_briefs,
+            "scripts_created": new_scripts,
+            "posts_published": posted_today,
+            "pending_approvals": pending_review,
+            "new_influencers": infl_added,
+        }
+
+    # Content strategist-specific section.
+    strategist_section = {}
+    if role in ("content_strategist", "admin"):
+        my_briefs = await db.content_briefs.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}, "created_by": uid} if role == "content_strategist" else {"created_at": {"$gte": day, "$lt": day + "T99"}})
+        my_pillars = await db.content_pillars.count_documents({"status": "active"})
+        my_scripts = await db.content_scripts.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}, "created_by": uid} if role == "content_strategist" else {"created_at": {"$gte": day, "$lt": day + "T99"}})
+        strategist_section = {
+            "briefs_created": my_briefs,
+            "active_pillars": my_pillars,
+            "scripts_created": my_scripts,
+        }
+
+    # Content developer-specific section: scripts assigned, drafted, submitted.
+    developer_section = {}
+    if role in ("content_developer", "admin"):
+        assigned_q = {"assigned_to": uid} if role == "content_developer" else {}
+        drafted = await db.content_scripts.count_documents({**assigned_q, "status": "draft", "updated_at": {"$gte": day, "$lt": day + "T99"}})
+        submitted = await db.content_scripts.count_documents({**assigned_q, "status": "pending_approval", "submitted_at": {"$gte": day, "$lt": day + "T99"}})
+        posted = await db.content_scripts.count_documents({**assigned_q, "status": "posted", "posted_at": {"$gte": day, "$lt": day + "T99"}})
+        in_progress = await db.content_scripts.count_documents({**assigned_q, "status": {"$in": ["draft", "in_progress"]}})
+        developer_section = {
+            "drafted_today": drafted,
+            "submitted_today": submitted,
+            "posted_today": posted,
+            "in_progress": in_progress,
+        }
+
+    # Finance manager-specific section: expenses approved, payroll, fund-requests for the day.
+    finance_section = {}
+    if role in ("finance_manager", "admin"):
+        approved_exps = await db.expenses.find({"status": "approved", "created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
+        pending_exps = await db.expenses.count_documents({"status": "pending"})
+        approved_today_amt = sum(e.get("amount", 0) for e in approved_exps)
+        fund_today = await db.fund_requests.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}})
+        payroll_processed_today = await db.payroll.count_documents({"status": "processed", "processed_at": {"$gte": day, "$lt": day + "T99"}})
+        finance_section = {
+            "expenses_approved_today_count": len(approved_exps),
+            "expenses_approved_today_amount": round(approved_today_amt, 2),
+            "expenses_pending_count": pending_exps,
+            "fund_requests_today": fund_today,
+            "payroll_processed_today": payroll_processed_today,
+        }
+
+    # Inventory manager-specific section.
+    inventory_section = {}
+    if role in ("inventory_manager", "admin"):
+        # Use products + orders to derive simple stock movement signal.
+        delivered_today_orders = [o for o in orders if o.get("status") == "delivered"]
+        units_shipped = 0
+        for o in delivered_today_orders:
+            for it in (o.get("items") or []):
+                units_shipped += int(it.get("quantity") or 0)
+        low_stock = await db.products.count_documents({"stock": {"$lt": 20}})
+        inventory_section = {
+            "units_shipped_today": units_shipped,
+            "deliveries_today": len(delivered_today_orders),
+            "low_stock_skus": low_stock,
+        }
+
+    # Telecaller / inhouse telecaller-specific section (when not admin).
+    telecaller_section = {}
+    if role in ("telecaller", "inhouse_telecaller"):
+        my_calls = 0
+        for l in leads:
+            for cl in (l.get("call_logs") or []):
+                if cl.get("logged_at", "")[:10] == day and cl.get("logged_by") == uid:
+                    my_calls += 1
+        my_calls += await db.inhouse_call_logs.count_documents({"caller_id": uid, "created_at": {"$gte": day, "$lt": day + "T99"}})
+        telecaller_section = {
+            "calls_today": my_calls,
+            "leads_assigned": len(leads),
+            "orders_booked": len(orders),
+            "interested": sum(1 for l in leads if l.get("status") == "interested"),
+            "follow_ups": sum(1 for l in leads if l.get("next_follow_up_date") == day),
+        }
+
+    # Agent-specific section.
+    agent_section = {}
+    if role == "agent":
+        agent_calls = await db.agent_call_logs.count_documents({"agent_id": uid, "call_date": day})
+        delivered_today = sum(1 for o in orders if o.get("status") == "delivered")
+        agent_section = {
+            "field_calls_today": agent_calls,
+            "orders_taken": len(orders),
+            "delivered_today": delivered_today,
+        }
+
     return {
         "date": day, "manager_role": role, "manager_name": scope_user.get("name", ""),
         "leads_today": len(leads), "orders_today": len(orders),
@@ -684,6 +846,15 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
         "per_user": per_user,
         "leads": leads, "orders": orders,
         "hr": hr_section,
+        "sales": sales_section,
+        "digital": digital_section,
+        "social": social_section,
+        "strategist": strategist_section,
+        "developer": developer_section,
+        "finance": finance_section,
+        "inventory": inventory_section,
+        "telecaller": telecaller_section,
+        "agent": agent_section,
     }
 
 
@@ -765,6 +936,189 @@ def _build_report_pdf(report: dict) -> bytes:
             ["Candidates Added", str(hr.get("candidates_added", 0))],
             ["HR Calls Logged", str(hr.get("hr_calls", 0))],
             ["Hired Today", str(hr.get("hired_today", 0))],
+            ["Check-ins", str(hr.get("checkins", 0))],
+            ["On Leave Today", str(hr.get("on_leave", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Sales Section — for sales_manager + admin
+    if report.get("sales"):
+        s = report["sales"]
+        elements.append(Paragraph("Sales Pipeline Activity", h2))
+        rows = [
+            ["Leads Taken", str(s.get("leads_taken", 0))],
+            ["Telecaller Calls", str(s.get("telecaller_calls", 0))],
+            ["Orders Booked", str(s.get("orders_booked", 0))],
+            ["Orders Confirmed", str(s.get("orders_confirmed", 0))],
+            ["Delivered", str(s.get("delivered", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Digital marketing section — for digital_marketing_manager + admin
+    if report.get("digital"):
+        dm = report["digital"]
+        elements.append(Paragraph("Digital Marketing", h2))
+        rows = [
+            ["New Campaigns", str(dm.get("new_campaigns", 0))],
+            ["Active Campaigns", str(dm.get("active_campaigns", 0))],
+            ["Ad Spend Today", f"Rs.{dm.get('ad_spend_today', 0):.0f}"],
+            ["Leads from Ads", str(dm.get("leads_from_ads", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Social media section
+    if report.get("social"):
+        sm = report["social"]
+        elements.append(Paragraph("Social Media Activity", h2))
+        rows = [
+            ["Briefs Created", str(sm.get("briefs_created", 0))],
+            ["Scripts Created", str(sm.get("scripts_created", 0))],
+            ["Posts Published", str(sm.get("posts_published", 0))],
+            ["Pending Approvals", str(sm.get("pending_approvals", 0))],
+            ["New Influencers", str(sm.get("new_influencers", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Strategist section
+    if report.get("strategist"):
+        st = report["strategist"]
+        elements.append(Paragraph("Content Strategy", h2))
+        rows = [
+            ["Briefs Created Today", str(st.get("briefs_created", 0))],
+            ["Active Pillars", str(st.get("active_pillars", 0))],
+            ["Scripts Created Today", str(st.get("scripts_created", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Developer section
+    if report.get("developer"):
+        dv = report["developer"]
+        elements.append(Paragraph("Content Development", h2))
+        rows = [
+            ["Drafted Today", str(dv.get("drafted_today", 0))],
+            ["Submitted Today", str(dv.get("submitted_today", 0))],
+            ["Posted Today", str(dv.get("posted_today", 0))],
+            ["In Progress", str(dv.get("in_progress", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Finance section
+    if report.get("finance"):
+        fn = report["finance"]
+        elements.append(Paragraph("Finance Activity", h2))
+        rows = [
+            ["Expenses Approved Today", str(fn.get("expenses_approved_today_count", 0))],
+            ["Amount Approved", f"Rs.{fn.get('expenses_approved_today_amount', 0):.0f}"],
+            ["Expenses Pending Review", str(fn.get("expenses_pending_count", 0))],
+            ["Fund Requests Today", str(fn.get("fund_requests_today", 0))],
+            ["Payroll Processed Today", str(fn.get("payroll_processed_today", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Inventory section
+    if report.get("inventory"):
+        iv = report["inventory"]
+        elements.append(Paragraph("Inventory", h2))
+        rows = [
+            ["Units Shipped Today", str(iv.get("units_shipped_today", 0))],
+            ["Deliveries Today", str(iv.get("deliveries_today", 0))],
+            ["Low-Stock SKUs (<20)", str(iv.get("low_stock_skus", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Telecaller / Inhouse-telecaller section
+    if report.get("telecaller"):
+        tc = report["telecaller"]
+        elements.append(Paragraph("My Call Performance", h2))
+        rows = [
+            ["Calls Today", str(tc.get("calls_today", 0))],
+            ["Leads Assigned", str(tc.get("leads_assigned", 0))],
+            ["Orders Booked", str(tc.get("orders_booked", 0))],
+            ["Interested", str(tc.get("interested", 0))],
+            ["Follow-ups Due Today", str(tc.get("follow_ups", 0))],
+        ]
+        t = Table(rows, colWidths=[60 * mm, 60 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), HexColor("#F9F8F6")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOX", (0, 0), (-1, -1), 0.5, primary),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, HexColor("#E5E3DB")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+    # Agent section
+    if report.get("agent"):
+        ag = report["agent"]
+        elements.append(Paragraph("Field Agent Activity", h2))
+        rows = [
+            ["Field Calls Today", str(ag.get("field_calls_today", 0))],
+            ["Orders Taken", str(ag.get("orders_taken", 0))],
+            ["Delivered Today", str(ag.get("delivered_today", 0))],
         ]
         t = Table(rows, colWidths=[60 * mm, 60 * mm])
         t.setStyle(TableStyle([
