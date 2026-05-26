@@ -31,6 +31,20 @@
     opacity: 1;
 }
 
+/* Marquee scroll for floating reviews */
+@keyframes marquee {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+.marquee-track {
+    animation: marquee 28s linear infinite;
+    will-change: transform;
+}
+.marquee-track:hover {
+    animation-play-state: paused;
+}
+
 /* ============ DARK MODE ============ */
 html.dark { color-scheme: dark; }
 html.dark body { background: #0F1714; color: #E5E3DB; }

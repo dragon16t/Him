@@ -1139,9 +1139,30 @@ def _build_report_pdf(report: dict) -> bytes:
 
 @router.get("/reports/daily.pdf")
 async def my_daily_report(d: Optional[str] = None, current_user: dict = Depends(_auth)):
-    target = date.fromisoformat(d) if d else date.today()
-    report = await _daily_report_data(current_user, target)
-    pdf = _build_report_pdf(report)
+    try:
+        target = date.fromisoformat(d) if d else date.today()
+    except Exception:
+        target = date.today()
+    try:
+        report = await _daily_report_data(current_user, target)
+    except Exception as e:
+        logger.exception(f"daily report data failed: {e}")
+        # Fallback to a minimal report so PDF can still generate
+        report = {
+            "date": target.isoformat(), "manager_role": current_user.get("role", ""),
+            "manager_name": current_user.get("name", ""),
+            "leads_today": 0, "orders_today": 0, "delivered_today": 0, "revenue_today": 0,
+            "cod_count": 0, "prepaid_count": 0, "status_dist": {}, "per_user": {},
+            "leads": [], "orders": [],
+            "hr": {}, "sales": {}, "digital": {}, "social": {}, "strategist": {},
+            "developer": {}, "finance": {}, "inventory": {}, "telecaller": {}, "agent": {},
+            "_error": str(e),
+        }
+    try:
+        pdf = _build_report_pdf(report)
+    except Exception as e:
+        logger.exception(f"daily report PDF build failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Daily report could not be generated: {e}")
     return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="daily-{target.isoformat()}.pdf"'})
 
@@ -1269,9 +1290,18 @@ async def email_daily_report(data: Optional[dict] = None, current_user: dict = D
     data = data or {}
     target_email = data.get("email") or DAILY_REPORT_RECIPIENT
     d = data.get("date")
-    target = date.fromisoformat(d) if d else date.today()
-    report = await _daily_report_data(current_user, target)
-    pdf = _build_report_pdf(report)
+    try:
+        target = date.fromisoformat(d) if d else date.today()
+    except Exception:
+        target = date.today()
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        raise HTTPException(status_code=400, detail="Email server not configured. Please set SMTP_EMAIL and SMTP_PASSWORD on the backend, or use 'Download PDF' instead.")
+    try:
+        report = await _daily_report_data(current_user, target)
+        pdf = _build_report_pdf(report)
+    except Exception as e:
+        logger.exception(f"daily report email/build failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Daily report could not be generated: {e}")
     html = (
         f"<p>Hi,</p>"
         f"<p>Daily report for <b>{target.isoformat()}</b> (scope: {current_user['role']}) is attached.</p>"

@@ -21,6 +21,7 @@ import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import DocumentTemplatesEditor from "../components/DocumentTemplatesEditor";
 import HrEfficiencyPanel from "../components/HrEfficiencyPanel";
+import AgentWithdrawPanel from "../components/AgentWithdrawPanel";
 import DailyReportButton from "../components/DailyReportButton";
 import EmployeeProfileDialog from "../components/EmployeeProfileDialog";
 import EmployeeDocumentsDialog from "../components/EmployeeDocumentsDialog";
@@ -429,7 +430,7 @@ export default function HRManagerDashboard() {
 
         <Tabs defaultValue="employees" className="space-y-4">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"employees",l:"Employees"},{v:"efficiency",l:"Efficiency"},{v:"mysheet",l:"My Sheet"},{v:"payroll",l:"Payroll"},{v:"attendance",l:"Attendance"},{v:"advances",l:"Advances"},{v:"commissions",l:"Commissions"},{v:"leaves",l:"Leaves"},{v:"birthdays",l:"Birthdays"},{v:"resignations",l:"Resignations"},{v:"complaints",l:`Complaints (${complaints.filter(c=>c.status!=='resolved').length})`},{v:"hiring",l:`Hiring (${hiringTotalAll || hiringCandidates.length})`},{v:"hrcalls",l:`My Calls (${hrCallToday})`},{v:"calllogs",l:"All Call Logs"},{v:"documents",l:"Documents"},{v:"tasksheets",l:"Task Sheets"},{v:"communication",l:"Comm."},{v:"monitoring",l:"Activity"}].map(t => (
+            {[{v:"employees",l:"Employees"},{v:"agents",l:"🧑‍💼 Agents Directory"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"Efficiency"},{v:"mysheet",l:"My Sheet"},{v:"payroll",l:"Payroll"},{v:"attendance",l:"Attendance"},{v:"advances",l:"Advances"},{v:"commissions",l:"Commissions"},{v:"leaves",l:"Leaves"},{v:"birthdays",l:"Birthdays"},{v:"resignations",l:"Resignations"},{v:"complaints",l:`Complaints (${complaints.filter(c=>c.status!=='resolved').length})`},{v:"hiring",l:`Hiring (${hiringTotalAll || hiringCandidates.length})`},{v:"hrcalls",l:`My Calls (${hrCallToday})`},{v:"calllogs",l:"All Call Logs"},{v:"documents",l:"Documents"},{v:"tasksheets",l:"Task Sheets"},{v:"communication",l:"Comm."},{v:"monitoring",l:"Activity"}].map(t => (
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`hr-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -513,6 +514,9 @@ export default function HRManagerDashboard() {
               </>;
             })()}
           </div></TabsContent>
+
+          {/* EXTERNAL AGENTS DIRECTORY */}
+          <TabsContent value="agents"><ExternalAgentsTab/></TabsContent>
 
           {/* PAYROLL */}
           <TabsContent value="payroll"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
@@ -734,9 +738,10 @@ export default function HRManagerDashboard() {
               const bulkDelete = async () => {
                 const ids = Array.from(hiringSelected);
                 if (!ids.length) return;
-                if (!(await confirm({title:`Delete ${ids.length} candidate(s)? Already-hired ones will be skipped automatically. This cannot be undone.`,danger:true,okLabel:"Confirm"}))) return;
+                const pwd = window.prompt(`Enter HR delete password to delete ${ids.length} candidate(s). Already-hired ones will be skipped.`);
+                if (!pwd) return;
                 try {
-                  const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids });
+                  const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids, password: pwd });
                   toast.success(data.message || `Deleted ${data.deleted}`);
                   setHiringSelected(new Set());
                   fetchData();
@@ -815,7 +820,7 @@ export default function HRManagerDashboard() {
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setHrCallForm(f=>({...f,contact_name:c.name,phone:c.phone,linked_candidate_id:c.id,purpose:"candidate_followup"}));setShowHRCall(true);}} data-testid={`call-${c.id}`}><Phone className="w-2.5 h-2.5 mr-1"/>Log Call</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setEditingCandidate(c);setCandidateForm({name:c.name,phone:c.phone,email:c.email||"",position:c.position,location:c.location||"",experience:c.experience||"",qualification:c.qualification||"",skills:c.skills||"",expected_salary:c.expected_salary||0,interview_date:c.interview_date||"",interview_notes:c.interview_notes||"",source:c.source||"direct",status:c.status,notes:c.notes||""});setShowAddCandidate(true);}} data-testid={`edit-${c.id}`}>Edit</Button>
                       <Button size="sm" className="rounded-full text-[9px] h-6 bg-pink-600 text-white" onClick={()=>{setForwardingCandidate(c);setForwardForm({target_user_id:"",target_role:c.position==='agent'?'district_manager':'sales_manager',status:c.status==='contacted'?'interviewed':c.status});setShowForward(true);}} data-testid={`forward-${c.id}`}>Forward</Button>
-                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{if (!(await confirm({title:`Delete candidate "${c.name}"? This cannot be undone.`,danger:true,okLabel:"Confirm"}))) return;try{await axios.delete(`${API}/hiring/candidates/${c.id}`);toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
+                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{const pwd = window.prompt(`Enter HR delete password to delete candidate "${c.name}":`); if(!pwd) return; try{await axios.delete(`${API}/hiring/candidates/${c.id}`,{data:{password:pwd}});toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
                     </div>
                     {c.status==='selected' && <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm" onClick={()=>{setHireCandidate(c); setHireMgrId(c.manager_selected_by||""); setShowFinalHire(true);}} data-testid={`hire-${c.id}`}>✓ Final Hire</Button>}
                     {c.status!=='selected' && c.status!=='hired' && c.status!=='rejected' && <p className="text-[9px] text-[#A66E4E] italic">Awaiting manager selection</p>}
@@ -950,6 +955,8 @@ export default function HRManagerDashboard() {
 
           {/* TASK SHEETS */}
           <TabsContent value="efficiency"><HrEfficiencyPanel /></TabsContent>
+
+          <TabsContent value="agentwithdraws"><AgentWithdrawPanel /></TabsContent>
 
           <TabsContent value="mysheet"><DailyTaskSheet titleSuffix="HR Manager" /></TabsContent>
 
@@ -1561,3 +1568,115 @@ export default function HRManagerDashboard() {
     </div>
   );
 }
+
+// ===================== EXTERNAL AGENTS TAB =====================
+function ExternalAgentsTab() {
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [converting, setConverting] = useState(null); // agent_id of pending conversion
+  const auth = { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/hr/external-agents`, auth);
+      setAgents(r.data?.agents || []);
+    } catch { toast.error("Failed to load external agents"); }
+    finally { setLoading(false); }
+  }, []); // eslint-disable-line
+
+  useEffect(() => { load(); }, [load]);
+
+  const convertToEmployee = async (ag) => {
+    if (!window.confirm(`Add ${ag.name} to the Employee Directory as an Agent? This creates a full employee record HR can manage.`)) return;
+    setConverting(ag.agent_id);
+    try {
+      await axios.post(`${API}/hr/external-agents/${ag.agent_id}/add-to-employees`, {}, auth);
+      toast.success(`${ag.name} added to employee directory`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to add to employees");
+    } finally { setConverting(null); }
+  };
+
+  const filtered = agents.filter(a => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (a.name || "").toLowerCase().includes(s)
+      || (a.phone || "").includes(s)
+      || (a.email || "").toLowerCase().includes(s)
+      || (a.region || "").toLowerCase().includes(s);
+  });
+
+  return (
+    <div className="bg-white rounded-xl border border-[#E5E3DB] p-5" data-testid="hr-external-agents-tab">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h3 className="font-heading text-lg font-medium">Agents Directory ({agents.length})</h3>
+          <p className="text-xs text-[#59615D] mt-1">Field agents created by Sales Managers. Add any agent to the formal Employee Directory to manage their payroll, attendance and documents.</p>
+        </div>
+        <Input
+          placeholder="Search name / phone / region"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="rounded-full h-8 text-xs w-56"
+          data-testid="hr-agent-search"
+        />
+      </div>
+
+      {loading ? (
+        <p className="text-center py-8 text-[#59615D] text-sm">Loading…</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-center py-8 text-[#59615D] text-sm">No external agents yet. When Sales Managers add agents, they appear here.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-[#F9F8F6]">
+                {["Name","Phone","Email","Designation","Comm %","Region","Sales Manager","GPay","Status","Action"].map(h => (
+                  <th key={h} className="text-left p-2 text-[10px] uppercase text-[#59615D] whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((a) => (
+                <tr key={a.agent_id} className="border-b hover:bg-[#FBF7F0]" data-testid={`hr-agent-row-${a.agent_id}`}>
+                  <td className="p-2 font-medium text-[#2C3531]">{a.name}</td>
+                  <td className="p-2 text-[#59615D]">{a.phone || "—"}</td>
+                  <td className="p-2 text-[#59615D]">{a.email || "—"}</td>
+                  <td className="p-2 capitalize text-[#59615D]">{a.designation || "agent"}</td>
+                  <td className="p-2 text-[#59615D]">{a.commission_pct ?? "—"}%</td>
+                  <td className="p-2 text-[#59615D]">{a.region || "—"}</td>
+                  <td className="p-2 text-[#59615D]">{a.sales_manager_name || "—"}</td>
+                  <td className="p-2 text-[#59615D]">{a.gpay_number || "—"}</td>
+                  <td className="p-2">
+                    {a.added_to_employees
+                      ? <span className="text-[10px] text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">In Directory</span>
+                      : <span className="text-[10px] text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">External</span>}
+                  </td>
+                  <td className="p-2">
+                    {a.added_to_employees ? (
+                      <span className="text-[10px] text-[#59615D]">✓ added</span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={converting === a.agent_id}
+                        onClick={() => convertToEmployee(a)}
+                        className="rounded-full bg-[#3B5249] text-white text-[10px] h-7"
+                        data-testid={`add-employee-${a.agent_id}`}
+                      >
+                        {converting === a.agent_id ? "Adding…" : "+ Add to Employees"}
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+

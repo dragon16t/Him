@@ -145,16 +145,21 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-mono text-[11px]">{o.id}</p>
                           <Badge className={`text-[9px] whitespace-nowrap ${STATUS_COLORS[o.status] || "bg-gray-100 text-gray-800"}`}>{(o.status || "").toUpperCase()}</Badge>
-                          <Badge variant="outline" className="text-[9px]">{(o.payment_type || "cod").toUpperCase()}</Badge>
+                          <Badge variant="outline" className="text-[9px]">{(o.payment_type || o.payment_method || "cod").toUpperCase()}</Badge>
+                          {o.source === "agent_store" ? (
+                            <Badge className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300">🌟 AGENT · {o.agent_name || ""}</Badge>
+                          ) : (
+                            <Badge className="text-[9px] bg-blue-100 text-blue-800">📞 TELECALLER</Badge>
+                          )}
                           {o.awb_number && <Badge className="text-[9px] bg-purple-100 text-purple-800">AWB {o.awb_number}</Badge>}
                           <span className="text-[10px] text-[#59615D]">{(o.created_at || "").slice(0, 16).replace("T", " ")}</span>
                         </div>
                         <p className="font-medium text-sm mt-1 truncate"><button onClick={() => setCustomerPhone(o.customer_phone)} className="hover:underline hover:text-[#A66E4E]" data-testid={`cust-${o.id}`}>{o.customer_name} | {o.customer_phone}</button></p>
                         <p className="text-xs text-[#59615D] truncate">{o.customer_address}{o.customer_city ? `, ${o.customer_city}` : ""}{o.customer_pincode ? ` - ${o.customer_pincode}` : ""}</p>
                         {(o.items || []).map((it, i) => (
-                          <p key={i} className="text-xs text-[#59615D]">• {it.product_name || it.name} ×{it.quantity} = Rs.{(it.price || 0) * (it.quantity || 0)}</p>
+                          <p key={i} className="text-xs text-[#59615D]">• {it.product_name || it.name} ×{it.quantity || it.qty || 1} = Rs.{(it.price || 0) * (it.quantity || it.qty || 1)}</p>
                         ))}
-                        <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount} · By: {o.created_by_name || "—"} <span className="text-[10px] text-[#59615D]">({(o.created_by_role || "").replace("_", " ")})</span></p>
+                        <p className="font-heading font-semibold text-[#3B5249] text-sm mt-1">Rs.{o.total_amount || o.total || o.amount} · By: {o.created_by_name || o.agent_name || "—"} <span className="text-[10px] text-[#59615D]">({(o.created_by_role || (o.source === "agent_store" ? "agent" : "")).replace("_", " ")})</span></p>
                       </div>
                     </div>
                     <div className="flex gap-1.5 items-start flex-wrap">

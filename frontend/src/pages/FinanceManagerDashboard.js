@@ -52,6 +52,7 @@ export default function FinanceManagerDashboard() {
   const [revForm, setRevForm] = useState({platform:"amazon",sale_amount:0,platform_fee:0,shipping_cost:0,settlement_charge:0,order_ref:"",notes:"",date:""});
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [year, setYear] = useState(new Date().getFullYear().toString());
+  const [day, setDay] = useState("all");
   const [gstEntries, setGstEntries] = useState([]);
   const [gstSummary, setGstSummary] = useState({output_gst:0,input_gst:0,net_payable:0});
   const [vendors, setVendors] = useState([]);
@@ -135,7 +136,7 @@ export default function FinanceManagerDashboard() {
       </div>
       <div className="max-w-7xl mx-auto px-6 py-6">
         <RoleGuidelines role="finance_manager" />
-        <MonthFilter month={month} year={year} onMonthChange={setMonth} onYearChange={setYear} />
+        <MonthFilter month={month} year={year} day={day} onMonthChange={setMonth} onYearChange={setYear} onDayChange={setDay} />
         {/* Balance Cards */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-[#E5E3DB] p-4 text-center"><p className="text-xs text-[#59615D] uppercase">Cash in Hand</p><p className="font-heading text-2xl font-bold text-[#A66E4E]" data-testid="fin-cash">Rs.{finBalance.cash}</p></div>
@@ -171,9 +172,9 @@ export default function FinanceManagerDashboard() {
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-4" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
-          <TabsContent value="expenses" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] overflow-x-auto"><div className="p-5 border-b border-[#E5E3DB] flex justify-between"><h3 className="font-heading text-lg font-medium">Expenses ({expenses.filter(e=>e.status==="pending").length} pending)</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowAddExpense(true)}><Plus className="w-3 h-3 mr-1"/>Add Expense</Button></div>
+          <TabsContent value="expenses" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] overflow-x-auto"><div className="p-5 border-b border-[#E5E3DB] flex justify-between"><h3 className="font-heading text-lg font-medium">Expenses ({filterByMonth(expenses, month, year, "created_at", day).filter(e=>e.status==="pending").length} pending)</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowAddExpense(true)}><Plus className="w-3 h-3 mr-1"/>Add Expense</Button></div>
             <table className="w-full"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Title","Category","Amount","By","Proof","Debited From","Status","Action"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-            <tbody className="divide-y divide-[#E5E3DB]">{expenses.map(e=>(<tr key={e.id}><td className="p-3 text-xs">{e.created_at?.slice(0,10)}</td><td className="p-3 text-sm font-medium">{e.title}</td><td className="p-3"><Badge variant="outline" className="text-[9px]">{e.category}</Badge></td><td className="p-3 font-semibold">Rs.{e.amount}</td><td className="p-3 text-xs">{e.created_by_name}</td><td className="p-3">{e.proof_path?<Button size="sm" variant="ghost" className="text-xs text-[#3B5249] h-7" onClick={()=>{setProofPath(e.proof_path);setShowProof(true);}}><Image className="w-3 h-3 mr-1"/>View</Button>:<span className="text-xs text-[#59615D]">-</span>}</td><td className="p-3"><Badge variant="outline" className="text-[9px] capitalize">{e.debit_from||"-"}</Badge></td><td className="p-3"><Badge className={`text-[9px] ${e.status==="approved"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td><td className="p-3">{e.status==="pending"&&<div className="flex gap-1"><Select onValueChange={(v)=>approveExpense(e.id,"approved",v)}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected","bank")}><X className="w-3 h-3"/></Button></div>}</td></tr>))}</tbody></table>
+            <tbody className="divide-y divide-[#E5E3DB]">{filterByMonth(expenses, month, year, "created_at", day).map(e=>(<tr key={e.id}><td className="p-3 text-xs">{e.created_at?.slice(0,10)}</td><td className="p-3 text-sm font-medium">{e.title}</td><td className="p-3"><Badge variant="outline" className="text-[9px]">{e.category}</Badge></td><td className="p-3 font-semibold">Rs.{e.amount}</td><td className="p-3 text-xs">{e.created_by_name}</td><td className="p-3">{e.proof_path?<Button size="sm" variant="ghost" className="text-xs text-[#3B5249] h-7" onClick={()=>{setProofPath(e.proof_path);setShowProof(true);}}><Image className="w-3 h-3 mr-1"/>View</Button>:<span className="text-xs text-[#59615D]">-</span>}</td><td className="p-3"><Badge variant="outline" className="text-[9px] capitalize">{e.debit_from||"-"}</Badge></td><td className="p-3"><Badge className={`text-[9px] ${e.status==="approved"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td><td className="p-3"><div className="flex gap-1">{e.status==="pending"&&<><Select onValueChange={(v)=>approveExpense(e.id,"approved",v)}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected","bank")}><X className="w-3 h-3"/></Button></>}<Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" data-testid={`del-expense-${e.id}`} onClick={async()=>{const pwd = window.prompt("Enter Finance delete password to delete this expense:"); if(!pwd) return; try{ await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pwd}}); toast.success("Expense deleted"); fetchData(); } catch(err){ toast.error(err?.response?.data?.detail || "Delete failed"); }}}><X className="w-3 h-3"/></Button></div></td></tr>))}</tbody></table>
           </div></TabsContent>
 
           {/* P&L TAB */}
@@ -238,16 +239,19 @@ export default function FinanceManagerDashboard() {
 
           {/* TRANSACTIONS */}
           <TabsContent value="transactions" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
-            <div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Transaction History ({finLedger.length})</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowFinTxn(true)}><Plus className="w-3 h-3 mr-1"/>Add Entry</Button></div>
-            {finLedger.length===0?<p className="text-center py-6 text-[#59615D] text-sm">No transactions</p>:
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">{finLedger.map(t=>(
+            <div className="flex justify-between mb-4"><h3 className="font-heading text-lg font-medium">Transaction History ({filterByMonth(finLedger, month, year, "created_at", day).length})</h3><Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>setShowFinTxn(true)}><Plus className="w-3 h-3 mr-1"/>Add Entry</Button></div>
+            {filterByMonth(finLedger, month, year, "created_at", day).length===0?<p className="text-center py-6 text-[#59615D] text-sm">No transactions</p>:
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">{filterByMonth(finLedger, month, year, "created_at", day).map(t=>(
               <div key={t.id} className="border border-[#E5E3DB] rounded-lg p-3 flex justify-between items-center">
                 <div>
                   <div className="flex items-center gap-2"><Badge className={`text-[9px] ${t.type==="credit"?"bg-green-100 text-green-800":t.type==="debit"?"bg-red-100 text-red-800":"bg-blue-100 text-blue-800"}`}>{t.type?.toUpperCase()}</Badge><Badge variant="outline" className="text-[9px] capitalize">{t.method}</Badge><Badge variant="outline" className="text-[9px] capitalize">{t.category?.replace(/_/g," ")}</Badge></div>
                   <p className="text-xs text-[#59615D] mt-1">{t.description}</p>
                   <p className="text-[10px] text-[#59615D]">{t.created_at?.slice(0,16).replace("T"," ")}</p>
                 </div>
-                <p className={`font-heading font-semibold ${t.type==="credit"?"text-[#6B8E6B]":"text-[#B75D69]"}`}>{t.type==="credit"?"+":"-"}Rs.{t.amount}</p>
+                <div className="flex items-center gap-2">
+                  <p className={`font-heading font-semibold ${t.type==="credit"?"text-[#6B8E6B]":"text-[#B75D69]"}`}>{t.type==="credit"?"+":"-"}Rs.{t.amount}</p>
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" data-testid={`del-txn-${t.id}`} onClick={async()=>{const pwd = window.prompt("Enter Finance delete password to delete this transaction:"); if(!pwd) return; try{ await axios.delete(`${API}/finance/transaction/${t.id}`,{data:{password:pwd}}); toast.success("Transaction deleted"); fetchData(); } catch(err){ toast.error(err?.response?.data?.detail || "Delete failed"); }}}><X className="w-3 h-3"/></Button>
+                </div>
               </div>
             ))}</div>}
           </div></TabsContent>

@@ -37,6 +37,7 @@ import { PageLoader } from "@/components/Skeletons";
 const TelecallerDashboard = React.lazy(() => import("@/pages/TelecallerDashboard"));
 const ManagerDashboard = React.lazy(() => import("@/pages/ManagerDashboard"));
 const AgentPortal = React.lazy(() => import("@/pages/AgentPortal"));
+const Storefront = React.lazy(() => import("@/pages/Storefront"));
 const AdminCRMPanel = React.lazy(() => import("@/pages/AdminCRMPanel"));
 const SalesManagerDashboard = React.lazy(() => import("@/pages/SalesManagerDashboard"));
 const FinanceManagerDashboard = React.lazy(() => import("@/pages/FinanceManagerDashboard"));
@@ -51,7 +52,19 @@ const DigitalMarketingDashboard = React.lazy(() => import("@/pages/DigitalMarket
 const LiveOpsWall = React.lazy(() => import("@/pages/LiveOpsWall"));
 
 axios.defaults.baseURL = process.env.REACT_APP_BACKEND_URL;
+// Storefront paths use their own per-agent token (agent-token-<slug>). Never inject the
+// admin/CRM token on those calls, and never overwrite an Authorization header that the
+// caller has already set explicitly.
+const _isStoreUrl = (url = "") =>
+  url.includes("/api/store/") ||
+  url.includes("/api/store-agent/") ||
+  url.includes("/store/") && url.includes("/order");
 axios.interceptors.request.use((config) => {
+  const url = config.url || "";
+  // Respect explicit Authorization header set by caller
+  const hasExplicitAuth = !!(config.headers && (config.headers.Authorization || config.headers.authorization));
+  if (_isStoreUrl(url) && !hasExplicitAuth) return config;
+  if (hasExplicitAuth) return config;
   const token = localStorage.getItem("token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -79,6 +92,11 @@ axios.interceptors.response.use(
     const original = error.config || {};
     const status = error.response?.status;
     const url = original.url || "";
+    // Storefront / agent-portal 401s must NOT clear admin localStorage or redirect to /login.
+    // The storefront has its own auth flow (agent-token-<slug>).
+    if (_isStoreUrl(url)) {
+      return Promise.reject(error);
+    }
     // Skip refresh attempts on auth endpoints + already-retried calls
     const isAuthCall = url.includes("/auth/login") || url.includes("/auth/refresh") || original.headers?.["X-Skip-Auth-Refresh"];
     if (status === 401 && !isAuthCall && !original._retried) {
@@ -164,6 +182,7 @@ function App() {
       <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<UniversalLogin />} />
+        <Route path="/store/:slug/*" element={<Storefront />} />
         <Route path="/live" element={<ProtectedRoute allowedRoles={["admin","sales_manager","district_manager","hr_manager","finance_manager"]}><LiveOpsWall /></ProtectedRoute>} />
         <Route path="/telecaller" element={<ProtectedRoute allowedRoles={["telecaller"]}><TelecallerDashboard /></ProtectedRoute>} />
         <Route path="/manager" element={<ProtectedRoute allowedRoles={["district_manager"]}><ManagerDashboard /></ProtectedRoute>} />

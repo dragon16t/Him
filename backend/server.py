@@ -130,6 +130,14 @@ storage_key = None
 app = FastAPI(title="Celesta Glow CRM", version="3.0")
 api_router = APIRouter(prefix="/api")
 
+# ===== Local uploads (admin direct image upload) =====
+import pathlib
+from fastapi.staticfiles import StaticFiles
+_UPLOADS_DIR = pathlib.Path(__file__).parent / "uploads"
+_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+# Served at /api/uploads/<file> so it passes through Kubernetes ingress (which routes /api/* -> 8001)
+app.mount("/api/uploads", StaticFiles(directory=str(_UPLOADS_DIR)), name="uploads")
+
 # Rate limiter (needs to exist before any @limiter.limit() decorator below)
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -2688,6 +2696,8 @@ async def approve_expense(eid: str, data: dict, current_user: dict = Depends(get
     return {"message": "Expense updated"}
 
 DELETE_PASSWORD = "XYCDF6F@123"
+HR_DELETE_PASSWORD = "hr@celestaglow.com"
+FINANCE_DELETE_PASSWORD = "finance@celestaglow.com"
 wrong_password_attempts = {}
 
 async def check_delete_password(password, current_user):
@@ -2714,8 +2724,11 @@ async def check_delete_password(password, current_user):
 
 @api_router.delete("/expenses/{eid}")
 async def delete_expense(eid: str, data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    await check_delete_password(data.get("password",""), current_user)
+    if current_user['role'] not in ('admin', 'finance_manager'):
+        raise HTTPException(status_code=403, detail="Admin or Finance Manager only")
+    pwd = (data or {}).get("password", "")
+    if pwd not in (FINANCE_DELETE_PASSWORD, DELETE_PASSWORD):
+        raise HTTPException(status_code=403, detail="Wrong delete password")
     exp = await db.expenses.find_one({"id": eid}, {"_id": 0})
     if not exp: raise HTTPException(status_code=404)
     if exp.get("status") == "approved":
@@ -3808,8 +3821,11 @@ async def get_finance_ledger(current_user: dict = Depends(get_current_user)):
 
 @api_router.delete("/finance/transaction/{tid}")
 async def delete_transaction(tid: str, data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    await check_delete_password(data.get("password",""), current_user)
+    if current_user['role'] not in ('admin', 'finance_manager'):
+        raise HTTPException(status_code=403, detail="Admin or Finance Manager only")
+    pwd = (data or {}).get("password", "")
+    if pwd not in (FINANCE_DELETE_PASSWORD, DELETE_PASSWORD):
+        raise HTTPException(status_code=403, detail="Wrong delete password")
     txn = await db.finance_ledger.find_one({"id": tid}, {"_id": 0})
     if not txn: raise HTTPException(status_code=404)
     # Reverse the balance effect
@@ -5872,7 +5888,8 @@ async def log_hiring_candidate(data: dict, current_user: dict = Depends(get_curr
              "created_by_role": current_user.get('role',''),
              "created_at": datetime.now(timezone.utc).isoformat()}
     await db.hiring_candidates.insert_one(entry); entry.pop("_id", None)
-    return {"entry": entry}
+    # Normalized response: {candidate, entry} — `entry` retained for backwards compat
+    return {"candidate": entry, "entry": entry}
 
 @api_router.get("/hiring/candidates")
 async def get_hiring_candidates(request: Request, current_user: dict = Depends(get_current_user)):
@@ -5926,10 +5943,13 @@ async def update_hiring_candidate(cid: str, data: dict, current_user: dict = Dep
     return {"message": "Candidate updated"}
 
 @api_router.delete("/hiring/candidates/{cid}")
-async def delete_hiring_candidate(cid: str, current_user: dict = Depends(get_current_user)):
-    """Remove a duplicate / wrong candidate. Admin + HR Manager only."""
+async def delete_hiring_candidate(cid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    """Remove a duplicate / wrong candidate. Admin + HR Manager only. Requires HR delete password."""
     if current_user['role'] not in ('admin', 'hr_manager'):
         raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
+    pwd = (data or {}).get("password", "") if data else ""
+    if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
+        raise HTTPException(status_code=403, detail="Wrong delete password")
     cand = await db.hiring_candidates.find_one({"id": cid}, {"_id": 0, "status": 1, "name": 1})
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -5945,18 +5965,34 @@ async def bulk_delete_hiring_candidates(data: dict, current_user: dict = Depends
     """Bulk delete candidates. Admin + HR Manager only. Skips already-hired entries."""
     if current_user['role'] not in ('admin', 'hr_manager'):
         raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
+    pwd = (data or {}).get("password", "")
+    if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
+        raise HTTPException(status_code=403, detail="Wrong delete password")
     ids = data.get("ids") or []
     if not isinstance(ids, list) or not ids:
         raise HTTPException(status_code=400, detail="ids list is required")
-    # Don't allow deletion of already-hired candidates via bulk path
-    cursor = db.hiring_candidates.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1})
-    deletable = [c["id"] async for c in cursor if c.get("status") != "hired"]
-    skipped = len(ids) - len(deletable)
+    # Differentiate not_found vs hired_skipped vs deletable
+    existing = []
+    async for c in db.hiring_candidates.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1}):
+        existing.append(c)
+    existing_ids = {c["id"] for c in existing}
+    not_found = [i for i in ids if i not in existing_ids]
+    hired_skipped = [c["id"] for c in existing if c.get("status") == "hired"]
+    deletable = [c["id"] for c in existing if c.get("status") != "hired"]
     if not deletable:
-        return {"deleted": 0, "skipped": skipped, "message": "Nothing deletable (already-hired candidates are protected)"}
+        msg_parts = []
+        if hired_skipped: msg_parts.append(f"{len(hired_skipped)} already-hired (protected)")
+        if not_found: msg_parts.append(f"{len(not_found)} not found")
+        msg = "Nothing deletable" + (": " + ", ".join(msg_parts) if msg_parts else "")
+        return {"deleted": 0, "skipped": len(ids), "hired_skipped": len(hired_skipped), "not_found": len(not_found), "message": msg}
     r = await db.hiring_candidates.delete_many({"id": {"$in": deletable}})
     await db.hr_call_logs.update_many({"linked_candidate_id": {"$in": deletable}}, {"$set": {"linked_candidate_id": "", "linked_candidate_name": ""}})
-    return {"deleted": r.deleted_count, "skipped": skipped, "message": f"Deleted {r.deleted_count} candidate(s)" + (f" · {skipped} skipped (hired)" if skipped else "")}
+    bits = [f"Deleted {r.deleted_count}"]
+    if hired_skipped: bits.append(f"{len(hired_skipped)} skipped (hired)")
+    if not_found: bits.append(f"{len(not_found)} not found")
+    return {"deleted": r.deleted_count, "skipped": len(hired_skipped) + len(not_found),
+            "hired_skipped": len(hired_skipped), "not_found": len(not_found),
+            "message": " · ".join(bits)}
 
 # Forward candidate to a specific manager (SM/DM)
 @api_router.post("/hiring/forward/{cid}")
@@ -8088,6 +8124,17 @@ _phase2_router = init_phase2(
 )
 app.include_router(_phase2_router)
 # ============== END PHASE 2 ==============
+
+# ============== AGENT STORE (storefront + agents + razorpay) ==============
+from agent_store import init_agent_store
+_agent_store_router = init_agent_store(
+    db=db,
+    get_current_user=get_current_user,
+    JWT_SECRET=JWT_SECRET,
+    JWT_ALGORITHM=JWT_ALGORITHM,
+)
+app.include_router(_agent_store_router)
+# ============== END AGENT STORE ==============
 
 
 @app.on_event("startup")
