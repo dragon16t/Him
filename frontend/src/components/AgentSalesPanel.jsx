@@ -107,7 +107,8 @@ export default function AgentSalesPanel() {
     catch { toast.error("Reject failed"); }
   };
 
-  const origin = window.location.origin;
+  // Public store base — always use the customer-facing domain, never the preview/admin host
+  const origin = "https://software.celestaglow.com";
   const copyLink = (a) => { navigator.clipboard.writeText(a.store_url || `${origin}/store/${a.slug}`); toast.success("Store link copied"); };
 
   const pendingCount = orders.filter(o => o.status === "pending").length;

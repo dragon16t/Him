@@ -921,8 +921,23 @@ export default function AdminCRMPanel() {
               <div className="bg-[#F9F8F6] rounded-xl p-4 text-center"><p className="text-[10px] text-[#59615D] uppercase">Main Partner</p><p className="font-heading text-xl font-bold text-[#3B5249]">Rs.{investments.filter(i=>i.partner_type==="main"||!i.partner_type).reduce((s,i)=>s+i.amount,0)}</p></div>
               <div className="bg-[#F9F8F6] rounded-xl p-4 text-center"><p className="text-[10px] text-[#59615D] uppercase">Sub Partner</p><p className="font-heading text-xl font-bold text-[#A66E4E]">Rs.{investments.filter(i=>i.partner_type==="sub").reduce((s,i)=>s+i.amount,0)}</p></div>
             </div>
-            <div className="bg-[#3B5249] rounded-xl p-4 text-center mb-4"><p className="text-xs text-white/70 uppercase">Total Investment</p><p className="font-heading text-2xl font-bold text-white">Rs.{investments.reduce((s,i)=>s+i.amount,0)}</p></div>
-            <div className="space-y-2">{investments.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-xl p-3 flex justify-between items-start"><div><p className="font-medium text-sm">{i.title}</p><p className="text-xs text-[#59615D]">{i.source} | {i.date}</p><Badge variant="outline" className="text-[9px] capitalize mt-1">{i.partner_type||"main"} partner</Badge></div><div className="flex items-center gap-2"><p className="font-heading font-semibold text-[#3B5249]">Rs.{i.amount}</p><Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={async()=>{const pw=await confirm({title:"Enter delete password:",input:{}});if(!pw)return;try{await axios.delete(`${API}/investments/${i.id}`,{data:{password:pw}});toast.success("Deleted & balance adjusted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Wrong password");}}} data-testid={`del-invest-${i.id}`}><X className="w-3 h-3"/></Button></div></div>))}</div>
+            <div className="bg-[#3B5249] rounded-xl p-4 text-center mb-4"><p className="text-xs text-white/70 uppercase">Total Investment ({investments.length} {investments.length===1?"entry":"entries"})</p><p className="font-heading text-2xl font-bold text-white">Rs.{investments.reduce((s,i)=>s+i.amount,0).toLocaleString()}</p></div>
+            {investments.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No investments added yet. Click "Add Investment" to record a capital injection.</p> :
+              <div className="overflow-x-auto"><table className="w-full text-xs">
+                <thead><tr className="border-b bg-[#F9F8F6]">{["Date","Person / Source","Title","Partner","Investment","Notes",""].map(h=><th key={h} className="text-left p-2 text-[10px] uppercase text-[#59615D] font-medium">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-[#E5E3DB]">{investments.map(i=>(
+                  <tr key={i.id} data-testid={`invest-row-${i.id}`} className="hover:bg-[#F9F8F6]">
+                    <td className="p-2">{i.date || i.created_at?.slice(0,10) || "—"}</td>
+                    <td className="p-2 font-medium text-[#3B5249]">{i.source || <span className="text-[#A66E4E] italic">— not set —</span>}</td>
+                    <td className="p-2">{i.title || "—"}</td>
+                    <td className="p-2"><Badge variant="outline" className={`text-[9px] capitalize ${i.partner_type==="sub"?"border-[#A66E4E] text-[#A66E4E]":"border-[#3B5249] text-[#3B5249]"}`}>{i.partner_type||"main"} partner</Badge></td>
+                    <td className="p-2 font-heading font-semibold text-[#3B5249]">Rs.{Number(i.amount||0).toLocaleString()}</td>
+                    <td className="p-2 text-[10px] text-[#59615D] max-w-[200px] truncate" title={i.notes||""}>{i.notes || "—"}</td>
+                    <td className="p-2"><Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400 hover:text-red-600" onClick={async()=>{const pw=await confirm({title:"Enter delete password:",input:{}});if(!pw)return;try{await axios.delete(`${API}/investments/${i.id}`,{data:{password:pw}});toast.success("Deleted & balance adjusted");fetchData();}catch(err){toast.error(err.response?.data?.detail||"Wrong password");}}} data-testid={`del-invest-${i.id}`}><X className="w-3 h-3"/></Button></td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            }
           </div></TabsContent>
 
           {/* CONTENT TAB */}
@@ -1092,7 +1107,7 @@ export default function AdminCRMPanel() {
         <div><Label className="text-xs font-medium">Investment Title</Label><Input placeholder="e.g. Seed Round" value={investForm.title} onChange={e=>setInvestForm(f=>({...f,title:e.target.value}))} className="rounded-xl"/></div>
         <div><Label className="text-xs font-medium">Amount (Rs.)</Label><Input type="number" placeholder="Amount" value={investForm.amount} onChange={e=>setInvestForm(f=>({...f,amount:e.target.value}))} className="rounded-xl"/></div>
         <div><Label className="text-xs font-medium">Partner Type</Label><Select value={investForm.partner_type} onValueChange={v=>setInvestForm(f=>({...f,partner_type:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="main">Main Partner</SelectItem><SelectItem value="sub">Sub Partner</SelectItem></SelectContent></Select></div>
-        <div><Label className="text-xs font-medium">Source / Investor</Label><Input placeholder="Name" value={investForm.source} onChange={e=>setInvestForm(f=>({...f,source:e.target.value}))} className="rounded-xl"/></div>
+        <div><Label className="text-xs font-medium">Person / Investor Name *</Label><Input placeholder="e.g. Shadnazar (full name of the investor)" value={investForm.source} onChange={e=>setInvestForm(f=>({...f,source:e.target.value}))} className="rounded-xl" data-testid="invest-source-input"/></div>
         <div><Label className="text-xs font-medium">Date</Label><Input type="date" value={investForm.date} onChange={e=>setInvestForm(f=>({...f,date:e.target.value}))} className="rounded-xl"/></div>
         <div><Label className="text-xs font-medium">Notes</Label><Textarea placeholder="Details..." value={investForm.notes} onChange={e=>setInvestForm(f=>({...f,notes:e.target.value}))} className="rounded-xl"/></div>
         <Button onClick={handleInvestment} className="w-full rounded-full bg-[#3B5249] text-white">Add Investment</Button>

@@ -277,7 +277,7 @@ DEFAULT_STORE_SETTINGS = {
     ],
     "offer_banner": "BUY 2 GET 1 FREE — auto-applied at checkout. Code: GLOW3",
     "founder_note": "“We built Celesta Glow because every Indian deserves world-class anti-aging skincare made for our skin, our climate, our lives.” — Founder, Celesta Glow",
-    "public_base_url": "https://celestaglow.com",
+    "public_base_url": "https://software.celestaglow.com",
     "testimonials": [
         {"name": "Priya M.", "location": "Mumbai", "rating": 5, "text": "Bought the Night Renewal Combo and my fine lines are visibly softer in 3 weeks. Hooked!"},
         {"name": "Anjali R.", "location": "Bangalore", "rating": 5, "text": "The Vitamin C serum is the best I’ve tried — and I’ve tried a LOT. Skin glows by week 2."},
@@ -874,7 +874,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
 
         # Public base URL for storefront links
         settings = await _get_settings()
-        pub_base = (settings.get("public_base_url") or "https://celestaglow.com").rstrip("/")
+        pub_base = (settings.get("public_base_url") or "https://software.celestaglow.com").rstrip("/")
 
         # Date window range
         now = datetime.now(timezone.utc)
@@ -1023,7 +1023,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
         resp_doc = {k: v for k, v in doc.items() if k not in ("password_hash", "_id")}
         # Build public URLs with configured public_base_url (default celestaglow.com)
         settings = await _get_settings()
-        pub_base = (settings.get("public_base_url") or "https://celestaglow.com").rstrip("/")
+        pub_base = (settings.get("public_base_url") or "https://software.celestaglow.com").rstrip("/")
         return {
             "agent": {**resp_doc,
                       "initial_password": plain_pw,
