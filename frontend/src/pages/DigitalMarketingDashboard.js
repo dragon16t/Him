@@ -19,6 +19,7 @@ import MonthFilter from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import DarkModeToggle from "../components/DarkModeToggle";
+import CalendarPanel from "../components/CalendarPanel";
 
 const API = "/api";
 
@@ -172,6 +173,7 @@ export default function DigitalMarketingDashboard() {
             <TabsTrigger value="google" className="rounded-full text-[11px] data-[state=active]:bg-red-600 data-[state=active]:text-white px-3" data-testid="dm-tab-google">🔴 Google ({googleCampaigns.length})</TabsTrigger>
             <TabsTrigger value="leads" className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid="dm-tab-leads">Results ({leads.length})</TabsTrigger>
             <TabsTrigger value="performance" className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid="dm-tab-performance">📊 Performance</TabsTrigger>
+            <TabsTrigger value="calendar" className="rounded-full text-[11px] data-[state=active]:bg-[#A66E4E] data-[state=active]:text-white px-3" data-testid="dm-tab-calendar">📅 Campaign Calendar</TabsTrigger>
             <TabsTrigger value="mysheet" className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid="dm-tab-mysheet">📋 My Sheet</TabsTrigger>
           </TabsList>
 
@@ -395,6 +397,18 @@ export default function DigitalMarketingDashboard() {
             </div>
           </TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Digital Marketing Manager" /></TabsContent>
+
+          <TabsContent value="calendar" className="animate-fade-in">
+            <CalendarPanel
+              title="Campaign Calendar"
+              subtitle="Plan ad campaigns, launches and creative shoots month-by-month."
+              category="campaign"
+              shootTypes={["Meta Ad Campaign","Google Ad Campaign","WhatsApp Campaign","YouTube Campaign","Influencer Collab","Landing Page Push","Sale / Discount","Brand Awareness","Lead Gen","Other"]}
+              platforms={["instagram","facebook","whatsapp","google","youtube","linkedin","tiktok","twitter"]}
+              formats={["ad","reel","post","video","story","blog","email"]}
+              accent="#A66E4E"
+            />
+          </TabsContent>
         </Tabs>
       </div>
 

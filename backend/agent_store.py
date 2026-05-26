@@ -895,6 +895,8 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
             d.pop("password_hash", None)
             d["store_url"] = f"{pub_base}/store/{d.get('slug','')}"
             d["agent_portal_url"] = f"{pub_base}/store/{d.get('slug','')}/agent-login"
+            if a.get("store_url") != d["store_url"]:
+                await db.store_agents.update_one({"id": d["id"]}, {"$set": {"store_url": d["store_url"], "agent_portal_url": d["agent_portal_url"]}})
             # All-time stats
             orders_q = {"agent_id": d["id"]}
             tot = await db.agent_orders.count_documents(orders_q)

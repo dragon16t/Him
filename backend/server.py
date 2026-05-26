@@ -7328,31 +7328,40 @@ async def campaign_analytics(month: str = "", year: str = "", current_user: dict
 # ----- SOCIAL MEDIA: Calendar, Influencer add/edit, Post analytics -----
 @api_router.post("/content-calendar")
 async def add_calendar(data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist']: raise HTTPException(status_code=403)
+    if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist', 'digital_marketing_manager']: raise HTTPException(status_code=403)
     e = {"id": f"cal-{uuid.uuid4().hex[:8]}", "title": data.get("title",""),
          "platform": data.get("platform", "instagram"), "content_type": data.get("content_type", "post"),
-         "shoot_type": data.get("shoot_type", ""),  # e.g. UGC Reel, Cinematic Product, Product Showcase, Myth & Fact Reel
-         "shoot_time": data.get("shoot_time", ""),  # HH:MM optional
+         "shoot_type": data.get("shoot_type", ""),
+         "shoot_time": data.get("shoot_time", ""),
          "scheduled_date": data.get("scheduled_date", ""), "status": data.get("status", "scheduled"),
          "assigned_to": data.get("assigned_to", ""), "assigned_to_name": data.get("assigned_to_name", ""),
          "notes": data.get("notes", ""),
+         "category": data.get("category", "content"),  # "content" (SMM) or "campaign" (DM)
+         "created_by": current_user.get("id",""), "created_by_name": current_user.get("name",""),
          "created_at": datetime.now(timezone.utc).isoformat()}
     await db.content_calendar.insert_one(e); e.pop("_id", None)
     return {"entry": e}
 
 @api_router.get("/content-calendar")
-async def get_calendar(current_user: dict = Depends(get_current_user)):
-    return {"entries": await db.content_calendar.find({}, {"_id": 0}).sort("scheduled_date", 1).to_list(500)}
+async def get_calendar(category: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    q = {}
+    if category:
+        # category-tagged docs OR untagged legacy docs (treat them as "content" by default)
+        if category == "content":
+            q = {"$or": [{"category": "content"}, {"category": {"$exists": False}}, {"category": ""}]}
+        else:
+            q["category"] = category
+    return {"entries": await db.content_calendar.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(500)}
 
 @api_router.put("/content-calendar/{cid}")
 async def update_calendar(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist']: raise HTTPException(status_code=403)
+    if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist', 'digital_marketing_manager']: raise HTTPException(status_code=403)
     await db.content_calendar.update_one({"id": cid}, {"$set": data})
     return {"message": "Updated"}
 
 @api_router.delete("/content-calendar/{cid}")
 async def delete_calendar(cid: str, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['admin', 'social_media_manager']: raise HTTPException(status_code=403)
+    if current_user['role'] not in ['admin', 'social_media_manager', 'digital_marketing_manager']: raise HTTPException(status_code=403)
     await db.content_calendar.delete_one({"id": cid})
     return {"message": "Deleted"}
 
@@ -8156,6 +8165,22 @@ async def startup():
         {"email": {"$regex": "^habeeb", "$options": "i"}},
         {"$set": {"is_head_of_sales": True, "title": "Head of Sales"}}
     )
+    # Backfill: rewrite any stale store_url that still references the old domain
+    try:
+        await db.store_agents.update_many(
+            {"store_url": {"$regex": "celestaglow\\.com/store", "$not": {"$regex": "software\\."}}},
+            [{"$set": {
+                "store_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug"]},
+                "agent_portal_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug", "/agent-login"]}
+            }}]
+        )
+        # Also force the settings doc to the right base
+        await db.store_settings.update_many(
+            {"public_base_url": {"$ne": "https://software.celestaglow.com"}},
+            {"$set": {"public_base_url": "https://software.celestaglow.com"}}
+        )
+    except Exception as _e:
+        logger.warning(f"Store URL backfill failed: {_e}")
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")
