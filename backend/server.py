@@ -2901,7 +2901,8 @@ async def create_investment(data: dict, current_user: dict = Depends(get_current
 
 @api_router.get("/investments")
 async def get_investments(current_user: dict = Depends(get_current_user)):
-    if current_user['role'] != 'admin': raise HTTPException(status_code=403)
+    if current_user['role'] not in ('admin','finance_manager'):
+        raise HTTPException(status_code=403)
     return {"investments": await db.investments.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
 
 @api_router.delete("/investments/{iid}")
@@ -3016,13 +3017,16 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         all_expenses = await db.expenses.find({},{"_id":0,"amount":1,"status":1}).to_list(2000)
         approved_amt = sum(e.get("amount",0) for e in all_expenses if e.get("status")=="approved")
         pending_list = [e for e in all_expenses if e.get("status")=="pending"]
+        total_investments_fin = await db.investments.find({},{"_id":0,"amount":1}).to_list(500)
         stats = {
             "total_expenses": round(approved_amt, 2),       # ⬅️ APPROVED only — never pending
             "pending_expenses": len(pending_list),
             "pending_expenses_amount": round(sum(e.get("amount",0) for e in pending_list), 2),
             "approved_expenses": round(approved_amt, 2),
             "rejected_expenses": round(sum(e.get("amount",0) for e in all_expenses if e.get("status")=="rejected"),2),
-            "pending_payroll": await db.payroll.count_documents({"status":"pending"})
+            "pending_payroll": await db.payroll.count_documents({"status":"pending"}),
+            "total_investment": round(sum(i.get("amount",0) for i in total_investments_fin),2),
+            "pending_fund_requests": await db.fund_requests.count_documents({"status":"pending"}),
         }
     return {"stats": stats}
 

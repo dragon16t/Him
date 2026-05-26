@@ -64,6 +64,7 @@ export default function FinanceManagerDashboard() {
   const [gstForm, setGstForm] = useState({type:"sale",amount:0,rate:18,ref_no:"",notes:"",date:new Date().toISOString().slice(0,10)});
   const [vendorForm, setVendorForm] = useState({name:"",contact:"",phone:"",email:"",address:"",gst_number:"",category:"supplier",balance:0});
   const [recurringForm, setRecurringForm] = useState({name:"",category:"rent",amount:0,frequency:"monthly",next_due_date:""});
+  const [investments, setInvestments] = useState([]);
 
   // Lazy-load strategy: each API call is independent so a single failure (502/timeout) does NOT
   // leave the dashboard stuck on the loader. Heavy tabs (GST, vendors, recurring, CLV) are
@@ -80,6 +81,7 @@ export default function FinanceManagerDashboard() {
       "/api/finance/monthly-stats",
       `/api/pnl?month=${new Date().getMonth()+1}&year=${new Date().getFullYear()}`,
       "/api/revenue-entries",
+      "/api/investments",
     ];
     const core = await Promise.allSettled(coreUrls.map(u => cachedGet(u)));
     const ok = (i) => core[i].status === "fulfilled" ? core[i].value : null;
@@ -95,6 +97,7 @@ export default function FinanceManagerDashboard() {
     if (ok(9)) setMonthlyStats(ok(9).monthly_stats || []);
     if (ok(10)) setPnl(ok(10));
     if (ok(11)) setRevEntries(ok(11).entries || []);
+    if (ok(12)) setInvestments(ok(12).investments || []);
     setLoading(false); // unblock the UI ASAP
     // Tail-load the optional analytics endpoints in the background — these are non-critical
     // and shouldn't gate the main view from rendering.
@@ -143,8 +146,8 @@ export default function FinanceManagerDashboard() {
           <div className="bg-white rounded-xl border border-[#E5E3DB] p-4 text-center"><p className="text-xs text-[#59615D] uppercase">Bank Account</p><p className="font-heading text-2xl font-bold text-[#3B5249]" data-testid="fin-bank">Rs.{finBalance.bank}</p></div>
           <div className="bg-[#3B5249] rounded-xl p-4 text-center"><p className="text-xs text-white/70 uppercase">Working Capital</p><p className="font-heading text-2xl font-bold text-white" data-testid="fin-total">Rs.{finBalance.total}</p></div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          {[{l:"Total Expenses",v:`Rs.${stats.total_expenses||0}`,i:IndianRupee,c:"#B75D69"},{l:"Pending",v:stats.pending_expenses||0,i:ClipboardList,c:"#D4A373"},{l:"Approved",v:`Rs.${stats.approved_expenses||0}`,i:Check,c:"#6B8E6B"},{l:"Payroll Pending",v:stats.pending_payroll||0,i:CreditCard,c:"#A66E4E"}].map((s,i)=>(
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+          {[{l:"Total Expenses",v:`Rs.${stats.total_expenses||0}`,i:IndianRupee,c:"#B75D69"},{l:"Pending",v:stats.pending_expenses||0,i:ClipboardList,c:"#D4A373"},{l:"Approved",v:`Rs.${stats.approved_expenses||0}`,i:Check,c:"#6B8E6B"},{l:"Payroll Pending",v:stats.pending_payroll||0,i:CreditCard,c:"#A66E4E"},{l:"Investment",v:`Rs.${stats.total_investment||0}`,i:IndianRupee,c:"#3B5249"},{l:"Pending Funds",v:stats.pending_fund_requests||0,i:ClipboardList,c:"#A66E4E"}].map((s,i)=>(
             <div key={`fmd-${i}`} className="bg-white rounded-2xl border border-[#E5E3DB] p-5 hover:shadow-md transition-all hover:-translate-y-1"><s.i className="w-5 h-5 mb-3" style={{color:s.c}}/><p className="font-heading text-xl font-semibold">{s.v}</p><p className="text-xs text-[#59615D] uppercase mt-1">{s.l}</p></div>
           ))}
         </div>
@@ -168,7 +171,7 @@ export default function FinanceManagerDashboard() {
         )}
         <Tabs defaultValue="expenses" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"expenses",l:"Expenses"},{v:"pnl",l:"P&L"},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"expenses",l:"Expenses"},{v:"pnl",l:"P&L"},{v:"investments",l:`Investments (${investments.length})`},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-4" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -194,6 +197,33 @@ export default function FinanceManagerDashboard() {
                 <div className="border border-[#E5E3DB] rounded-xl p-3"><h4 className="font-medium text-[#B75D69] mb-1">Expenses</h4><p>Salaries: Rs.{pnl.expenses?.salary||0}</p><p>Commissions: Rs.{pnl.expenses?.commissions||0}</p>{Object.entries(pnl.expenses?.by_category||{}).map(([k,v])=>(<p key={k} className="capitalize">{k}: Rs.{v}</p>))}</div>
               </div>
             </>) : <p className="text-center py-6 text-[#59615D] text-sm">No data</p>}
+          </div></TabsContent>
+
+          {/* INVESTMENTS — read-only list of capital injections (added by admin) */}
+          <TabsContent value="investments" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+              <h3 className="font-heading text-lg font-medium">Capital Investments / Added Funds</h3>
+              <div className="flex gap-3">
+                <div className="bg-[#F4ECD2]/40 rounded-xl px-3 py-1.5 text-xs"><span className="text-[#59615D]">Main: </span><b className="text-[#3B5249]">Rs.{investments.filter(i=>i.partner_type==="main"||!i.partner_type).reduce((s,i)=>s+i.amount,0).toLocaleString()}</b></div>
+                <div className="bg-[#F4ECD2]/40 rounded-xl px-3 py-1.5 text-xs"><span className="text-[#59615D]">Sub: </span><b className="text-[#A66E4E]">Rs.{investments.filter(i=>i.partner_type==="sub").reduce((s,i)=>s+i.amount,0).toLocaleString()}</b></div>
+                <div className="bg-[#3B5249] rounded-xl px-3 py-1.5 text-xs"><span className="text-white/70">Total: </span><b className="text-white">Rs.{investments.reduce((s,i)=>s+i.amount,0).toLocaleString()}</b></div>
+              </div>
+            </div>
+            {investments.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No investments added yet. Admin can add them from the Admin → Investments tab.</p> :
+              <div className="overflow-x-auto"><table className="w-full text-xs">
+                <thead><tr className="border-b bg-[#F9F8F6]">{["Date","Title","Source","Partner","Amount","Notes"].map(h=><th key={h} className="text-left p-2 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-[#E5E3DB]">{investments.map(i=>(
+                  <tr key={i.id} data-testid={`fin-invest-${i.id}`}>
+                    <td className="p-2">{i.date || i.created_at?.slice(0,10)}</td>
+                    <td className="p-2 font-medium">{i.title}</td>
+                    <td className="p-2">{i.source || "—"}</td>
+                    <td className="p-2"><Badge variant="outline" className="text-[9px] capitalize">{i.partner_type || "main"} partner</Badge></td>
+                    <td className="p-2 font-semibold text-[#3B5249]">Rs.{i.amount}</td>
+                    <td className="p-2 text-[10px] text-[#59615D] max-w-[260px] truncate">{i.notes || "—"}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            }
           </div></TabsContent>
 
           {/* FUND REQUESTS */}
