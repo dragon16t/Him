@@ -17,15 +17,18 @@ const API = "/api";
 
 const STATUS_OPTIONS = [
   { v: "all", l: "All" }, { v: "pending", l: "Pending" }, { v: "confirmed", l: "Confirmed" },
-  { v: "shipped", l: "Shipped" }, { v: "delivered", l: "Delivered" },
-  { v: "not_delivered", l: "Not Delivered" }, { v: "cancelled", l: "Cancelled" }, { v: "rejected", l: "Rejected" },
+  { v: "shipped", l: "Shipped" }, { v: "in_transit", l: "In Transit" }, { v: "delivered", l: "Delivered" },
+  { v: "returned", l: "Returned / RTO" }, { v: "not_delivered", l: "Not Delivered" },
+  { v: "cancelled", l: "Cancelled" }, { v: "rejected", l: "Rejected" },
 ];
 
 const STATUS_COLORS = {
   delivered: "bg-green-100 text-green-800",
   shipped: "bg-blue-100 text-blue-800",
+  in_transit: "bg-indigo-100 text-indigo-800",
   confirmed: "bg-emerald-100 text-emerald-800",
   pending: "bg-yellow-100 text-yellow-800",
+  returned: "bg-purple-100 text-purple-800",
   not_delivered: "bg-orange-100 text-orange-800",
   cancelled: "bg-red-100 text-red-800",
   rejected: "bg-red-100 text-red-800",
@@ -104,7 +107,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
   const toggleSel = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleSelAll = () => setSelected(s => s.length === orders.length ? [] : orders.map(o => o.id));
 
-  const canEdit = (o) => !["delivered", "cancelled", "rejected"].includes(o.status);
+  const canEdit = (o) => !["delivered", "returned", "cancelled", "rejected"].includes(o.status);
 
   return (
     <div className="space-y-3" data-testid="orders-panel">

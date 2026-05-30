@@ -1336,16 +1336,17 @@ async def email_daily_report(data: Optional[dict] = None, current_user: dict = D
 # ========================================================================
 DELHIVERY_STATUS_MAP = {
     "delivered": "delivered",
-    "rto": "not_delivered",
-    "returned": "not_delivered",
+    "rto": "returned",
+    "return to origin": "returned",
+    "returned": "returned",
     "undelivered": "not_delivered",
     "lost": "not_delivered",
     "damaged": "not_delivered",
     "cancelled": "cancelled",
-    "in transit": "shipped",
-    "manifested": "shipped",
-    "pickup pending": "shipped",
-    "dispatched": "shipped",
+    "in transit": "in_transit",
+    "manifested": "in_transit",
+    "pickup pending": "in_transit",
+    "dispatched": "in_transit",
 }
 
 async def _credit_commission_for(order: dict, current_user_id: str = "system"):
@@ -1383,7 +1384,7 @@ async def delhivery_sync_once():
     """Poll Delhivery for every shipped order with AWB; update status if changed."""
     if not DELHIVERY_API_KEY:
         return {"synced": 0, "skipped": "no_api_key"}
-    orders = await db.orders.find({"awb_number": {"$nin": [None, ""]}, "status": {"$in": ["shipped", "confirmed"]}}, {"_id": 0}).to_list(5000)
+    orders = await db.orders.find({"awb_number": {"$nin": [None, ""]}, "status": {"$in": ["shipped", "confirmed", "in_transit"]}}, {"_id": 0}).to_list(5000)
     synced = 0; updated = 0; errors = 0
     for o in orders:
         awb = o.get("awb_number") or ""
@@ -1417,7 +1418,40 @@ async def delhivery_sync_once():
                     existing = await db.commissions.find_one({"order_id": o["id"]})
                     if not existing:
                         await _credit_commission_for(o)
-                    if o.get("lead_id"):
+                    # Credit finance ledger once (auto-sync was previously skipping this)
+                    existing_txn = await db.transactions.find_one({"reference_id": o["id"], "category": "order_revenue"})
+                    if not existing_txn:
+                        try:
+                            from server import record_transaction as _record_txn
+                            pay_method = "cash" if o.get("payment_type") == "cod" else "bank"
+                            await _record_txn(
+                                "credit", "order_revenue", o.get("total_amount", 0),
+                                f"Order {o['id']} delivered (auto-sync) - {o.get('customer_name','')}",
+                                reference_id=o["id"], method=pay_method, created_by="delhivery_auto"
+                            )
+                        except Exception as _txn_e:
+                            logger.warning(f"auto-sync txn record: {_txn_e}")
+                elif mapped == "returned":
+                    # If a revenue credit was previously recorded, reverse it (debit) and reverse commission
+                    prior_credit = await db.transactions.find_one({"reference_id": o["id"], "category": "order_revenue", "type": "credit"})
+                    if prior_credit:
+                        already_reversed = await db.transactions.find_one({"reference_id": o["id"], "category": "order_return", "type": "debit"})
+                        if not already_reversed:
+                            try:
+                                from server import record_transaction as _record_txn
+                                pay_method = "cash" if o.get("payment_type") == "cod" else "bank"
+                                await _record_txn(
+                                    "debit", "order_return", o.get("total_amount", 0),
+                                    f"Order {o['id']} returned/RTO (auto-sync) - {o.get('customer_name','')}",
+                                    reference_id=o["id"], method=pay_method, created_by="delhivery_auto"
+                                )
+                            except Exception as _txn_e:
+                                logger.warning(f"auto-sync return-reverse txn: {_txn_e}")
+                    # Reverse commission if it was credited
+                    cm = await db.commissions.find_one({"order_id": o["id"], "status": {"$ne": "reversed"}})
+                    if cm:
+                        await db.commissions.update_one({"id": cm["id"]}, {"$set": {"status": "reversed", "reversed_at": now, "reversed_reason": "RTO / returned"}})
+                if o.get("lead_id") and mapped == "delivered":
                         today = date.today()
                         items = o.get("items") or []
                         last_products = ", ".join([(it.get("product_name") or "").strip() for it in items if it.get("product_name")])
