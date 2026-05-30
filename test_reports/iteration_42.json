@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 42 retest — all targeted fixes verified. Backend: 7/7 pytest tests passing including the new dedup invariant test (no duplicate order_revenue per reference_id in finance_ledger). Frontend: Telecaller UI flow exercised end-to-end with telecaller1@celestaglow.com / tc123 — Repeat (due/total) & Relation (due/total) labels correct, clicking Follow-up status chip auto-switches active tab to 'all', chip count matches filteredLeads, no console errors. Regression: label PDF / bulk-label / GST invoice PDF / daily report email / Delhivery sync all 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Telecaller leads filter bar",
+        "issues": ["Uses browser-native mm/dd/yyyy date input instead of shadcn Calendar component — same observation as iteration 41; cosmetic only."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_42_dedup_regression.py",
+    "/app/test_reports/pytest/iter42_results.xml",
+    "/app/backend/tests/test_iteration_41_pdf_email_delhivery.py"
+  ],
+  "action_items": [
+    "(Optional) Seed at least 3-5 dummy leads with mixed statuses (new, interested, follow_up due, repeat due, relation due) under telecaller1 so future regression of the telecaller dashboard counts can be tested against non-zero data sets. Currently telecaller1 has 0 assigned leads, so chip counts are all 0 — the structural assertions pass but cannot stress-test count consistency with real data.",
+    "(Optional UI polish) Replace native mm/dd/yyyy date input in telecaller leads filter with shadcn Calendar."
+  ],
+  "critical_code_review_comments": [
+    "FIX VERIFIED: upgrades.delhivery_sync_once now reads db.finance_ledger (lines 1422, 1436, 1438) instead of db.transactions — collection mismatch resolved. Finance ledger invariant test confirms no duplicate order_revenue credits per reference_id across two consecutive sync-now calls.",
+    "Note: With DELHIVERY_API_KEY effectively producing 0 status flips in this preview env (sync returns {synced:0,updated:0,errors:0}), the dedup code path inside the `if mapped == 'delivered'` branch isn't actually being hit during the test. The fix is verified by static code review + invariant assertion; full live exercise requires an order in shipped state whose Delhivery status returns 'delivered'.",
+    "/app/backend/server.py is still ~8320 lines — exceeds 700-line modularity guideline. Carry-over from iteration 41."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_42_dedup_regression.py (new pytest suite — dedup invariant + regression PDFs/email/sync + telecaller login)"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 tests passing — dedup invariant, label PDF, bulk label PDF, invoice PDF, daily report email, delhivery sync, telecaller login + leads listing)",
+    "frontend": "100% on tested surfaces — Telecaller dashboard tab labels & status chip auto-switch all verified; no console errors."
+  },
+  "test_credentials": {
+    "admin": "admin@celestaglow.com / admin123 (verified)",
+    "telecaller_1": "telecaller1@celestaglow.com / tc123 (verified — login + /telecaller dashboard loads)"
+  },
+  "seed_data_creation": "None. telecaller1 has 0 leads assigned — counts are all 0 but structural checks (label format, auto-tab-switch, count equality) all pass.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 41's HIGH bug (db.transactions vs db.finance_ledger collection mismatch in upgrades.delhivery_sync_once) is FIXED — confirmed by code review and invariant test. Telecaller credentials (telecaller1@celestaglow.com / tc123) now work and /telecaller route renders with expected tab labels: 'Today (N)', 'Repeat (due/total)', 'Relation (due/total)'. Clicking any status chip other than 'all' (e.g., Follow-up) auto-sets tab to 'all'. To make future test data more meaningful, seed a few leads under Test TC 1 (id: tc-52ad04) with varied statuses & next_repeat/next_relationship dates.",
+  "rca of the issue": "N/A — retest iteration. Previous bug RCA: see iteration_41.json. Current iteration confirms the fix: upgrades.py lines 1422,1436,1438 now query db.finance_ledger (which is where record_transaction inserts), so the duplicate-revenue guard and return-reversal logic now correctly find existing entries."
+}

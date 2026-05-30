@@ -1419,7 +1419,7 @@ async def delhivery_sync_once():
                     if not existing:
                         await _credit_commission_for(o)
                     # Credit finance ledger once (auto-sync was previously skipping this)
-                    existing_txn = await db.transactions.find_one({"reference_id": o["id"], "category": "order_revenue"})
+                    existing_txn = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_revenue"})
                     if not existing_txn:
                         try:
                             from server import record_transaction as _record_txn
@@ -1433,9 +1433,9 @@ async def delhivery_sync_once():
                             logger.warning(f"auto-sync txn record: {_txn_e}")
                 elif mapped == "returned":
                     # If a revenue credit was previously recorded, reverse it (debit) and reverse commission
-                    prior_credit = await db.transactions.find_one({"reference_id": o["id"], "category": "order_revenue", "type": "credit"})
+                    prior_credit = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_revenue", "type": "credit"})
                     if prior_credit:
-                        already_reversed = await db.transactions.find_one({"reference_id": o["id"], "category": "order_return", "type": "debit"})
+                        already_reversed = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_return", "type": "debit"})
                         if not already_reversed:
                             try:
                                 from server import record_transaction as _record_txn
