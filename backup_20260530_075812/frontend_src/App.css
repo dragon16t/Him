@@ -1,0 +1,62 @@
+/* Hide Made with Emergent badge */
+#emergent-badge {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #E5E3DB; border-radius: 3px; }
+
+/* Mobile fixes */
+@media (max-width: 768px) {
+    .max-w-7xl { padding-left: 1rem; padding-right: 1rem; }
+    table { font-size: 0.75rem; }
+    .fixed.bottom-6 { bottom: 1rem; }
+}
+
+/* No content overlap with FABs */
+.pb-24 { padding-bottom: 6rem; }
+
+/* Fade in - minimal, no animation jank */
+.animate-fade-in {
+    opacity: 1;
+}
+
+/* Marquee scroll for floating reviews */
+@keyframes marquee {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+.marquee-track {
+    animation: marquee 28s linear infinite;
+    will-change: transform;
+}
+.marquee-track:hover {
+    animation-play-state: paused;
+}
+
+/* ============ DARK MODE ============ */
+html.dark { color-scheme: dark; }
+html.dark body { background: #0F1714; color: #E5E3DB; }
+html.dark .bg-white { background-color: #1A2421 !important; }
+html.dark .bg-\[\#F9F8F6\] { background-color: #131A18 !important; }
+html.dark .bg-\[\#FDF6F0\] { background-color: #1F2A26 !important; }
+html.dark .text-\[\#3B5249\] { color: #D4A373 !important; }
+html.dark .text-\[\#59615D\] { color: #9CA8A2 !important; }
+html.dark .text-\[\#2C3531\] { color: #E5E3DB !important; }
+html.dark .border-\[\#E5E3DB\] { border-color: #2D3A36 !important; }
+html.dark .bg-gradient-to-br { background-image: linear-gradient(to bottom right, #1A2421, #0F1714) !important; }
+html.dark .from-white { --tw-gradient-from: #1A2421 !important; --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, transparent) !important; }
+html.dark .to-white { --tw-gradient-to: #1A2421 !important; }
+html.dark input, html.dark select, html.dark textarea { background-color: #131A18 !important; color: #E5E3DB !important; border-color: #2D3A36 !important; }
+html.dark [data-radix-popper-content-wrapper] > * { background: #1A2421 !important; color: #E5E3DB !important; }

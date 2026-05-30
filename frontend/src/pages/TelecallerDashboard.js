@@ -19,6 +19,7 @@ import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import { useConfirm } from "../components/ConfirmDialog";
 import VoiceNoteButton from "../components/VoiceNoteButton";
+import PickupLocationSelect from "../components/PickupLocationSelect";
 import LeadScoreBadge from "../components/LeadScoreBadge";
 import MobileBottomNav from "../components/MobileBottomNav";
 import WhatsAppCTA from "../components/WhatsAppCTA";
@@ -58,8 +59,11 @@ export default function TelecallerDashboard() {
   const [relCalls, setRelCalls] = useState({calls:[],stats:{}});
   const [tab, setTab] = useState("today");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [statusCounts, setStatusCounts] = useState({});
   const [dateFilter, setDateFilter] = useState("");  // YYYY-MM-DD; empty = all dates
   const [searchQuery, setSearchQuery] = useState("");
+  const [leadPage, setLeadPage] = useState(1);
+  const LEADS_PER_PAGE = 25;
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [showAddLead, setShowAddLead] = useState(false);
   const [showCallLog, setShowCallLog] = useState(false);
@@ -75,7 +79,7 @@ export default function TelecallerDashboard() {
   const fetchData = useCallback(async () => {
     try {
       const [sR, lR, pR, cR, tR, iR, rc, oR] = await Promise.all([
-        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/leads`), axios.get(`${API}/products`),
+        axios.get(`${API}/dashboard/stats`), axios.get(`${API}/leads?limit=5000`), axios.get(`${API}/products`),
         axios.get(`${API}/commissions/my`).catch(()=>({data:{summary:{}}})),
         axios.get(`${API}/tasks`).catch(()=>({data:{tasks:[]}})),
         axios.get(`${API}/instructions`).catch(()=>({data:{instructions:[]}})),
@@ -87,6 +91,11 @@ export default function TelecallerDashboard() {
       setOrders(oR.data.orders||[]);
       try { const lb = await axios.get(`${API}/leaderboard/telecaller`); setLeaderboard(lb.data.leaderboard||[]); } catch {}
       setInstructions(iR.data.instructions||[]); setRelCalls(rc.data);
+      // Fetch live status counts (filter badges)
+      try {
+        const sc = await axios.get(`${API}/lead-status-counts`);
+        setStatusCounts(sc.data.counts || {});
+      } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
   }, []);
@@ -140,17 +149,40 @@ export default function TelecallerDashboard() {
     return 5;
   };
 
+  // Reset pagination whenever any filter input changes
+  useEffect(() => { setLeadPage(1); }, [tab, statusFilter, dateFilter, searchQuery]);
+
   const filteredLeads = React.useMemo(() => leads.filter(l => {
     // Hide leads routed to collab and recently-ordered leads from active views
     if (l.status === "routed_to_collab") return false;
     if (isRecentlyOrdered(l)) return false;
     // Apply status + date + search filters on top of the tab
     if (statusFilter !== "all" && l.status !== statusFilter) return false;
-    if (dateFilter && (l.created_at || "").slice(0,10) !== dateFilter) return false;
+    if (dateFilter) {
+      // Match if any of these dates fall on the chosen day:
+      //  - lead creation
+      //  - last logged call (call_logs[].logged_at)
+      //  - last order date
+      //  - follow-up due date
+      const created = (l.created_at || "").slice(0,10);
+      const lastOrder = (l.last_order_date || "").slice(0,10);
+      const fu = (l.next_follow_up_date || "").slice(0,10);
+      const callDates = (l.call_logs || []).map(c => (c.logged_at || c.timestamp || "").slice(0,10));
+      if (![created, lastOrder, fu, ...callDates].includes(dateFilter)) return false;
+      // When date-filtering, BYPASS tab filter so user sees ALL activity on that day
+      return true;
+    }
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
-      const hay = `${l.name || ""} ${l.phone_number || ""} ${l.product_interest || ""}`.toLowerCase();
+      // Expanded search across more fields: name, phone, alternate phone, email, lead ID, product, address, city
+      const hay = [
+        l.name, l.phone_number, l.alternate_phone, l.email, l.id,
+        l.product_interest, (l.interested_products||[]).join(" "),
+        l.address, l.city, l.notes, l.status,
+      ].filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
+      // When searching, BYPASS tab filter so user can find leads from any tab
+      return true;
     }
     if (tab === "today") return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     if (tab === "repeat") return l.next_repeat_order_date && l.next_repeat_order_date <= today;
@@ -478,14 +510,14 @@ export default function TelecallerDashboard() {
             <div className="bg-white rounded-xl border border-[#E5E3DB] p-3 mb-3 space-y-2" data-testid="leads-filter-bar">
               <div className="flex gap-1 flex-wrap">
                 {[
-                  {v:"all",l:`All (${leads.filter(x=>x.status!=="routed_to_collab"&&!isRecentlyOrdered(x)).length})`},
-                  {v:"new",l:"New"},
-                  {v:"interested",l:"Interested"},
-                  {v:"follow_up",l:"Follow-up"},
-                  {v:"no_response",l:"No Response"},
-                  {v:"busy",l:"Busy"},
-                  {v:"ordered",l:"Order Created"},
-                  {v:"not_interested",l:"Not Interested"},
+                  {v:"all",l:`All (${statusCounts.all ?? leads.filter(x=>x.status!=="routed_to_collab"&&!isRecentlyOrdered(x)).length})`},
+                  {v:"new",l:`New (${statusCounts.new ?? 0})`},
+                  {v:"interested",l:`Interested (${statusCounts.interested ?? 0})`},
+                  {v:"follow_up",l:`Follow-up (${statusCounts.follow_up ?? 0})`},
+                  {v:"no_response",l:`No Response (${statusCounts.no_response ?? 0})`},
+                  {v:"busy",l:`Busy (${statusCounts.busy ?? 0})`},
+                  {v:"ordered",l:`Order Created (${statusCounts.order_created ?? 0})`},
+                  {v:"not_interested",l:`Not Interested (${statusCounts.not_interested ?? 0})`},
                 ].map(s=>(
                   <button key={s.v} onClick={()=>setStatusFilter(s.v)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap border transition ${statusFilter===s.v?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white text-[#59615D] border-[#E5E3DB] hover:border-[#3B5249]"}`} data-testid={`status-filter-${s.v}`}>{s.l}</button>
                 ))}
@@ -493,13 +525,15 @@ export default function TelecallerDashboard() {
               <div className="flex gap-2 flex-wrap items-center">
                 <Input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)} className="rounded-xl h-8 text-xs w-40" data-testid="leads-date-filter"/>
                 {dateFilter && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>setDateFilter("")}>Clear date</Button>}
-                <Input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search name / phone / product" className="rounded-xl h-8 text-xs flex-1 min-w-[180px]" data-testid="leads-search"/>
-                <span className="text-[10px] text-[#59615D] ml-auto">Showing: <b className="text-[#3B5249]">{filteredLeads.length}</b></span>
+                <Input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search name / phone / email / lead-id / product / city" className="rounded-xl h-8 text-xs flex-1 min-w-[180px]" data-testid="leads-search"/>
+                <span className="text-[10px] text-[#59615D] ml-auto" data-testid="leads-showing-counter">
+                  Showing <b className="text-[#3B5249]">{filteredLeads.length}</b> of <b className="text-[#3B5249]">{leads.filter(x=>x.status!=="routed_to_collab").length}</b> total
+                </span>
               </div>
             </div>
             <div className="space-y-2">
             {filteredLeads.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No leads in this category</p>:
-            filteredLeads.map(lead => (
+            filteredLeads.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE).map(lead => (
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
                 <div className="flex justify-between items-start mb-1">
                   <div><p className="font-heading font-medium text-sm">{(lead.name && lead.name !== "Unknown") ? lead.name : lead.phone_number}</p><p className="text-xs text-[#59615D]">{lead.phone_number}{lead.source ? ` | ${lead.source}` : ""}</p>
@@ -509,6 +543,7 @@ export default function TelecallerDashboard() {
                     <LeadScoreBadge leadId={lead.id} compact />
                     <StatusBadge status={lead.status} />
                     {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
+                    {orderedLeadIds.has(lead.id) && <Badge className="bg-blue-100 text-blue-800 text-[10px]" data-testid={`order-placed-${lead.id}`}>ORDER PLACED</Badge>}
                     {lead.last_order_date && <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">REPEAT CUSTOMER</Badge>}
                     {lead.next_repeat_order_date && lead.next_repeat_order_date <= today && <Badge className="bg-orange-100 text-orange-800 text-[10px]">REPEAT DUE</Badge>}
                     {lead.next_relationship_date && lead.next_relationship_date <= today && <Badge className="bg-pink-100 text-pink-800 text-[10px]">RELATION CALL</Badge>}
@@ -528,6 +563,19 @@ export default function TelecallerDashboard() {
               </div>
             ))}
           </div>
+          {/* Pagination — only show when more than one page */}
+          {filteredLeads.length > LEADS_PER_PAGE && (
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-[#E5E3DB]" data-testid="leads-pagination">
+              <p className="text-[10px] text-[#59615D]">
+                Showing {(leadPage-1)*LEADS_PER_PAGE+1}–{Math.min(leadPage*LEADS_PER_PAGE, filteredLeads.length)} of <b>{filteredLeads.length}</b> leads
+              </p>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(p=>Math.max(1,p-1))} className="rounded-full h-7 px-3 text-[10px]" data-testid="leads-prev">Prev</Button>
+                <span className="text-[10px] text-[#59615D] px-2">Page {leadPage} / {Math.ceil(filteredLeads.length/LEADS_PER_PAGE)}</span>
+                <Button size="sm" variant="outline" disabled={leadPage>=Math.ceil(filteredLeads.length/LEADS_PER_PAGE)} onClick={()=>setLeadPage(p=>p+1)} className="rounded-full h-7 px-3 text-[10px]" data-testid="leads-next">Next</Button>
+              </div>
+            </div>
+          )}
           </>
         )}
       </div>
@@ -595,6 +643,7 @@ export default function TelecallerDashboard() {
             <div><Label className="text-xs">Pincode</Label><Input value={orderForm.customer_pincode} onChange={e=>setOrderForm(f=>({...f,customer_pincode:e.target.value}))} className="rounded-xl" placeholder="673001" data-testid="order-customer-pincode"/></div>
           </div>
           <div><Label className="text-xs">Landmark (optional)</Label><Input value={orderForm.customer_landmark} onChange={e=>setOrderForm(f=>({...f,customer_landmark:e.target.value}))} className="rounded-xl" placeholder="Near XYZ school" data-testid="order-customer-landmark"/></div>
+          <PickupLocationSelect value={orderForm.pickup_location} onChange={(v)=>setOrderForm(f=>({...f,pickup_location:v}))} testId="order-pickup-select" />
           <div><Label className="text-xs">Products & Quantity</Label>
             <div className="space-y-1.5 max-h-40 overflow-y-auto border border-[#E5E3DB] rounded-xl p-2">{products.map(p=>{const item=orderForm.items.find(i=>i.product_id===p.id); return(
               <div key={p.id} className="flex items-center justify-between text-xs gap-2">

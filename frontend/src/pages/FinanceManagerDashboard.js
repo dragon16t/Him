@@ -14,6 +14,10 @@ import DailyTaskSheet from "@/components/DailyTaskSheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogOut, IndianRupee, ClipboardList, Check, X, Loader2, CreditCard, BarChart3, Image, ExternalLink, Plus } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
+import FinanceProofsPanel from "../components/FinanceProofsPanel";
+import BudgetingCalendar from "../components/BudgetingCalendar";
+import ExpenseGroupingPanel from "../components/ExpenseGroupingPanel";
+import ExpenseAutoCategorize from "../components/ExpenseAutoCategorize";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
@@ -40,7 +44,9 @@ export default function FinanceManagerDashboard() {
   const [loading, setLoading] = useState(true);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showFinTxn, setShowFinTxn] = useState(false);
-  const [expForm, setExpForm] = useState({ title: "", amount: 0, category: "general", description: "" });
+  const [expForm, setExpForm] = useState({ title: "", amount: 0, category: "", description: "", proof_path: "", proof_url: "", proof_filename: "" });
+  const [expenseHeads, setExpenseHeads] = useState([]);
+  const [expProofUploading, setExpProofUploading] = useState(false);
   const [finTxnForm, setFinTxnForm] = useState({ type: "credit", amount: 0, category: "manual", description: "", method: "bank" });
 
   const [showProof, setShowProof] = useState(false);
@@ -106,7 +112,8 @@ export default function FinanceManagerDashboard() {
       cachedGet("/api/vendors"),
       cachedGet("/api/finance/recurring"),
       cachedGet("/api/analytics/clv"),
-    ]).then(([g, v, rec, c]) => {
+      cachedGet("/api/expense-heads"),
+    ]).then(([g, v, rec, c, eh]) => {
       if (g.status === "fulfilled") {
         setGstEntries(g.value.entries || []);
         setGstSummary({ output_gst: g.value.output_gst, input_gst: g.value.input_gst, net_payable: g.value.net_payable });
@@ -114,6 +121,7 @@ export default function FinanceManagerDashboard() {
       if (v.status === "fulfilled") setVendors(v.value.vendors || []);
       if (rec.status === "fulfilled") setRecurring(rec.value.recurring || []);
       if (c.status === "fulfilled") setClv(c.value);
+      if (eh.status === "fulfilled") setExpenseHeads(eh.value.heads || []);
     });
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -124,7 +132,50 @@ export default function FinanceManagerDashboard() {
 
   const approveExpense = async (id, status, debitFrom) => { try { await axios.put(`${API}/expenses/${id}/approve`, {status, debit_from: debitFrom}); toast.success(`Updated (${debitFrom})`); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const processPayroll = async (id) => { try { await axios.put(`${API}/payroll/${id}/process`, {}); toast.success("Processed"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
-  const handleAddExpense = async () => { if (!expForm.title) return toast.error("Title required"); try { await axios.post(`${API}/expenses`, {...expForm,amount:Number(expForm.amount)}); toast.success("Expense added"); setShowAddExpense(false); setExpForm({title:"",amount:0,category:"general",description:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const handleAddExpense = async () => {
+    if (!expForm.title) return toast.error("Title required");
+    if (!expForm.category) return toast.error("Category required (pick one)");
+    if (!expForm.amount || Number(expForm.amount) <= 0) return toast.error("Amount must be > 0");
+    try {
+      const { data } = await axios.post(`${API}/expenses`, {
+        title: expForm.title, amount: Number(expForm.amount), category: expForm.category,
+        description: expForm.description, proof_path: expForm.proof_path,
+      });
+      // If proof was uploaded, also create a finance_proofs record so it shows on the Proofs sheet
+      if (expForm.proof_url) {
+        try {
+          await axios.post(`${API}/finance/proofs`, {
+            title: expForm.title,
+            amount: Number(expForm.amount),
+            category: expForm.category,
+            payment_type: "expense",
+            payment_date: new Date().toISOString().slice(0, 10),
+            file_url: expForm.proof_url,
+            filename: expForm.proof_filename,
+            linked_expense_id: data?.expense?.id || "",
+            notes: expForm.description,
+          });
+        } catch (e) { /* non-blocking */ }
+      }
+      toast.success("Expense added");
+      setShowAddExpense(false);
+      setExpForm({ title: "", amount: 0, category: "", description: "", proof_path: "", proof_url: "", proof_filename: "" });
+      fetchData();
+    } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+
+  const uploadExpenseProof = async (file) => {
+    if (!file) return;
+    setExpProofUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await axios.post(`${API}/finance/proofs/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setExpForm(f => ({ ...f, proof_path: data.url, proof_url: data.url, proof_filename: data.filename }));
+      toast.success("Proof uploaded");
+    } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+    setExpProofUploading(false);
+  };
   const handleFinTxn = async () => { if (!finTxnForm.amount) return toast.error("Amount required"); try { await axios.post(`${API}/finance/transaction`, finTxnForm); toast.success("Recorded"); setShowFinTxn(false); setFinTxnForm({type:"credit",amount:0,category:"manual",description:"",method:"bank"}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const logout = () => { localStorage.clear(); navigate("/login"); };
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
@@ -171,7 +222,7 @@ export default function FinanceManagerDashboard() {
         )}
         <Tabs defaultValue="expenses" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"expenses",l:"Expenses"},{v:"pnl",l:"P&L"},{v:"investments",l:`Investments (${investments.length})`},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"expenses",l:"Expenses"},{v:"grouping",l:"📊 Grouping"},{v:"proofs",l:"📄 Proofs"},{v:"budgeting",l:"📅 Budgeting"},{v:"pnl",l:"P&L"},{v:"investments",l:`Investments (${investments.length})`},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-4" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -179,6 +230,17 @@ export default function FinanceManagerDashboard() {
             <table className="w-full"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","Title","Category","Amount","By","Proof","Debited From","Status","Action"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-[#E5E3DB]">{filterByMonth(expenses, month, year, "created_at", day).map(e=>(<tr key={e.id}><td className="p-3 text-xs">{e.created_at?.slice(0,10)}</td><td className="p-3 text-sm font-medium">{e.title}</td><td className="p-3"><Badge variant="outline" className="text-[9px]">{e.category}</Badge></td><td className="p-3 font-semibold">Rs.{e.amount}</td><td className="p-3 text-xs">{e.created_by_name}</td><td className="p-3">{e.proof_path?<Button size="sm" variant="ghost" className="text-xs text-[#3B5249] h-7" onClick={()=>{setProofPath(e.proof_path);setShowProof(true);}}><Image className="w-3 h-3 mr-1"/>View</Button>:<span className="text-xs text-[#59615D]">-</span>}</td><td className="p-3"><Badge variant="outline" className="text-[9px] capitalize">{e.debit_from||"-"}</Badge></td><td className="p-3"><Badge className={`text-[9px] ${e.status==="approved"?"bg-green-100 text-green-800":"bg-yellow-100 text-yellow-800"}`}>{e.status}</Badge></td><td className="p-3"><div className="flex gap-1">{e.status==="pending"&&<><Select onValueChange={(v)=>approveExpense(e.id,"approved",v)}><SelectTrigger className="h-6 w-20 text-[9px] rounded-full"><SelectValue placeholder="Approve"/></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent></Select><Button size="sm" variant="outline" className="rounded-full text-xs h-6" onClick={()=>approveExpense(e.id,"rejected","bank")}><X className="w-3 h-3"/></Button></>}<Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" data-testid={`del-expense-${e.id}`} onClick={async()=>{const pwd = window.prompt("Enter Finance delete password to delete this expense:"); if(!pwd) return; try{ await axios.delete(`${API}/expenses/${e.id}`,{data:{password:pwd}}); toast.success("Expense deleted"); fetchData(); } catch(err){ toast.error(err?.response?.data?.detail || "Delete failed"); }}}><X className="w-3 h-3"/></Button></div></td></tr>))}</tbody></table>
           </div></TabsContent>
+
+          {/* PROOFS TAB */}
+          <TabsContent value="proofs" className="animate-fade-in"><FinanceProofsPanel /></TabsContent>
+
+          {/* GROUPING — auto-buckets every expense into fixed/variable/asset baskets */}
+          <TabsContent value="grouping" className="animate-fade-in">
+            <ExpenseGroupingPanel month={month} year={year} />
+          </TabsContent>
+
+          {/* BUDGETING TAB */}
+          <TabsContent value="budgeting" className="animate-fade-in"><BudgetingCalendar /></TabsContent>
 
           {/* P&L TAB */}
           <TabsContent value="pnl" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
@@ -390,11 +452,27 @@ export default function FinanceManagerDashboard() {
 
       {/* Add Expense Dialog */}
       <Dialog open={showAddExpense} onOpenChange={setShowAddExpense}><DialogContent className="rounded-2xl"><DialogHeader><DialogTitle className="font-heading">Add Expense</DialogTitle></DialogHeader><div className="space-y-3">
-        <div><Label className="text-xs font-medium">Title</Label><Input value={expForm.title} onChange={e=>setExpForm(f=>({...f,title:e.target.value}))} placeholder="Expense title" className="rounded-xl"/></div>
+        <div><Label className="text-xs font-medium">Title</Label><Input value={expForm.title} onChange={e=>setExpForm(f=>({...f,title:e.target.value}))} placeholder="Expense title (e.g. Petrol refill, Office rent)" className="rounded-xl"/>
+        <ExpenseAutoCategorize title={expForm.title} notes={expForm.description} category={expForm.category} onApply={(c)=>setExpForm(f=>({...f,category:c}))} /></div>
         <div><Label className="text-xs font-medium">Amount (Rs.)</Label><Input type="number" value={expForm.amount} onChange={e=>setExpForm(f=>({...f,amount:e.target.value}))} className="rounded-xl"/></div>
-        <div><Label className="text-xs font-medium">Category</Label><Select value={expForm.category} onValueChange={v=>setExpForm(f=>({...f,category:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent>{["general","marketing","travel","office","salary","inventory"].map(c=><SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label className="text-xs font-medium">Category</Label>
+          <Select value={expForm.category} onValueChange={v=>setExpForm(f=>({...f,category:v}))}>
+            <SelectTrigger className="rounded-xl" data-testid="expense-category-select"><SelectValue placeholder="Pick expense head"/></SelectTrigger>
+            <SelectContent>{expenseHeads.map(h=><SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <p className="text-[10px] text-[#59615D] mt-1">Picking the right head ensures any budget set for that head is auto-reduced.</p>
+        </div>
         <div><Label className="text-xs font-medium">Description</Label><Textarea value={expForm.description} onChange={e=>setExpForm(f=>({...f,description:e.target.value}))} className="rounded-xl"/></div>
-        <Button onClick={handleAddExpense} className="w-full rounded-full bg-[#3B5249] text-white">Add Expense</Button>
+        <div>
+          <Label className="text-xs font-medium">Payment Proof (optional)</Label>
+          <div className="flex items-center gap-2 mt-1">
+            <Input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={e=>uploadExpenseProof(e.target.files?.[0])} className="rounded-xl text-xs" data-testid="expense-proof-input" disabled={expProofUploading}/>
+            {expProofUploading && <Loader2 className="w-4 h-4 animate-spin text-[#3B5249]"/>}
+          </div>
+          {expForm.proof_filename && <p className="text-[10px] text-green-700 mt-1" data-testid="expense-proof-uploaded">✓ {expForm.proof_filename}</p>}
+          <p className="text-[10px] text-[#59615D] mt-1">Uploaded receipts are auto-saved to the Proofs sheet linked to this expense.</p>
+        </div>
+        <Button onClick={handleAddExpense} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="expense-submit-btn">Add Expense</Button>
       </div></DialogContent></Dialog>
 
       {/* Finance Transaction Dialog */}

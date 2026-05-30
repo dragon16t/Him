@@ -120,10 +120,10 @@ async def export_orders_csv(
     query = {}
     role = current_user["role"]; uid = current_user["id"]
     if role == "sales_manager":
-        tcs = await db.telecallers.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(5000)
         query["created_by"] = {"$in": [t["id"] for t in tcs] + [uid]}
     elif role == "district_manager":
-        ags = await db.agents.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(500)
+        ags = await db.agents.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(5000)
         query["created_by"] = {"$in": [a["id"] for a in ags] + [uid]}
     elif role not in ("admin", "inventory_manager", "finance_manager", "hr_manager"):
         raise HTTPException(status_code=403)
@@ -147,7 +147,7 @@ async def export_leads_csv(current_user: dict = Depends(_auth)):
     if role == "telecaller" or role == "agent":
         query["assigned_to"] = uid
     elif role == "sales_manager":
-        tcs = await db.telecallers.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": uid}, {"id": 1, "_id": 0}).to_list(5000)
         query["assigned_to"] = {"$in": [t["id"] for t in tcs] + [uid]}
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(20000)
     cols = ["id", "created_at", "name", "phone_number", "status", "source", "product_interest",
@@ -180,7 +180,7 @@ async def bulk_import_leads(file: UploadFile = File(...), current_user: dict = D
     content = (await file.read()).decode("utf-8", errors="ignore")
     reader = csv.DictReader(io.StringIO(content))
     # Active telecallers for round-robin assignment
-    tcs = await db.telecallers.find({"status": {"$ne": "inactive"}}, {"id": 1, "name": 1, "_id": 0}).to_list(500)
+    tcs = await db.telecallers.find({"status": {"$ne": "inactive"}}, {"id": 1, "name": 1, "_id": 0}).to_list(5000)
     if not tcs:
         raise HTTPException(status_code=400, detail="No active telecallers to assign")
     created, dup, errors, rows = 0, 0, [], 0
@@ -226,7 +226,7 @@ async def customer_360(phone: str, current_user: dict = Depends(_auth)):
     p = normalize_phone(phone)
     # Find by normalized phone first, fallback to raw
     leads = await db.leads.find({"$or": [{"phone_number_norm": p}, {"phone_number": phone}]}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    orders = await db.orders.find({"customer_phone": {"$regex": p[-10:]}}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    orders = await db.orders.find({"customer_phone": {"$regex": p[-10:]}}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     delivered = [o for o in orders if o.get("status") == "delivered"]
     return {
         "phone": p,
@@ -361,7 +361,7 @@ async def gst_invoice(oid: str, current_user: dict = Depends(_auth)):
 async def trash_leads(current_user: dict = Depends(_auth)):
     if current_user["role"] not in ("admin", "sales_manager", "hr_manager"):
         raise HTTPException(status_code=403)
-    items = await db.leads.find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(500)
+    items = await db.leads.find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(5000)
     return {"items": items, "total": len(items)}
 
 
@@ -427,7 +427,7 @@ async def live_ops_wall(current_user: dict = Depends(_auth)):
     now = datetime.now(timezone.utc)
     last_hour = (now - timedelta(hours=1)).isoformat()
     last_10m = (now - timedelta(minutes=10)).isoformat()
-    orders_today = await db.orders.find({"created_at": {"$gte": today}}, {"_id": 0}).to_list(500)
+    orders_today = await db.orders.find({"created_at": {"$gte": today}}, {"_id": 0}).to_list(5000)
     delivered_today = [o for o in orders_today if o.get("status") == "delivered"]
     orders_last_hour = sum(1 for o in orders_today if o.get("created_at", "") >= last_hour)
     leads_today = await db.leads.count_documents({"created_at": {"$gte": today}, "deleted": {"$ne": True}})
@@ -518,7 +518,7 @@ async def transcribe_audio(file: UploadFile = File(...), current_user: dict = De
 async def proxy_audit_log(current_user: dict = Depends(_auth)):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403)
-    logs = await db.audit_logs.find({"action": {"$regex": "proxy_"}}, {"_id": 0}).sort("timestamp", -1).to_list(500)
+    logs = await db.audit_logs.find({"action": {"$regex": "proxy_"}}, {"_id": 0}).sort("timestamp", -1).to_list(5000)
     return {"logs": logs, "total": len(logs)}
 
 

@@ -108,7 +108,7 @@ export default function SalesManagerDashboard() {
       try { const hc = await axios.get(`${API}/hiring/candidates`); setHiringCandidates(hc.data.entries||[]); } catch {}
       try { const cl = await axios.get(`${API}/call-logs/all`); setCallLogs(cl.data.call_logs||[]); } catch {}
       try { const a = await axios.get(`${API}/my-team/asms`); setAsms(a.data.asms||[]); } catch {}
-      try { const ld = await axios.get(`${API}/leads`, { params: { limit: 1000 } }); setSmLeads(ld.data.leads || []); } catch {}
+      try { const ld = await axios.get(`${API}/leads`, { params: { limit: 5000 } }); setSmLeads(ld.data.leads || []); } catch {}
       // Head of Sales — fetch all SMs (will 403 silently for regular SMs, that's fine)
       try { const sm = await axios.get(`${API}/sales-managers`); setSalesManagers(sm.data.sales_managers || []); } catch {}
       // Head of Sales — fetch ALL telecallers across the company for assignment panel
@@ -127,7 +127,7 @@ export default function SalesManagerDashboard() {
     setCallViewerLoading(true);
     Promise.all([
       axios.get(`${API}/team-activity`, { params: { user_id: callViewerTC.id, days: callViewerDays, limit: 500 } }).catch(()=>({data:{activities:[]}})),
-      axios.get(`${API}/leads`, { params: { assigned_to: callViewerTC.id, limit: 500 } }).catch(()=>({data:{leads:[]}}))
+      axios.get(`${API}/leads`, { params: { assigned_to: callViewerTC.id, limit: 5000 } }).catch(()=>({data:{leads:[]}}))
     ]).then(([a, l]) => {
       setCallViewerLogs(a.data.activities || []);
       setCallViewerLeads(l.data.leads || []);

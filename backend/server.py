@@ -40,7 +40,7 @@ COMPANY = {
     "phone": "+91 94461 25745",
     "email": "manager@celestaglow.com",
     "website": "www.celestaglow.com",
-    "work_hours": "9:30 AM – 5:30 PM (Monday to Saturday)",
+    "work_hours": "9:00 AM – 6:00 PM (Monday to Saturday)",
     "total_break": "1 hour total per day",
     "weekly_off": "Sunday",
     "notice_period": "30 days (as per company policy & Indian labour law)",
@@ -551,6 +551,32 @@ async def seed_database():
                 await db.leads.insert_one(dl)
     except Exception as e:
         logger.error(f"demo lead seed: {e}")
+
+    # Auto-wire the org chart so SM ↔ TC and DM ↔ Agent dashboards interconnect.
+    # On a fresh seed (or migration from an older build) the role records may
+    # be missing the `managed_by` link, which makes the SM/DM dashboards show
+    # zero subordinates. Heal it here exactly once per boot.
+    try:
+        sm_first = await db.sales_managers.find_one({}, {"_id": 0, "id": 1, "name": 1})
+        if sm_first:
+            await db.telecallers.update_many(
+                {"$or": [{"managed_by": {"$exists": False}}, {"managed_by": ""}, {"managed_by": None}]},
+                {"$set": {"managed_by": sm_first["id"], "managed_by_name": sm_first.get("name", ""), "managed_by_role": "sales_manager"}})
+            await db.assistant_sales_managers.update_many(
+                {"$or": [{"managed_by": {"$exists": False}}, {"managed_by": ""}, {"managed_by": None}]},
+                {"$set": {"managed_by": sm_first["id"], "managed_by_name": sm_first.get("name", ""), "managed_by_role": "sales_manager"}})
+        dm_first = await db.managers.find_one({}, {"_id": 0, "id": 1, "name": 1})
+        if dm_first:
+            await db.agents.update_many(
+                {"$or": [{"managed_by": {"$exists": False}}, {"managed_by": ""}, {"managed_by": None}]},
+                {"$set": {"managed_by": dm_first["id"], "managed_by_name": dm_first.get("name", ""), "managed_by_role": "district_manager"}})
+            await db.assistant_district_managers.update_many(
+                {"$or": [{"managed_by": {"$exists": False}}, {"managed_by": ""}, {"managed_by": None}]},
+                {"$set": {"managed_by": dm_first["id"], "managed_by_name": dm_first.get("name", ""), "managed_by_role": "district_manager"}})
+        logger.info("Org chart wired: telecallers/asms → SM, agents/adms → DM")
+    except Exception as _e:
+        logger.warning(f"org chart wire: {_e}")
+
     logger.info("Database seeded")
 
 async def write_test_credentials():
@@ -704,7 +730,7 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
     daily = sum(o['total_amount'] for o in orders if o.get('created_at','')[:10] == today.isoformat())
     month_start = today.replace(day=1).isoformat()
     monthly = sum(o['total_amount'] for o in orders if o.get('created_at','')[:10] >= month_start)
-    comms = await db.commissions.find({"user_id": current_user['id']}, {"_id": 0}).to_list(500)
+    comms = await db.commissions.find({"user_id": current_user['id']}, {"_id": 0}).to_list(5000)
     daily_comm = sum(c['commission_amount'] for c in comms if c.get('created_at','')[:10] == today.isoformat())
     monthly_comm = sum(c['commission_amount'] for c in comms if c.get('created_at','')[:10] >= month_start)
     return {"profile": user, "earnings": {"daily_sales": round(daily,2), "monthly_sales": round(monthly,2), "daily_commission": round(daily_comm,2), "monthly_commission": round(monthly_comm,2), "total_commission": round(sum(c['commission_amount'] for c in comms),2)}}
@@ -730,7 +756,7 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     elif current_user['role'] == 'agent': query['assigned_to'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
         # SM sees only leads owned by their telecallers
-        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(5000)
         ids = [t['id'] for t in tcs] + [current_user['id']]
         target = created_by or assigned_to
         if target:
@@ -741,7 +767,7 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
             query['created_by'] = {"$in": ids}
     elif current_user['role'] == 'assistant_sales_manager':
         sm_id = current_user.get('managed_by','')
-        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id":0,"id":1}).to_list(5000)
         ids = [t['id'] for t in tcs] + [sm_id]
         if assigned_to:
             if assigned_to not in ids:
@@ -750,7 +776,7 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
         else:
             query['assigned_to'] = {"$in": ids}
     elif current_user['role'] == 'district_manager':
-        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(500)
+        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id":0,"id":1}).to_list(5000)
         ids = [a['id'] for a in ags] + [current_user['id']]
         if assigned_to:
             if assigned_to not in ids:
@@ -760,7 +786,7 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
             query['assigned_to'] = {"$in": ids}
     elif current_user['role'] == 'assistant_district_manager':
         dm_id = current_user.get('managed_by','')
-        ags = await db.agents.find({"managed_by": dm_id}, {"_id":0,"id":1}).to_list(500)
+        ags = await db.agents.find({"managed_by": dm_id}, {"_id":0,"id":1}).to_list(5000)
         ids = [a['id'] for a in ags] + [dm_id]
         if assigned_to:
             if assigned_to not in ids:
@@ -783,7 +809,7 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
         query['created_at'] = {"$gte": prefix, "$lt": prefix + "~"}
     elif year:
         query['created_at'] = {"$gte": year, "$lt": year + "~"}
-    limit = max(1, min(int(limit or 500), 2000))
+    limit = max(1, min(int(limit or 500), 5000))
     skip = max(0, int(skip or 0))
     total = await db.leads.count_documents(query)
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -799,7 +825,7 @@ async def get_todays_calls(current_user: dict = Depends(get_current_user)):
         {"next_repeat_order_date": {"$lte": today, "$ne": ""}},
         {"status": "not_interested", "next_follow_up_date": {"$lte": today, "$ne": ""}},
     ]}
-    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
     motivations = [
         "Every 'no' is one step closer to a 'yes'! Keep pushing!",
         "The best salespeople hear 'no' 7 times before getting a 'yes'.",
@@ -837,19 +863,19 @@ async def get_follow_up_leads(current_user: dict = Depends(get_current_user)):
         user_ids = [current_user['id']]
     elif role == 'district_manager':
         # Only agents reporting to THIS DM
-        agents = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
+        agents = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(5000)
         user_ids = [a['id'] for a in agents]
     elif role == 'assistant_district_manager':
         dm_id = current_user.get('managed_by', '')
-        agents = await db.agents.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(500)
+        agents = await db.agents.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(5000)
         user_ids = [a['id'] for a in agents]
     elif role == 'sales_manager':
         # Only telecallers reporting to THIS SM
-        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(5000)
         user_ids = [t['id'] for t in tcs]
     elif role == 'assistant_sales_manager':
         sm_id = current_user.get('managed_by', '')
-        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(5000)
         user_ids = [t['id'] for t in tcs]
     elif role in ['admin']:
         user_ids = None  # All
@@ -861,7 +887,7 @@ async def get_follow_up_leads(current_user: dict = Depends(get_current_user)):
     ]}
     if user_ids is not None:
         query["assigned_to"] = {"$in": user_ids}
-    leads = await db.leads.find(query, {"_id": 0}).sort("next_repeat_order_date", 1).to_list(500)
+    leads = await db.leads.find(query, {"_id": 0}).sort("next_repeat_order_date", 1).to_list(5000)
     repeat_leads = [l for l in leads if l.get('next_repeat_order_date') and l['next_repeat_order_date'] <= today]
     upcoming_repeat = [l for l in leads if l.get('next_repeat_order_date') and l['next_repeat_order_date'] > today]
     relationship_leads = [l for l in leads if l.get('next_relationship_date') and l['next_relationship_date'] <= today]
@@ -1052,7 +1078,7 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
     if current_user['role'] in ['telecaller', 'agent']: query['created_by'] = current_user['id']
     elif current_user['role'] == 'sales_manager':
         # SM sees only telecaller-created orders FROM THEIR TEAM (managed_by = self)
-        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(5000)
         asms = await db.assistant_sales_managers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(50)
         ids = [t['id'] for t in tcs] + [current_user['id']] + [a['id'] for a in asms]
         query['created_by'] = {'$in': ids}
@@ -1060,17 +1086,17 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
         # DM sees only agent-created orders FROM THEIR TEAM (managed_by = self).
         # NOTE: Telecaller-created orders are routed through the SM chain (not DM).
         # This is intentional team-strict scope — agents-only for DM, telecallers-only for SM.
-        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(500)
+        ags = await db.agents.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(5000)
         adms = await db.assistant_district_managers.find({"managed_by": current_user['id']}, {"_id": 0, "id": 1}).to_list(50)
         ids = [a['id'] for a in ags] + [current_user['id']] + [a['id'] for a in adms]
         query['created_by'] = {'$in': ids}
     elif current_user['role'] == 'assistant_sales_manager':
         # ASM sees same scope as their parent SM
-        tcs = await db.telecallers.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(500)
+        tcs = await db.telecallers.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(5000)
         ids = [t['id'] for t in tcs] + [current_user['id'], current_user.get('managed_by','')]
         query['created_by'] = {'$in': ids}
     elif current_user['role'] == 'assistant_district_manager':
-        ags = await db.agents.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(500)
+        ags = await db.agents.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(5000)
         ids = [a['id'] for a in ags] + [current_user['id'], current_user.get('managed_by','')]
         query['created_by'] = {'$in': ids}
     if status: query['status'] = status
@@ -1094,7 +1120,7 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
 async def get_pending_orders(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager', 'admin', 'sales_manager']:
         raise HTTPException(status_code=403, detail="Access denied")
-    return {"orders": await db.orders.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(100)}
+    return {"orders": await db.orders.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.post("/orders")
 async def create_order(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
@@ -1321,13 +1347,17 @@ async def reject_order(order_id: str, data: dict, current_user: dict = Depends(g
 # ==================== PRODUCT / REGION / COMMISSION ====================
 @api_router.get("/products")
 async def get_products(current_user: dict = Depends(get_current_user)):
-    return {"products": await db.products.find({}, {"_id": 0}).to_list(100)}
+    return {"products": await db.products.find({}, {"_id": 0}).to_list(5000)}
 
 @api_router.post("/products")
 async def create_product(data: dict, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager']: raise HTTPException(status_code=403)
     p = {"id": f"prod-{uuid.uuid4().hex[:6]}", "name": data.get("name",""), "category": data.get("category","general"),
          "price": data.get("price",0), "description": data.get("description",""), "stock": data.get("stock",0),
+         "image_url": data.get("image_url","") or (data.get("images") or [""])[0],
+         "image": data.get("image_url","") or (data.get("images") or [""])[0],
+         "images": data.get("images") or [],
+         "gallery": data.get("gallery") or data.get("images") or [],
          "created_at": datetime.now(timezone.utc).isoformat()}
     await db.products.insert_one(p); p.pop("_id",None)
     return {"product": p, "message": "Product created"}
@@ -1336,6 +1366,13 @@ async def create_product(data: dict, current_user: dict = Depends(get_current_us
 async def update_product(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager']: raise HTTPException(status_code=403)
     u = {k:v for k,v in data.items() if k not in ["id","_id"]}
+    # Sync image fields so storefront + admin panel stay aligned
+    if "images" in u and "gallery" not in u:
+        u["gallery"] = u["images"]
+    if "gallery" in u and "images" not in u:
+        u["images"] = u["gallery"]
+    if "image_url" in u and not u.get("image"):
+        u["image"] = u["image_url"]
     await db.products.update_one({"id": pid}, {"$set": u})
     return {"product": await db.products.find_one({"id": pid}, {"_id": 0}), "message": "Updated"}
 
@@ -1346,7 +1383,7 @@ async def delete_product(pid: str, current_user: dict = Depends(get_current_user
 
 @api_router.get("/regions")
 async def get_regions(current_user: dict = Depends(get_current_user)):
-    return {"regions": await db.regions.find({}, {"_id": 0}).to_list(100)}
+    return {"regions": await db.regions.find({}, {"_id": 0}).to_list(5000)}
 
 @api_router.get("/dm/my-districts")
 async def get_my_districts(current_user: dict = Depends(get_current_user)):
@@ -1379,7 +1416,7 @@ async def update_region(rid: str, data: dict, current_user: dict = Depends(get_c
 
 @api_router.get("/commissions/my")
 async def get_my_commissions(current_user: dict = Depends(get_current_user)):
-    comms = await db.commissions.find({"user_id": current_user['id']}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    comms = await db.commissions.find({"user_id": current_user['id']}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     # Fix: include legacy 'credited' status in totals
     p = sum(c['commission_amount'] for c in comms if c['status']=='pending')
     a = sum(c['commission_amount'] for c in comms if c['status'] in ('approved','credited'))
@@ -1412,7 +1449,7 @@ async def get_all_commissions(current_user: dict = Depends(get_current_user)):
     elif current_user['role'] in ['district_manager','assistant_district_manager']:
         # DM sees only agent / DM / asst DM commissions
         query['user_role'] = {"$in": ['agent','district_manager','assistant_district_manager']}
-    return {"commissions": await db.commissions.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"commissions": await db.commissions.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/commissions/{cid}/pay")
 async def mark_paid(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -1437,7 +1474,7 @@ async def bulk_pay_commissions(data: dict, current_user: dict = Depends(get_curr
     notes = data.get("notes", "")
     pay_method = "cash" if paid_via == "cash" else "bank"
     now_iso = datetime.now(timezone.utc).isoformat()
-    coms = await db.commissions.find({"id": {"$in": ids}, "status": {"$ne": "paid"}}, {"_id": 0}).to_list(500)
+    coms = await db.commissions.find({"id": {"$in": ids}, "status": {"$ne": "paid"}}, {"_id": 0}).to_list(5000)
     if not coms:
         return {"paid_count": 0, "total_amount": 0, "skipped": len(ids), "message": "No pending commissions in selection"}
     paid_ids = [c["id"] for c in coms]
@@ -1677,7 +1714,7 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
         q['managed_by'] = current_user['id']
     elif current_user['role'] == 'assistant_sales_manager':
         q['managed_by'] = current_user.get('managed_by','')
-    tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
+    tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(5000)
     # All-time totals
     for tc in tcs:
         call_count = 0
@@ -1689,7 +1726,7 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
         tc['conversions'] = conv
         # Show leads ADDED BY this telecaller (not just assigned), so SM sees her real contribution
         tc['total_leads'] = await db.leads.count_documents({"created_by": tc['id']})
-        comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(500)
+        comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(5000)
         tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
         # ----- Live "health" stats so the SM sees what each TC sees in their alerts banner -----
         today_iso = date.today().isoformat()
@@ -1784,7 +1821,7 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
 @api_router.get("/managers")
 async def get_managers(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ('admin','hr_manager'): raise HTTPException(status_code=403)
-    return {"managers": await db.managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
+    return {"managers": await db.managers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)}
 
 @api_router.get("/sales-managers")
 async def get_sales_managers(current_user: dict = Depends(get_current_user)):
@@ -1792,7 +1829,7 @@ async def get_sales_managers(current_user: dict = Depends(get_current_user)):
     is_hos = bool(current_user.get('is_head_of_sales'))
     if current_user['role'] not in ('admin','hr_manager') and not is_hos:
         raise HTTPException(status_code=403)
-    return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(200)}
+    return {"sales_managers": await db.sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)}
 
 @api_router.get("/agents")
 async def get_agents(current_user: dict = Depends(get_current_user)):
@@ -1802,16 +1839,16 @@ async def get_agents(current_user: dict = Depends(get_current_user)):
         q['managed_by'] = current_user['id']
     elif current_user['role'] == 'assistant_district_manager':
         q['managed_by'] = current_user.get('managed_by','')
-    agents = await db.agents.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
+    agents = await db.agents.find(q, {"_id": 0, "password_hash": 0}).to_list(5000)
     today = date.today().isoformat()
     week_ago = (date.today() - timedelta(days=7)).isoformat()
     for a in agents:
-        orders = await db.orders.find({"created_by": a['id']}, {"_id": 0}).to_list(500)
+        orders = await db.orders.find({"created_by": a['id']}, {"_id": 0}).to_list(5000)
         a['total_orders'] = len([o for o in orders if o.get('status') in ['confirmed','shipped','delivered']])
         a['total_sales_amount'] = sum(o.get('total_amount',0) for o in orders if o.get('status') in ['confirmed','shipped','delivered'])
         a['sales_today'] = sum(o.get('total_amount',0) for o in orders if o.get('created_at','')[:10]==today and o.get('status') in ['confirmed','shipped','delivered'])
         a['sales_7days'] = sum(o.get('total_amount',0) for o in orders if o.get('created_at','')[:10]>=week_ago and o.get('status') in ['confirmed','shipped','delivered'])
-        comms = await db.commissions.find({"user_id": a['id']}, {"_id": 0}).to_list(100)
+        comms = await db.commissions.find({"user_id": a['id']}, {"_id": 0}).to_list(5000)
         a['commission_total'] = round(sum(c.get('commission_amount',0) for c in comms), 2)
         a['commission_pending'] = round(sum(c.get('commission_amount',0) for c in comms if c['status']=='pending'), 2)
         # Live counts (so DM dashboard never shows stale 0)
@@ -1888,7 +1925,7 @@ async def get_all_call_logs(month: str = "", year: str = "", current_user: dict 
     # Agent call logs (DM/SM/Admin)
     if role in ['admin','district_manager','hr_manager','sales_manager']:
         q = {"call_date": date_filter} if date_filter else {}
-        ag_logs = await db.agent_call_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+        ag_logs = await db.agent_call_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
         for l in ag_logs:
             l['source'] = 'agent_call'
             l['type'] = 'Agent Call'
@@ -1897,7 +1934,7 @@ async def get_all_call_logs(month: str = "", year: str = "", current_user: dict 
     if role in ['admin','hr_manager','sales_manager']:
         q2 = {}
         if date_filter: q2 = {"created_at": date_filter}
-        ih_logs = await db.inhouse_call_logs.find(q2, {"_id": 0}).sort("created_at", -1).to_list(500)
+        ih_logs = await db.inhouse_call_logs.find(q2, {"_id": 0}).sort("created_at", -1).to_list(5000)
         for l in ih_logs:
             l['source'] = 'inhouse_call'
             l['type'] = 'In-House Call'
@@ -1906,7 +1943,7 @@ async def get_all_call_logs(month: str = "", year: str = "", current_user: dict 
     if role in ['admin','hr_manager']:
         q3 = {}
         if month and year: q3["call_date"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        hr_logs = await db.hr_call_logs.find(q3, {"_id": 0}).sort("created_at", -1).to_list(500)
+        hr_logs = await db.hr_call_logs.find(q3, {"_id": 0}).sort("created_at", -1).to_list(5000)
         for l in hr_logs:
             l['source'] = 'hr_call'
             l['type'] = 'HR Call'
@@ -1915,7 +1952,7 @@ async def get_all_call_logs(month: str = "", year: str = "", current_user: dict 
         logs.extend(hr_logs)
     # Telecaller call logs from leads (any role above)
     leads_q = {}
-    leads = await db.leads.find({"call_logs": {"$exists": True, "$ne": []}}, {"_id": 0, "id": 1, "name": 1, "phone_number": 1, "assigned_to": 1, "assigned_to_name": 1, "call_logs": 1}).to_list(500)
+    leads = await db.leads.find({"call_logs": {"$exists": True, "$ne": []}}, {"_id": 0, "id": 1, "name": 1, "phone_number": 1, "assigned_to": 1, "assigned_to_name": 1, "call_logs": 1}).to_list(5000)
     for ld in leads:
         for cl in (ld.get('call_logs') or []):
             cd = cl.get('created_at','') or cl.get('date','')
@@ -1949,7 +1986,7 @@ async def get_lead_history(lead_id: str, current_user: dict = Depends(get_curren
 @api_router.get("/hr-managers")
 async def get_hr_managers(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','hr_manager']: raise HTTPException(status_code=403)
-    hrs = await db.hr_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    hrs = await db.hr_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
     # Enrich with per-HR call counts + candidates added (live)
     for h in hrs:
         hid = h.get("id")
@@ -1962,17 +1999,17 @@ async def get_hr_managers(current_user: dict = Depends(get_current_user)):
 @api_router.get("/social-media-managers")
 async def get_social_media_managers(current_user: dict = Depends(get_current_user)):
     if current_user['role'] != 'admin': raise HTTPException(status_code=403)
-    return {"social_media_managers": await db.social_media_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    return {"social_media_managers": await db.social_media_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)}
 
 @api_router.get("/inhouse-telecallers")
 async def get_inhouse_telecallers(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','social_media_manager']: raise HTTPException(status_code=403)
-    return {"inhouse_telecallers": await db.inhouse_telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    return {"inhouse_telecallers": await db.inhouse_telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)}
 
 @api_router.get("/content-strategists")
 async def get_content_strategists(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','social_media_manager']: raise HTTPException(status_code=403)
-    return {"content_strategists": await db.content_strategists.find({}, {"_id": 0, "password_hash": 0}).to_list(100)}
+    return {"content_strategists": await db.content_strategists.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)}
 
 @api_router.get("/all-users")
 async def get_all_users(
@@ -1999,7 +2036,7 @@ async def get_all_users(
                 {"email": {"$regex": q_norm, "$options": "i"}},
                 {"phone": {"$regex": q_norm, "$options": "i"}},
             ]}
-        users = await db[coll_name].find(mongo_q, {"_id": 0, "password_hash": 0}).to_list(500)
+        users = await db[coll_name].find(mongo_q, {"_id": 0, "password_hash": 0}).to_list(5000)
         for u in users:
             u['role'] = role
             u['collection'] = coll_name
@@ -2013,7 +2050,7 @@ async def get_all_users(
 @api_router.get("/hr-team")
 async def get_hr_team(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','sales_manager','hr_manager']: raise HTTPException(status_code=403)
-    return {"hr_team": await db.hr_team.find({}, {"_id": 0}).to_list(100)}
+    return {"hr_team": await db.hr_team.find({}, {"_id": 0}).to_list(5000)}
 
 def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
     async def create_user(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
@@ -2090,7 +2127,7 @@ async def get_my_asms(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ('sales_manager', 'assistant_sales_manager', 'admin'):
         raise HTTPException(status_code=403, detail="Only Sales Managers / Admin can view ASMs")
     q = {} if current_user['role'] == 'admin' else {"managed_by": current_user['id']}
-    asms = await db.assistant_sales_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(100)
+    asms = await db.assistant_sales_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(5000)
     return {"asms": asms, "total": len(asms)}
 
 @api_router.get("/my-team/adms")
@@ -2099,7 +2136,7 @@ async def get_my_adms(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ('district_manager', 'assistant_district_manager', 'admin'):
         raise HTTPException(status_code=403, detail="Only District Managers / Admin can view ADMs")
     q = {} if current_user['role'] == 'admin' else {"managed_by": current_user['id']}
-    adms = await db.assistant_district_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(100)
+    adms = await db.assistant_district_managers.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(5000)
     return {"adms": adms, "total": len(adms)}
 
 @api_router.post("/my-team/asm")
@@ -2348,7 +2385,7 @@ async def list_groups(current_user: dict = Depends(get_current_user)):
     if role not in ('sales_manager','district_manager','assistant_sales_manager','assistant_district_manager','admin'):
         raise HTTPException(status_code=403)
     q = {} if role == 'admin' else {"created_by": current_user['id']}
-    groups = await db.team_groups.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    groups = await db.team_groups.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
     # Enrich with member info
     for g in groups:
         members_full: list = []
@@ -2758,7 +2795,7 @@ async def suggest_payroll(user_id: str, month: str = "", year: str = "", current
             break
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    records = await db.attendance.find({"user_id": user_id, "date": {"$regex": f"^{prefix}"}}, {"_id": 0}).to_list(500)
+    records = await db.attendance.find({"user_id": user_id, "date": {"$regex": f"^{prefix}"}}, {"_id": 0}).to_list(5000)
     total_hours = round(sum(r.get('hours_worked') or 0 for r in records), 2)
     present_days = len([r for r in records if r.get('status') == 'present'])
     half_days = len([r for r in records if r.get('status') == 'half_day'])
@@ -2772,12 +2809,12 @@ async def suggest_payroll(user_id: str, month: str = "", year: str = "", current
     hourly_rate = round(base_salary / (total_working_days * standard_hours_per_day), 2) if base_salary > 0 else 0
     computed_salary = round(hourly_rate * total_hours, 2) if total_hours > 0 else round(base_salary * (working_days / total_working_days), 2)
     # Pending advances
-    advs = await db.advances.find({"user_id": user_id, "status": "active", "deducted_in_payroll": False}, {"_id": 0}).to_list(100)
+    advs = await db.advances.find({"user_id": user_id, "status": "active", "deducted_in_payroll": False}, {"_id": 0}).to_list(5000)
     advance_deductions = round(sum(a.get('amount', 0) for a in advs), 2)
     # Pending commissions this month
     comm_total = 0
     try:
-        coms = await db.commissions.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).to_list(100)
+        coms = await db.commissions.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).to_list(5000)
         for c in coms:
             cd = c.get('created_at', '')
             if cd[:7] == prefix:
@@ -2865,7 +2902,7 @@ async def create_content(data: dict, current_user: dict = Depends(get_current_us
 
 @api_router.get("/content")
 async def get_content(current_user: dict = Depends(get_current_user)):
-    return {"content": await db.content_tracker.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"content": await db.content_tracker.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.post("/contacts")
 async def create_contact(data: dict, current_user: dict = Depends(get_current_user)):
@@ -2879,7 +2916,7 @@ async def create_contact(data: dict, current_user: dict = Depends(get_current_us
 
 @api_router.get("/contacts")
 async def get_contacts(current_user: dict = Depends(get_current_user)):
-    return {"contacts": await db.contacts.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"contacts": await db.contacts.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/contacts/{cid}")
 async def update_contact(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -2903,7 +2940,7 @@ async def create_investment(data: dict, current_user: dict = Depends(get_current
 async def get_investments(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ('admin','finance_manager'):
         raise HTTPException(status_code=403)
-    return {"investments": await db.investments.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"investments": await db.investments.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.delete("/investments/{iid}")
 async def delete_investment(iid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -2919,7 +2956,7 @@ async def delete_investment(iid: str, data: dict, current_user: dict = Depends(g
 @api_router.get("/finance/cash-holders")
 async def get_cash_holders(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
-    return {"holders": await db.cash_holders.find({}, {"_id": 0}).to_list(100)}
+    return {"holders": await db.cash_holders.find({}, {"_id": 0}).to_list(5000)}
 
 @api_router.post("/finance/assign-cash")
 async def assign_cash(data: dict, current_user: dict = Depends(get_current_user)):
@@ -2982,8 +3019,8 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     elif role == 'agent':
         uid = current_user['id']
         today = date.today().isoformat()
-        my_dlv = await db.orders.find({"created_by":uid,"status":"delivered"},{"_id":0,"total_amount":1}).to_list(500)
-        comms = await db.commissions.find({"user_id":uid},{"_id":0,"commission_amount":1}).to_list(100)
+        my_dlv = await db.orders.find({"created_by":uid,"status":"delivered"},{"_id":0,"total_amount":1}).to_list(5000)
+        comms = await db.commissions.find({"user_id":uid},{"_id":0,"commission_amount":1}).to_list(5000)
         stats = {
             "total_sales": round(sum(o.get("total_amount",0) for o in my_dlv),2),
             "total_commission": round(sum(c.get("commission_amount",0) for c in comms),2),
@@ -2996,7 +3033,7 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         # Only APPROVED expenses count toward the books — pending are awaiting decision and must not skew totals.
         approved_expenses_docs = await db.expenses.find({"status":"approved"},{"_id":0,"amount":1}).to_list(2000)
         pending_expenses_docs = await db.expenses.find({"status":"pending"},{"_id":0,"amount":1}).to_list(2000)
-        total_investments = await db.investments.find({},{"_id":0,"amount":1}).to_list(500)
+        total_investments = await db.investments.find({},{"_id":0,"amount":1}).to_list(5000)
         stats = {
             "total_leads": await db.leads.count_documents({}),
             "total_orders": await db.orders.count_documents({}),
@@ -3017,7 +3054,7 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         all_expenses = await db.expenses.find({},{"_id":0,"amount":1,"status":1}).to_list(2000)
         approved_amt = sum(e.get("amount",0) for e in all_expenses if e.get("status")=="approved")
         pending_list = [e for e in all_expenses if e.get("status")=="pending"]
-        total_investments_fin = await db.investments.find({},{"_id":0,"amount":1}).to_list(500)
+        total_investments_fin = await db.investments.find({},{"_id":0,"amount":1}).to_list(5000)
         stats = {
             "total_expenses": round(approved_amt, 2),       # ⬅️ APPROVED only — never pending
             "pending_expenses": len(pending_list),
@@ -3124,7 +3161,7 @@ async def create_state(data: dict, current_user: dict = Depends(get_current_user
 
 @api_router.get("/states")
 async def get_states(current_user: dict = Depends(get_current_user)):
-    return {"states": await db.states.find({}, {"_id": 0}).to_list(100)}
+    return {"states": await db.states.find({}, {"_id": 0}).to_list(5000)}
 
 @api_router.put("/states/{sid}")
 async def update_state(sid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3148,7 +3185,7 @@ async def create_leave(data: dict, current_user: dict = Depends(get_current_user
 async def get_leaves(current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] not in ['admin','hr_manager']: q['user_id'] = current_user['id']
-    return {"leaves": await db.leaves.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"leaves": await db.leaves.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/leaves/{lid}/approve")
 async def approve_leave(lid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3171,7 +3208,7 @@ async def create_complaint(data: dict, current_user: dict = Depends(get_current_
 async def get_complaints(current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] not in ['admin','hr_manager']: q['user_id'] = current_user['id']
-    return {"complaints": await db.complaints.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"complaints": await db.complaints.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/complaints/{cid}")
 async def update_complaint(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3197,7 +3234,7 @@ async def create_influencer(data: dict, current_user: dict = Depends(get_current
 async def get_influencers(current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] == 'inhouse_telecaller': q['assigned_to'] = current_user['id']
-    return {"influencers": await db.influencers.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"influencers": await db.influencers.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/influencers/{iid}")
 async def update_influencer(iid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3249,7 +3286,7 @@ async def create_pillar(data: dict, current_user: dict = Depends(get_current_use
 
 @api_router.get("/content-pillars")
 async def get_pillars(current_user: dict = Depends(get_current_user)):
-    return {"pillars": await db.content_pillars.find({}, {"_id": 0}).to_list(100)}
+    return {"pillars": await db.content_pillars.find({}, {"_id": 0}).to_list(5000)}
 
 @api_router.post("/content-briefs")
 async def create_brief(data: dict, current_user: dict = Depends(get_current_user)):
@@ -3267,7 +3304,7 @@ async def create_brief(data: dict, current_user: dict = Depends(get_current_user
 async def get_briefs(current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] == 'content_strategist': q['assigned_to'] = current_user['id']
-    return {"briefs": await db.content_briefs.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"briefs": await db.content_briefs.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/content-briefs/{bid}")
 async def update_brief(bid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3284,7 +3321,7 @@ async def update_brief(bid: str, data: dict, current_user: dict = Depends(get_cu
 async def get_influencer_stats(current_user: dict = Depends(get_current_user)):
     today = date.today().isoformat()
     q = {"assigned_to": current_user['id']} if current_user['role'] == 'inhouse_telecaller' else {}
-    infs = await db.influencers.find(q, {"_id": 0}).to_list(500)
+    infs = await db.influencers.find(q, {"_id": 0}).to_list(5000)
     today_contacted = sum(1 for i in infs for cl in i.get("contact_logs",[]) if cl.get("logged_at","")[:10] == today)
     pending_followups = sum(1 for i in infs if i.get("status") in ["follow_up","contacted"])
     products_sent = sum(1 for i in infs if i.get("status") == "product_sent")
@@ -3308,9 +3345,9 @@ async def create_task(data: dict, current_user: dict = Depends(get_current_user)
 @api_router.get("/tasks")
 async def get_tasks(current_user: dict = Depends(get_current_user)):
     if current_user['role'] in ['admin','hr_manager','sales_manager','district_manager','social_media_manager']:
-        tasks = await db.tasks.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+        tasks = await db.tasks.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     else:
-        tasks = await db.tasks.find({"$or": [{"assigned_to": current_user['id']}, {"created_by": current_user['id']}]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        tasks = await db.tasks.find({"$or": [{"assigned_to": current_user['id']}, {"created_by": current_user['id']}]}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return {"tasks": tasks}
 
 @api_router.put("/tasks/{tid}")
@@ -3468,7 +3505,7 @@ async def create_call_log(data: dict, current_user: dict = Depends(get_current_u
 @api_router.get("/inhouse/call-logs")
 async def get_call_logs(current_user: dict = Depends(get_current_user)):
     q = {} if current_user['role'] in ['admin','hr_manager','social_media_manager'] else {"user_id": current_user['id']}
-    return {"call_logs": await db.inhouse_call_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"call_logs": await db.inhouse_call_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.post("/inhouse/daily-goals")
 async def set_daily_goal(data: dict, current_user: dict = Depends(get_current_user)):
@@ -3482,7 +3519,7 @@ async def set_daily_goal(data: dict, current_user: dict = Depends(get_current_us
 @api_router.get("/inhouse/daily-goals")
 async def get_daily_goals(current_user: dict = Depends(get_current_user)):
     q = {} if current_user['role'] in ['admin','hr_manager'] else {"user_id": current_user['id']}
-    return {"goals": await db.daily_goals.find(q, {"_id": 0}).sort("date", -1).to_list(100)}
+    return {"goals": await db.daily_goals.find(q, {"_id": 0}).sort("date", -1).to_list(5000)}
 
 # ==================== REGION LOCALITY WITH AGENT ASSIGNMENT ====================
 @api_router.post("/regions/{rid}/localities")
@@ -3535,7 +3572,7 @@ async def get_all_employees(current_user: dict = Depends(get_current_user)):
     employees = []
     for coll_name, role in AUTH_COLLECTIONS.items():
         if role == 'admin': continue
-        users = await db[coll_name].find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+        users = await db[coll_name].find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
         for u in users:
             u['role'] = role
             # Get payroll info
@@ -3777,7 +3814,7 @@ async def get_my_production_briefs(current_user: dict = Depends(get_current_user
         q = {"editor_name": current_user.get('name','')}
     elif current_user['role'] == 'content_developer':
         q = {"$or": [{"content_developer_name": current_user.get('name','')}, {"assigned_to": current_user.get('id','')}, {"videographer_name": current_user.get('name','')}, {"editor_name": current_user.get('name','')}]}
-    briefs = await db.content_briefs.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    briefs = await db.content_briefs.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return {"briefs": briefs}
 
 @api_router.put("/production/briefs/{bid}/upload-link")
@@ -3821,7 +3858,7 @@ async def get_finance_balance(current_user: dict = Depends(get_current_user)):
 @api_router.get("/finance/ledger")
 async def get_finance_ledger(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin','finance_manager']: raise HTTPException(status_code=403)
-    return {"transactions": await db.finance_ledger.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"transactions": await db.finance_ledger.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.delete("/finance/transaction/{tid}")
 async def delete_transaction(tid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3962,9 +3999,9 @@ async def create_instruction(data: dict, current_user: dict = Depends(get_curren
 @api_router.get("/instructions")
 async def get_instructions(current_user: dict = Depends(get_current_user)):
     if current_user['role'] in ['admin','sales_manager','district_manager']:
-        instrs = await db.instructions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        instrs = await db.instructions.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     else:
-        instrs = await db.instructions.find({"$or": [{"target_role": {"$in": [current_user['role'], "all"]}}, {"target_user_id": current_user['id']}]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        instrs = await db.instructions.find({"$or": [{"target_role": {"$in": [current_user['role'], "all"]}}, {"target_user_id": current_user['id']}]}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return {"instructions": instrs}
 
 @api_router.post("/finance/reset")
@@ -4572,7 +4609,7 @@ async def get_profit_loss(month: str = "", year: str = "", current_user: dict = 
     pq = {"status": "processed"}
     if month and year:
         pq["month"] = month; pq["year"] = year
-    payroll = await db.payroll.find(pq, {"_id": 0}).to_list(500)
+    payroll = await db.payroll.find(pq, {"_id": 0}).to_list(5000)
     total_salary = sum(p.get('net_salary', 0) for p in payroll)
     # Commissions
     cq = {}
@@ -4613,11 +4650,11 @@ async def create_advance(data: dict, current_user: dict = Depends(get_current_us
 async def get_advances(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'hr_manager', 'finance_manager']:
         raise HTTPException(status_code=403)
-    return {"advances": await db.advances.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"advances": await db.advances.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.get("/advances/user/{uid}")
 async def get_user_advances(uid: str, current_user: dict = Depends(get_current_user)):
-    advs = await db.advances.find({"user_id": uid, "status": "active", "deducted_in_payroll": False}, {"_id": 0}).to_list(100)
+    advs = await db.advances.find({"user_id": uid, "status": "active", "deducted_in_payroll": False}, {"_id": 0}).to_list(5000)
     return {"advances": advs, "total_pending": sum(a.get('amount', 0) for a in advs)}
 
 @api_router.delete("/advances/{aid}")
@@ -4780,7 +4817,7 @@ async def list_document_templates(current_user: dict = Depends(get_current_user)
     """List all customised document templates (overrides). Defaults are built-in."""
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
-    overrides = await db.document_templates.find({}, {"_id": 0}).to_list(500)
+    overrides = await db.document_templates.find({}, {"_id": 0}).to_list(5000)
     builtin = ["welcome","offer","employment","agreement","increment","termination","warning","relieving","experience"]
     return {
         "templates": overrides,
@@ -5458,7 +5495,7 @@ async def hr_bulk_email(data: dict, current_user: dict = Depends(get_current_use
 async def get_hr_communications(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'hr_manager']:
         raise HTTPException(status_code=403)
-    return {"communications": await db.hr_communications.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"communications": await db.hr_communications.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 
 # ==================== CONTENT PILLARS & SCRIPTS ====================
@@ -5496,9 +5533,9 @@ async def delete_pillar(pid: str, current_user: dict = Depends(get_current_user)
 async def get_pillars(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'social_media_manager', 'content_strategist', 'content_developer']:
         raise HTTPException(status_code=403)
-    pillars = await db.content_pillars.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    pillars = await db.content_pillars.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     for p in pillars:
-        scripts = await db.content_scripts.find({"pillar_id": p['id']}, {"_id": 0}).to_list(200)
+        scripts = await db.content_scripts.find({"pillar_id": p['id']}, {"_id": 0}).to_list(5000)
         p['scripts'] = scripts
         # Pillar-level rollup so the SMM dashboard can show pending / completed / posted at a glance.
         counts = {"total": len(scripts), "draft": 0, "in_progress": 0, "awaiting_approval": 0,
@@ -5712,13 +5749,13 @@ async def get_my_content_tasks(current_user: dict = Depends(get_current_user)):
     role = current_user['role']
     uid = current_user['id']
     if role == 'content_developer':
-        tasks = await db.content_scripts.find({"$or": [{"assigned_to": uid}, {"assigned_videographer": uid}, {"assigned_editor": uid}, {"assigned_designer": uid}]}, {"_id": 0}).sort("priority", 1).to_list(100)
+        tasks = await db.content_scripts.find({"$or": [{"assigned_to": uid}, {"assigned_videographer": uid}, {"assigned_editor": uid}, {"assigned_designer": uid}]}, {"_id": 0}).sort("priority", 1).to_list(5000)
     elif role == 'videographer':
-        tasks = await db.content_scripts.find({"assigned_videographer": uid}, {"_id": 0}).sort("priority", 1).to_list(100)
+        tasks = await db.content_scripts.find({"assigned_videographer": uid}, {"_id": 0}).sort("priority", 1).to_list(5000)
     elif role == 'editor':
-        tasks = await db.content_scripts.find({"assigned_editor": uid}, {"_id": 0}).sort("priority", 1).to_list(100)
+        tasks = await db.content_scripts.find({"assigned_editor": uid}, {"_id": 0}).sort("priority", 1).to_list(5000)
     elif role == 'graphic_designer':
-        tasks = await db.content_scripts.find({"assigned_designer": uid}, {"_id": 0}).sort("priority", 1).to_list(100)
+        tasks = await db.content_scripts.find({"assigned_designer": uid}, {"_id": 0}).sort("priority", 1).to_list(5000)
     else:
         raise HTTPException(status_code=403)
     # Attach pillar name
@@ -5757,7 +5794,7 @@ async def get_influencer_outreach(current_user: dict = Depends(get_current_user)
     query = {}
     if current_user['role'] == 'inhouse_telecaller':
         query["created_by"] = current_user['id']
-    entries = await db.influencer_outreach.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    entries = await db.influencer_outreach.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
     stats = {"total": len(entries),
              "contacted": len([e for e in entries if e.get('status') == 'contacted']),
              "responded": len([e for e in entries if e.get('status') == 'responded']),
@@ -5948,12 +5985,17 @@ async def update_hiring_candidate(cid: str, data: dict, current_user: dict = Dep
 
 @api_router.delete("/hiring/candidates/{cid}")
 async def delete_hiring_candidate(cid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
-    """Remove a duplicate / wrong candidate. Admin + HR Manager only. Requires HR delete password."""
+    """Remove a duplicate / wrong candidate. Admin + HR Manager only.
+    HR Manager: no password required (role check only).
+    Admin: requires DELETE_PASSWORD."""
     if current_user['role'] not in ('admin', 'hr_manager'):
         raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
-    pwd = (data or {}).get("password", "") if data else ""
-    if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
-        raise HTTPException(status_code=403, detail="Wrong delete password")
+    # HR Manager does NOT need a delete password (role-based access only).
+    # Admin still needs the master delete password for safety.
+    if current_user['role'] == 'admin':
+        pwd = (data or {}).get("password", "") if data else ""
+        if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
+            raise HTTPException(status_code=403, detail="Wrong delete password")
     cand = await db.hiring_candidates.find_one({"id": cid}, {"_id": 0, "status": 1, "name": 1})
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -5962,16 +6004,19 @@ async def delete_hiring_candidate(cid: str, data: dict = None, current_user: dic
     r = await db.hiring_candidates.delete_one({"id": cid})
     # Cascade: detach any HR call logs linked to this candidate so they don't reference a ghost
     await db.hr_call_logs.update_many({"linked_candidate_id": cid}, {"$set": {"linked_candidate_id": "", "linked_candidate_name": ""}})
+    await log_audit("delete_candidate", "hiring_candidates", cid, current_user['id'], current_user.get('name',''), f"Deleted candidate: {cand.get('name','')}")
     return {"message": "Candidate deleted" if r.deleted_count else "Nothing to delete", "name": cand.get("name", "")}
 
 @api_router.post("/hiring/candidates/bulk-delete")
 async def bulk_delete_hiring_candidates(data: dict, current_user: dict = Depends(get_current_user)):
-    """Bulk delete candidates. Admin + HR Manager only. Skips already-hired entries."""
+    """Bulk delete candidates. Admin + HR Manager only. Skips already-hired entries.
+    HR Manager does not need a password; Admin still does for safety."""
     if current_user['role'] not in ('admin', 'hr_manager'):
         raise HTTPException(status_code=403, detail="Only Admin or HR Manager can delete candidates")
-    pwd = (data or {}).get("password", "")
-    if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
-        raise HTTPException(status_code=403, detail="Wrong delete password")
+    if current_user['role'] == 'admin':
+        pwd = (data or {}).get("password", "")
+        if pwd not in (HR_DELETE_PASSWORD, DELETE_PASSWORD):
+            raise HTTPException(status_code=403, detail="Wrong delete password")
     ids = data.get("ids") or []
     if not isinstance(ids, list) or not ids:
         raise HTTPException(status_code=400, detail="ids list is required")
@@ -6255,7 +6300,7 @@ async def mark_attendance(data: dict, current_user: dict = Depends(get_current_u
     att_date = data.get("date") or _ist_today_iso()
     if not user_id: raise HTTPException(status_code=400, detail="user_id required")
     status = data.get("status", "present")  # present | absent | half_day | leave
-    login_time = data.get("login_time", "") or ("09:30" if status in ("present", "half_day") else "")
+    login_time = data.get("login_time", "") or ("09:00" if status in ("present", "half_day") else "")
     logout_time = data.get("logout_time", "")
 
     # NOTE: previous 5:30 PM IST gate removed — HR / Admin record attendance after-the-fact,
@@ -6307,7 +6352,7 @@ async def get_attendance_daily(date_filter: str = "", current_user: dict = Depen
     employees = []
     for role, coll in ROLE_COLLECTIONS.items():
         if role == 'admin': continue
-        users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(500)
+        users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(5000)
         for u in users:
             u['role'] = role
             employees.append(u)
@@ -6376,7 +6421,7 @@ async def get_monthly_attendance_summary(month: str = "", year: str = "", curren
     # Include all employees (even with 0 records)
     for role, coll in ROLE_COLLECTIONS.items():
         if role == 'admin': continue
-        users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
         for u in users:
             if u['id'] not in by_uid:
                 by_uid[u['id']] = {
@@ -6500,7 +6545,7 @@ async def create_campaign(data: dict, current_user: dict = Depends(get_current_u
 async def get_campaigns(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'digital_marketing_manager', 'hr_manager', 'sales_manager', 'district_manager']:
         raise HTTPException(status_code=403)
-    return {"campaigns": await db.campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)}
+    return {"campaigns": await db.campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/campaigns/{cid}")
 async def update_campaign(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -6554,7 +6599,7 @@ async def get_campaign_leads(department: str = "", current_user: dict = Depends(
     if current_user['role'] == 'sales_manager': query["department"] = {"$in": ["sales_manager", "telecaller"]}
     elif current_user['role'] == 'district_manager': query["department"] = {"$in": ["district_manager", "agent"]}
     elif current_user['role'] == 'hr_manager': query["department"] = {"$in": ["hr_manager", "hiring"]}
-    return {"leads": await db.campaign_leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)}
+    return {"leads": await db.campaign_leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 # ==================== CONTACTS BOOK ====================
 @api_router.post("/contacts-book")
@@ -6570,7 +6615,7 @@ async def add_contact(data: dict, current_user: dict = Depends(get_current_user)
 async def get_contacts_book(category: str = "", current_user: dict = Depends(get_current_user)):
     query = {}
     if category: query["category"] = category
-    return {"contacts": await db.contacts_book.find(query, {"_id": 0}).sort("name", 1).to_list(500)}
+    return {"contacts": await db.contacts_book.find(query, {"_id": 0}).sort("name", 1).to_list(5000)}
 
 @api_router.put("/contacts-book/{cid}")
 async def update_contact(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -6691,7 +6736,7 @@ async def get_relationship_calls(current_user: dict = Depends(get_current_user))
     role = current_user['role']
     query = {"$or": [{"next_relationship_date": {"$lte": today, "$ne": ""}}, {"next_repeat_order_date": {"$lte": today, "$ne": ""}}]}
     if role in ['telecaller', 'agent']: query["assigned_to"] = current_user['id']
-    leads = await db.leads.find(query, {"_id": 0}).to_list(500)
+    leads = await db.leads.find(query, {"_id": 0}).to_list(5000)
     rel_calls = [{"id": l['id'], "name": l.get('name',''), "phone": l.get('phone_number',''),
                   "order_date": l.get('last_order_date',''), "product": l.get('interested_products',''),
                   "staff": l.get('assigned_to',''), "type": "relationship" if l.get('next_relationship_date','') <= today else "repeat",
@@ -6735,13 +6780,13 @@ async def get_team_members(current_user: dict = Depends(get_current_user)):
     role = current_user['role']
     members = []
     if role in ['district_manager', 'assistant_district_manager']:
-        agents = await db.agents.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+        agents = await db.agents.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
         for a in agents: a['role'] = 'agent'
         adms = await db.assistant_district_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(50)
         for a in adms: a['role'] = 'assistant_district_manager'
         members = agents + adms
     elif role in ['sales_manager', 'assistant_sales_manager']:
-        tcs = await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+        tcs = await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
         for t in tcs: t['role'] = 'telecaller'
         asms = await db.assistant_sales_managers.find({}, {"_id": 0, "password_hash": 0}).to_list(50)
         for a in asms: a['role'] = 'assistant_sales_manager'
@@ -6868,7 +6913,7 @@ async def get_content_assignments(current_user: dict = Depends(get_current_user)
         q = {"assigned_to": uid}
     else:
         raise HTTPException(status_code=403)
-    items = await db.content_assignments.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
+    items = await db.content_assignments.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
     stats = {"total": len(items),
              "assigned": len([i for i in items if i['status']=='assigned']),
              "in_progress": len([i for i in items if i['status']=='in_progress']),
@@ -6974,7 +7019,7 @@ async def add_daily_metric(cid: str, data: dict, current_user: dict = Depends(ge
 @api_router.get("/campaigns/{cid}/daily-metrics")
 async def get_daily_metrics(cid: str, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'digital_marketing_manager']: raise HTTPException(status_code=403)
-    rows = await db.campaign_daily_metrics.find({"campaign_id": cid}, {"_id": 0}).sort("date", -1).to_list(365)
+    rows = await db.campaign_daily_metrics.find({"campaign_id": cid}, {"_id": 0}).sort("date", -1).to_list(5000)
     totals = {"leads": sum(r['leads'] for r in rows), "impressions": sum(r['impressions'] for r in rows),
               "messages": sum(r['messages'] for r in rows), "clicks": sum(r['clicks'] for r in rows),
               "spend": round(sum(r['spend'] for r in rows), 2),
@@ -7029,7 +7074,7 @@ async def campaigns_overview(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'digital_marketing_manager']: raise HTTPException(status_code=403)
     today = date.today().isoformat()
     last_7 = [(date.today() - timedelta(days=i)).isoformat() for i in range(7)]
-    today_metrics = await db.campaign_daily_metrics.find({"date": today}, {"_id": 0}).to_list(500)
+    today_metrics = await db.campaign_daily_metrics.find({"date": today}, {"_id": 0}).to_list(5000)
     week_metrics = await db.campaign_daily_metrics.find({"date": {"$in": last_7}}, {"_id": 0}).to_list(2000)
     def sum_field(lst, f): return sum((x.get(f, 0) or 0) for x in lst)
     today_t = {"leads": sum_field(today_metrics, "leads"),
@@ -7056,7 +7101,7 @@ async def campaigns_overview(current_user: dict = Depends(get_current_user)):
 @api_router.get("/campaigns/by-platform")
 async def campaigns_by_platform(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'digital_marketing_manager']: raise HTTPException(status_code=403)
-    campaigns = await db.campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    campaigns = await db.campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     # Map subplatform → parent (Meta = facebook+instagram+whatsapp; Google = google+youtube)
     def parent_of(p):
         p = (p or "other").lower()
@@ -7091,7 +7136,7 @@ async def get_leave_balance(user_id: str = "", current_user: dict = Depends(get_
     bal = await db.leave_balances.find_one({"user_id": target_id}, {"_id": 0})
     if not bal:
         bal = {"user_id": target_id, "casual": 12, "sick": 6, "earned": 12, "casual_used": 0, "sick_used": 0, "earned_used": 0}
-    used = await db.leave_requests.find({"user_id": target_id, "status": "approved"}, {"_id": 0}).to_list(200)
+    used = await db.leave_requests.find({"user_id": target_id, "status": "approved"}, {"_id": 0}).to_list(5000)
     bal['casual_used'] = sum(u.get('days', 1) for u in used if u.get('leave_type') == 'casual')
     bal['sick_used'] = sum(u.get('days', 1) for u in used if u.get('leave_type') == 'sick')
     bal['earned_used'] = sum(u.get('days', 1) for u in used if u.get('leave_type') == 'earned')
@@ -7137,7 +7182,7 @@ async def create_resignation(data: dict, current_user: dict = Depends(get_curren
 @api_router.get("/resignations")
 async def get_resignations(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'hr_manager']: raise HTTPException(status_code=403)
-    return {"resignations": await db.resignations.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"resignations": await db.resignations.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/resignations/{rid}")
 async def update_resignation(rid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7163,7 +7208,7 @@ async def get_gst(month: str = "", year: str = "", current_user: dict = Depends(
     if current_user['role'] not in ['admin', 'finance_manager']: raise HTTPException(status_code=403)
     q = {}
     if month and year: q["date"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-    entries = await db.gst_entries.find(q, {"_id": 0}).sort("date", -1).to_list(500)
+    entries = await db.gst_entries.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
     out_total = sum(e['gst_amount'] for e in entries if e['type'] == 'sale')
     in_total = sum(e['gst_amount'] for e in entries if e['type'] == 'purchase')
     return {"entries": entries, "output_gst": round(out_total, 2), "input_gst": round(in_total, 2), "net_payable": round(out_total - in_total, 2)}
@@ -7181,7 +7226,7 @@ async def create_vendor(data: dict, current_user: dict = Depends(get_current_use
 
 @api_router.get("/vendors")
 async def get_vendors(current_user: dict = Depends(get_current_user)):
-    return {"vendors": await db.vendors.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"vendors": await db.vendors.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.post("/vendors/{vid}/transaction")
 async def vendor_transaction(vid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7197,7 +7242,7 @@ async def vendor_transaction(vid: str, data: dict, current_user: dict = Depends(
 
 @api_router.get("/vendors/{vid}/ledger")
 async def vendor_ledger(vid: str, current_user: dict = Depends(get_current_user)):
-    return {"transactions": await db.vendor_transactions.find({"vendor_id": vid}, {"_id": 0}).sort("date", -1).to_list(200)}
+    return {"transactions": await db.vendor_transactions.find({"vendor_id": vid}, {"_id": 0}).sort("date", -1).to_list(5000)}
 
 @api_router.post("/finance/recurring")
 async def create_recurring(data: dict, current_user: dict = Depends(get_current_user)):
@@ -7213,7 +7258,7 @@ async def create_recurring(data: dict, current_user: dict = Depends(get_current_
 @api_router.get("/finance/recurring")
 async def get_recurring(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'finance_manager']: raise HTTPException(status_code=403)
-    return {"recurring": await db.recurring_expenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)}
+    return {"recurring": await db.recurring_expenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.delete("/finance/recurring/{rid}")
 async def delete_recurring(rid: str, current_user: dict = Depends(get_current_user)):
@@ -7232,7 +7277,7 @@ async def update_stock(pid: str, data: dict, current_user: dict = Depends(get_cu
 
 @api_router.get("/products/low-stock")
 async def low_stock(current_user: dict = Depends(get_current_user)):
-    products = await db.products.find({}, {"_id": 0}).to_list(500)
+    products = await db.products.find({}, {"_id": 0}).to_list(5000)
     low = [p for p in products if (p.get("stock", 0) or 0) <= (p.get("low_stock_threshold", 10) or 10)]
     return {"products": low, "count": len(low)}
 
@@ -7268,7 +7313,7 @@ async def create_po(data: dict, current_user: dict = Depends(get_current_user)):
 
 @api_router.get("/purchase-orders")
 async def get_pos(current_user: dict = Depends(get_current_user)):
-    return {"pos": await db.purchase_orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"pos": await db.purchase_orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/purchase-orders/{pid}")
 async def update_po(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7289,7 +7334,7 @@ async def create_return(data: dict, current_user: dict = Depends(get_current_use
 
 @api_router.get("/returns")
 async def get_returns(current_user: dict = Depends(get_current_user)):
-    return {"returns": await db.returns_rto.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)}
+    return {"returns": await db.returns_rto.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.put("/returns/{rid}")
 async def update_return(rid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7303,7 +7348,7 @@ async def campaign_analytics(month: str = "", year: str = "", current_user: dict
     if current_user['role'] not in ['admin', 'digital_marketing_manager']: raise HTTPException(status_code=403)
     q = {}
     if month and year: q["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-    campaigns = await db.campaigns.find(q, {"_id": 0}).to_list(500)
+    campaigns = await db.campaigns.find(q, {"_id": 0}).to_list(5000)
     leads_all = await db.campaign_leads.find({}, {"_id": 0}).to_list(2000)
     # Group by platform
     plats = {}
@@ -7351,7 +7396,7 @@ async def get_calendar(category: Optional[str] = None, current_user: dict = Depe
             q = {"$or": [{"category": "content"}, {"category": {"$exists": False}}, {"category": ""}]}
         else:
             q["category"] = category
-    return {"entries": await db.content_calendar.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(500)}
+    return {"entries": await db.content_calendar.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(5000)}
 
 @api_router.put("/content-calendar/{cid}")
 async def update_calendar(cid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7405,7 +7450,7 @@ async def get_shoot_plans(current_user: dict = Depends(get_current_user)):
     q = {}
     if current_user['role'] == 'content_developer':
         q["assigned_to"] = current_user['id']
-    return {"plans": await db.shoot_plans.find(q, {"_id": 0}).sort("shoot_date", 1).to_list(200)}
+    return {"plans": await db.shoot_plans.find(q, {"_id": 0}).sort("shoot_date", 1).to_list(5000)}
 
 @api_router.put("/shoot-plans/{pid}")
 async def update_shoot_plan(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -7435,18 +7480,18 @@ async def get_targets(user_id: str = "", current_user: dict = Depends(get_curren
 async def get_leaderboard(role: str, month: str = "", year: str = "", current_user: dict = Depends(get_current_user)):
     coll = ROLE_COLLECTIONS.get(role)
     if not coll: return {"leaderboard": []}
-    users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1}).to_list(200)
+    users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
     rows = []
     for u in users:
         oq = {"created_by": u['id'], "status": "delivered"}
         if month and year:
             oq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        orders = await db.orders.find(oq, {"_id": 0, "total_amount": 1}).to_list(500)
+        orders = await db.orders.find(oq, {"_id": 0, "total_amount": 1}).to_list(5000)
         revenue = round(sum(o.get('total_amount', 0) for o in orders), 2)
         cq = {"user_id": u['id']}
         if month and year:
             cq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        comm = await db.commissions.find(cq, {"_id": 0, "commission_amount": 1}).to_list(500)
+        comm = await db.commissions.find(cq, {"_id": 0, "commission_amount": 1}).to_list(5000)
         comm_total = round(sum(c.get('commission_amount', 0) for c in comm), 2)
         rows.append({**u, "orders": len(orders), "revenue": revenue, "commission": comm_total})
     rows.sort(key=lambda x: (x['revenue'], x['orders'], x['commission']), reverse=True)
@@ -7494,7 +7539,7 @@ async def campaigns_for_manager(current_user: dict = Depends(get_current_user)):
         q = {}
     else:
         q = {"$or": [{"manager_id": current_user['id']}, {"manager_role": current_user['role']}]}
-    camps = await db.campaigns.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    camps = await db.campaigns.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return {"campaigns": camps}
 
 # ----- Content Assignment: post-approval workflow -----
@@ -7576,7 +7621,7 @@ async def mark_all_read(current_user: dict = Depends(get_current_user)):
 @api_router.get("/activity-feed")
 async def activity_feed(current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'hr_manager']: raise HTTPException(status_code=403)
-    activities = await db.activity_log.find({}, {"_id": 0}).sort("created_at", -1).limit(100).to_list(100)
+    activities = await db.activity_log.find({}, {"_id": 0}).sort("created_at", -1).limit(100).to_list(5000)
     return {"activities": activities}
 
 # ----- SALES FUNNEL & CLV -----
@@ -7852,7 +7897,7 @@ async def ai_generate_caption(data: dict, current_user: dict = Depends(get_curre
 async def list_ai_usage(current_user: dict = Depends(get_current_user)):
     if current_user['role'] != 'admin':
         raise HTTPException(status_code=403)
-    items = await db.ai_usage.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    items = await db.ai_usage.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     by_purpose = {}
     for it in items:
         by_purpose[it.get("purpose", "generic")] = by_purpose.get(it.get("purpose", "generic"), 0) + 1
@@ -8082,6 +8127,23 @@ async def delete_collab_contact(cid: str, current_user: dict = Depends(get_curre
 
 
 # Register all routes (must be after every @api_router decorator above)
+# Register user-requested enhancements module (pickup locations, order soft-delete,
+# telecaller transfer, lead status counts, AI expense categorization, hiring
+# positions, demo data seeder). MUST run BEFORE include_router so routes are mounted.
+try:
+    from user_enhancements import register_enhancements
+    register_enhancements(api_router, db, get_current_user, log_audit, logger)
+except Exception as _ue:
+    logger.error(f"user_enhancements registration failed: {_ue}")
+
+# Phase-3 enhancements (finance proofs, multi-image upload, attendance unlock,
+# planned payments, budgets, smart-categorization)
+try:
+    from phase3_enhancements import register_phase3
+    register_phase3(api_router, db, get_current_user, log_audit, logger)
+except Exception as _p3:
+    logger.error(f"phase3_enhancements registration failed: {_p3}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

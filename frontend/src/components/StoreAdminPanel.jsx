@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Settings, Package, CreditCard, Plus, Pencil, Trash2, Save, Loader2, Image as ImageIcon, Upload, Tag } from "lucide-react";
+import MultiImageUploader from "@/components/MultiImageUploader";
 
 const API = "/api";
 
@@ -452,7 +453,16 @@ function ProductEditDialog({ open, onClose, initial, onSave, products }) {
               <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.is_combo} onCheckedChange={v => setF("is_combo", v)}/>Combo</label>
             </div>
           </div>
-          <ImageUploadField label="Product Image *" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
+          <ImageUploadField label="Primary Image *" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
+          <div className="border-t border-[#E5E3DB] pt-3">
+            <Label className="text-[11px] mb-2 block">Gallery Images (up to 5 additional)</Label>
+            <MultiImageUploader
+              value={p.gallery || []}
+              max={5}
+              onChange={(urls) => setF("gallery", urls)}
+            />
+            <p className="text-[10px] text-[#7B6D5A] mt-1">Storefront shows these as a swipe-able gallery next to the primary image.</p>
+          </div>
           <div><Label className="text-[11px]">Short Description</Label><Textarea rows={2} value={p.short_desc} onChange={e => setF("short_desc", e.target.value)}/></div>
           <div><Label className="text-[11px]">Long Description</Label><Textarea rows={3} value={p.long_desc} onChange={e => setF("long_desc", e.target.value)}/></div>
           <div className="grid grid-cols-2 gap-3">

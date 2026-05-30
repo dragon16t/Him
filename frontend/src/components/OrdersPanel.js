@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Edit2, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import OrderEditDialog from "./OrderEditDialog";
 import DelhiveryShipActions from "./DelhiveryShipActions";
 import LabelPrintButton, { BulkLabelButton } from "./LabelPrintButton";
@@ -39,6 +39,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
   const [status, setStatus] = useState("all");
+  const [paymentFilter, setPaymentFilter] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [products, setProducts] = useState([]);
@@ -52,6 +53,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     try {
       const params = { skip: (page - 1) * limit, limit };
       if (status !== "all") params.status = status;
+      if (paymentFilter !== "all") params.payment_type = paymentFilter;
       if (fromDate) params.from = fromDate;
       if (toDate) params.to = toDate;
       const { data } = await axios.get(`${API}/v2/orders`, { params });
@@ -61,7 +63,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load orders");
     } finally { setLoading(false); }
-  }, [page, limit, status, fromDate, toDate]);
+  }, [page, limit, status, paymentFilter, fromDate, toDate]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => {
@@ -85,6 +87,20 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  const deleteOrder = async (o) => {
+    const reason = window.prompt(`Soft-delete order ${o.id} (Rs.${o.total_amount || 0})?\n\nEnter reason:`);
+    if (reason === null) return;
+    try {
+      await axios.delete(`${API}/orders/${o.id}/soft-delete`, { data: { reason } });
+      toast.success("Order moved to trash");
+      fetchOrders();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Delete failed");
+    }
+  };
+
+  const canDelete = (o) => (role === "admin" || role === "sales_manager") && !o.deleted;
+
   const toggleSel = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleSelAll = () => setSelected(s => s.length === orders.length ? [] : orders.map(o => o.id));
 
@@ -98,7 +114,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
           <h3 className="font-heading text-lg font-medium">Orders <span className="text-sm text-[#59615D]">· {total} total</span></h3>
           <div className="flex items-center gap-2 flex-wrap">
             {selected.length > 0 && <BulkLabelButton orderIds={selected} compact />}
-            <CsvExportButton type="orders" compact filters={{ from: fromDate, to: toDate, status: status !== "all" ? status : undefined }} />
+            <CsvExportButton type="orders" compact filters={{ from: fromDate, to: toDate, status: status !== "all" ? status : undefined, payment_type: paymentFilter !== "all" ? paymentFilter : undefined }} />
             {showCreateButton && onCreateOrder && <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs h-8" onClick={onCreateOrder} data-testid="orders-create-btn">+ Create Order</Button>}
           </div>
         </div>
@@ -117,6 +133,14 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
           <Select value={status} onValueChange={v => { setStatus(v); setPage(1); }}>
             <SelectTrigger className="rounded-xl h-8 text-xs w-32" data-testid="orders-status"><SelectValue /></SelectTrigger>
             <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>
+          </Select>
+          <Select value={paymentFilter} onValueChange={v => { setPaymentFilter(v); setPage(1); }}>
+            <SelectTrigger className="rounded-xl h-8 text-xs w-32" data-testid="orders-payment-filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Payments</SelectItem>
+              <SelectItem value="cod">COD Only</SelectItem>
+              <SelectItem value="prepaid">Prepaid Only</SelectItem>
+            </SelectContent>
           </Select>
           <Select value={String(limit)} onValueChange={v => { setLimit(Number(v)); setPage(1); }}>
             <SelectTrigger className="rounded-xl h-8 text-xs w-24" data-testid="orders-limit"><SelectValue /></SelectTrigger>
@@ -168,6 +192,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
                       <GstInvoiceButton orderId={o.id} compact />
                       {o.status === "pending" && (role === "admin" || role === "sales_manager" || role === "district_manager") && <Button size="sm" className="rounded-full text-[10px] h-7 px-2 bg-[#6B8E6B] text-white" onClick={() => approveOrder(o.id)} data-testid={`approve-${o.id}`}>Approve</Button>}
                       <DelhiveryShipActions order={o} role={role} onChange={fetchOrders} compact />
+                      {canDelete(o) && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2 border-red-300 text-red-600 hover:bg-red-50" onClick={() => deleteOrder(o)} data-testid={`delete-order-${o.id}`}><Trash2 className="w-3 h-3 mr-1" />Delete</Button>}
                     </div>
                   </div>
                 </div>

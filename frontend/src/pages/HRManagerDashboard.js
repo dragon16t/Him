@@ -21,6 +21,8 @@ import DarkModeToggle from "../components/DarkModeToggle";
 import GlobalSearch from "../components/GlobalSearch";
 import DocumentTemplatesEditor from "../components/DocumentTemplatesEditor";
 import HrEfficiencyPanel from "../components/HrEfficiencyPanel";
+import HiringPositionsPanel from "../components/HiringPositionsPanel";
+import AttendanceUnlock from "../components/AttendanceUnlock";
 import AgentWithdrawPanel from "../components/AgentWithdrawPanel";
 import DailyReportButton from "../components/DailyReportButton";
 import EmployeeProfileDialog from "../components/EmployeeProfileDialog";
@@ -91,7 +93,7 @@ export default function HRManagerDashboard() {
   const [showDocument, setShowDocument] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [salaryForm, setSalaryForm] = useState({salary:0,incentive:0});
-  const [attForm, setAttForm] = useState({user_id:"",user_name:"",date:"",login_time:"09:30",logout_time:"18:00",status:"present"});
+  const [attForm, setAttForm] = useState({user_id:"",user_name:"",date:"",login_time:"09:00",logout_time:"18:00",status:"present"});
   const [docTemplate, setDocTemplate] = useState("");
   const [payrollForm, setPayrollForm] = useState({user_id:"",user_name:"",user_role:"",month:"",year:"",basic_salary:0,incentive:0,bonus:0,deductions:0,advance_deductions:0,commission:0,working_days:0,total_working_days:30});
   const [advForm, setAdvForm] = useState({user_id:"",user_name:"",user_role:"",amount:0,type:"advance",reason:"",method:"cash"});
@@ -102,6 +104,10 @@ export default function HRManagerDashboard() {
   const [showEditEmp, setShowEditEmp] = useState(false);
   const [showDocTemplates, setShowDocTemplates] = useState(false);
   const [hiringFilter, setHiringFilter] = useState("all");
+  const [hiringMonth, setHiringMonth] = useState("all"); // "all" | "1".."12"
+  const [hiringYear, setHiringYear] = useState(new Date().getFullYear().toString());
+  const [hiringPositionFilter, setHiringPositionFilter] = useState("all");
+  const [hiringPositions, setHiringPositions] = useState([]);
   const [hiringSelected, setHiringSelected] = useState(new Set());
   const [hiringPage, setHiringPage] = useState(1);
   const [hiringIncludeHired, setHiringIncludeHired] = useState(false);
@@ -317,7 +323,7 @@ export default function HRManagerDashboard() {
     const payload = {
       user_id: row.user_id, user_name: row.user_name, user_role: row.user_role,
       date: attDate, status,
-      login_time: extra.login_time !== undefined ? extra.login_time : (row.login_time || (status==='present' || status==='half_day' ? '09:30' : '')),
+      login_time: extra.login_time !== undefined ? extra.login_time : (row.login_time || (status==='present' || status==='half_day' ? '09:00' : '')),
       logout_time: extra.logout_time !== undefined ? extra.logout_time : (row.logout_time || '')
     };
     try {
@@ -574,6 +580,7 @@ export default function HRManagerDashboard() {
                   <p className="text-[10px] text-[#59615D]">All marking is HR-only • IST {dailyAtt.ist_now || "—"} • Logout time unlocks at {dailyAtt.logout_unlock_at || "17:30 IST"} {!dailyAtt.can_set_logout && attDate === new Date().toISOString().slice(0,10) && <span className="text-[#A66E4E] font-medium">🔒 Locked</span>}{dailyAtt.can_set_logout && <span className="text-[#6B8E6B] font-medium">🔓 Unlocked</span>}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <AttendanceUnlock employees={employees} />
                   <Label className="text-xs text-[#59615D]">Date:</Label>
                   <Input type="date" value={attDate} onChange={e=>setAttDate(e.target.value)} className="rounded-full h-8 text-xs w-36" data-testid="att-date-picker"/>
                   <Button size="sm" variant="outline" className="rounded-full text-[10px] h-8" onClick={()=>setAttDate(new Date().toISOString().slice(0,10))}>Today</Button>
@@ -611,7 +618,7 @@ export default function HRManagerDashboard() {
                       <div className="grid grid-cols-3 gap-1 text-center mb-2">
                         <button
                           type="button"
-                          onClick={() => { setEditingLogin(r.user_id); setLoginTimeInput(r.login_time || '09:30'); setEditingLogout(null); }}
+                          onClick={() => { setEditingLogin(r.user_id); setLoginTimeInput(r.login_time || '09:00'); setEditingLogout(null); }}
                           className="bg-white/60 rounded p-1 hover:bg-white transition cursor-pointer text-left"
                           data-testid={`set-login-${r.user_id}`}
                           title="Click to set login time"
@@ -630,8 +637,8 @@ export default function HRManagerDashboard() {
                         </div>
                       )}
                       <div className="flex flex-wrap gap-1">
-                        <Button size="sm" className="rounded-full text-[9px] h-6 px-2 bg-green-600 hover:bg-green-700 text-white" onClick={()=>markAtt(r,'present',{login_time:'09:30'})} data-testid={`mark-present-${r.user_id}`}>Present</Button>
-                        <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2" onClick={()=>markAtt(r,'half_day',{login_time:'09:30'})} data-testid={`mark-half-${r.user_id}`}>Half</Button>
+                        <Button size="sm" className="rounded-full text-[9px] h-6 px-2 bg-green-600 hover:bg-green-700 text-white" onClick={()=>markAtt(r,'present',{login_time:'09:00'})} data-testid={`mark-present-${r.user_id}`}>Present</Button>
+                        <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2" onClick={()=>markAtt(r,'half_day',{login_time:'09:00'})} data-testid={`mark-half-${r.user_id}`}>Half</Button>
                         <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2" onClick={()=>markAtt(r,'leave',{login_time:''})} data-testid={`mark-leave-${r.user_id}`}>Leave</Button>
                         <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={()=>markAtt(r,'absent',{login_time:''})} data-testid={`mark-absent-${r.user_id}`}>Absent</Button>
                       </div>
@@ -683,7 +690,31 @@ export default function HRManagerDashboard() {
           </div></TabsContent>
 
           {/* HIRING — Full feature: add, edit, forward, hire/reject */}
-          <TabsContent value="hiring"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
+          <TabsContent value="hiring"><div className="space-y-4">
+            <HiringPositionsPanel onSelectPosition={(title)=>{
+              // Map position title to candidate-list "position" value
+              const map = {
+                "Digital Marketing Intern": "digital_marketing",
+                "HR": "hr",
+                "Executive Sales (Part-time)": "executive_sales",
+                "Telecalling": "telecaller",
+              };
+              const positionKey = map[title] || (title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+              // Find first candidate matching this position to verify the key exists in data
+              const exact = (hiringCandidates || []).find(c => c.position === positionKey);
+              const finalKey = exact ? positionKey : (
+                (hiringCandidates || []).find(c => (c.position || "").toLowerCase().includes(positionKey.split("_")[0]))?.position || positionKey
+              );
+              setHiringFilter("all");
+              setHiringPositionFilter(finalKey);
+              setHiringPage(1);
+              setTimeout(() => {
+                const el = document.querySelector('[data-testid="hr-hiring-list"]');
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                toast.success(`Showing candidates for ${title}`);
+              }, 80);
+            }} />
+            <div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
             <div className="flex justify-between mb-3 flex-wrap gap-2"><h3 className="font-heading text-lg font-medium">My Hiring Pipeline <span className="text-sm text-[#59615D]">· Total mine: {hiringTotalAll || hiringCandidates.length} · Showing: {hiringCandidates.length}</span></h3>
               <Button size="sm" className="rounded-full bg-[#3B5249] text-white text-xs" onClick={()=>{setEditingCandidate(null);setCandidateForm({name:"",phone:"",email:"",position:"telecaller",location:"",experience:"",qualification:"",skills:"",expected_salary:0,interview_date:"",interview_notes:"",source:"direct",status:"contacted",notes:""});setShowAddCandidate(true);}} data-testid="hr-add-candidate-btn">+ Add Candidate</Button>
             </div>
@@ -711,12 +742,57 @@ export default function HRManagerDashboard() {
                   <SelectItem value="hired">Hired</SelectItem>
                 </SelectContent>
               </Select>
-              {hiringFilter !== "all" && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>{setHiringFilter("all"); setHiringPage(1);}}>Clear</Button>}
+              <span className="text-[10px] text-[#59615D] font-medium uppercase ml-2">Month:</span>
+              <Select value={hiringMonth} onValueChange={v=>{setHiringMonth(v); setHiringPage(1);}}>
+                <SelectTrigger className="w-32 h-8 text-xs rounded-full" data-testid="hiring-month-filter"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Months</SelectItem>
+                  {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m,i)=>(
+                    <SelectItem key={i} value={(i+1).toString()}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={hiringYear} onValueChange={v=>{setHiringYear(v); setHiringPage(1);}}>
+                <SelectTrigger className="w-24 h-8 text-xs rounded-full" data-testid="hiring-year-filter"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  {[2024,2025,2026,2027].map(y=>(
+                    <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-[10px] text-[#59615D] font-medium uppercase ml-2">Position:</span>
+              <Select value={hiringPositionFilter} onValueChange={v=>{setHiringPositionFilter(v); setHiringPage(1);}}>
+                <SelectTrigger className="w-44 h-8 text-xs rounded-full" data-testid="hiring-position-filter"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Positions</SelectItem>
+                  {Array.from(new Set(hiringCandidates.map(c=>c.position).filter(Boolean))).map(p=>(
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(hiringFilter !== "all" || hiringMonth !== "all" || hiringPositionFilter !== "all") && (
+                <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" onClick={()=>{setHiringFilter("all"); setHiringMonth("all"); setHiringPositionFilter("all"); setHiringPage(1);}}>Clear All</Button>
+              )}
             </div>
             {(() => {
-              const fullList = hiringFilter === "all" ? hiringCandidates :
+              // Apply ALL filters: status + month + year + position
+              const applyFilters = (arr) => arr.filter(c => {
+                if (hiringMonth !== "all" || hiringYear) {
+                  const created = c.created_at || "";
+                  if (hiringMonth !== "all") {
+                    const prefix = `${hiringYear}-${String(hiringMonth).padStart(2,"0")}`;
+                    if (!created.startsWith(prefix)) return false;
+                  } else if (hiringYear) {
+                    if (!created.startsWith(hiringYear)) return false;
+                  }
+                }
+                if (hiringPositionFilter !== "all" && c.position !== hiringPositionFilter) return false;
+                return true;
+              });
+              const baseList = hiringFilter === "all" ? hiringCandidates :
                 hiringFilter === "forwarded" ? hiringCandidates.filter(c=>c.forwarded_to) :
                 hiringCandidates.filter(c=>c.status === hiringFilter);
+              const fullList = applyFilters(baseList);
               const totalCount = fullList.length;
               const totalPages = Math.max(1, Math.ceil(totalCount / HIRING_PAGE_SIZE));
               const safePage = Math.min(hiringPage, totalPages);
@@ -738,10 +814,9 @@ export default function HRManagerDashboard() {
               const bulkDelete = async () => {
                 const ids = Array.from(hiringSelected);
                 if (!ids.length) return;
-                const pwd = window.prompt(`Enter HR delete password to delete ${ids.length} candidate(s). Already-hired ones will be skipped.`);
-                if (!pwd) return;
+                if (!window.confirm(`Delete ${ids.length} candidate(s)?\n\nAlready-hired ones will be skipped.`)) return;
                 try {
-                  const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids, password: pwd });
+                  const { data } = await axios.post(`${API}/hiring/candidates/bulk-delete`, { ids, password: "" });
                   toast.success(data.message || `Deleted ${data.deleted}`);
                   setHiringSelected(new Set());
                   fetchData();
@@ -820,7 +895,7 @@ export default function HRManagerDashboard() {
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setHrCallForm(f=>({...f,contact_name:c.name,phone:c.phone,linked_candidate_id:c.id,purpose:"candidate_followup"}));setShowHRCall(true);}} data-testid={`call-${c.id}`}><Phone className="w-2.5 h-2.5 mr-1"/>Log Call</Button>
                       <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>{setEditingCandidate(c);setCandidateForm({name:c.name,phone:c.phone,email:c.email||"",position:c.position,location:c.location||"",experience:c.experience||"",qualification:c.qualification||"",skills:c.skills||"",expected_salary:c.expected_salary||0,interview_date:c.interview_date||"",interview_notes:c.interview_notes||"",source:c.source||"direct",status:c.status,notes:c.notes||""});setShowAddCandidate(true);}} data-testid={`edit-${c.id}`}>Edit</Button>
                       <Button size="sm" className="rounded-full text-[9px] h-6 bg-pink-600 text-white" onClick={()=>{setForwardingCandidate(c);setForwardForm({target_user_id:"",target_role:c.position==='agent'?'district_manager':'sales_manager',status:c.status==='contacted'?'interviewed':c.status});setShowForward(true);}} data-testid={`forward-${c.id}`}>Forward</Button>
-                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{const pwd = window.prompt(`Enter HR delete password to delete candidate "${c.name}":`); if(!pwd) return; try{await axios.delete(`${API}/hiring/candidates/${c.id}`,{data:{password:pwd}});toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
+                      {c.status !== 'hired' && <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 text-red-600 border-red-200 hover:bg-red-50" onClick={async()=>{if(!window.confirm(`Delete candidate "${c.name}"?`)) return; try{await axios.delete(`${API}/hiring/candidates/${c.id}`,{data:{password:""}});toast.success("Candidate deleted");fetchData();}catch(e){toast.error(e.response?.data?.detail||"Failed");}}} data-testid={`delete-${c.id}`}>🗑</Button>}
                     </div>
                     {c.status==='selected' && <Button size="sm" className="rounded-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm" onClick={()=>{setHireCandidate(c); setHireMgrId(c.manager_selected_by||""); setShowFinalHire(true);}} data-testid={`hire-${c.id}`}>✓ Final Hire</Button>}
                     {c.status!=='selected' && c.status!=='hired' && c.status!=='rejected' && <p className="text-[9px] text-[#A66E4E] italic">Awaiting manager selection</p>}
@@ -830,7 +905,7 @@ export default function HRManagerDashboard() {
             ))}</div>
               </>;
             })()}
-          </div></TabsContent>
+          </div></div></TabsContent>
 
           {/* HR CALL LOGS — All HR calls (with per-HR breakdown + pagination) */}
           <TabsContent value="hrcalls"><div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
@@ -942,7 +1017,7 @@ export default function HRManagerDashboard() {
             </div>
             <div className="bg-[#F9F8F6] rounded-xl p-3 text-xs text-[#59615D] space-y-0.5">
               <p className="font-medium mb-1 text-[#3B5249]">All letters print on official Veegal Enterprises LLP letterhead with auto-included terms:</p>
-              <p>• <b>Work Hours:</b> 9:30 AM – 5:30 PM (Mon–Sat)</p>
+              <p>• <b>Work Hours:</b> 9:00 AM – 6:00 PM (Mon–Sat)</p>
               <p>• <b>Break Time:</b> 1 hour total — Lunch 40 min + Tea 20 min (morning &amp; evening)</p>
               <p>• <b>Friday:</b> Extra 30 minutes break</p>
               <p>• <b>Weekly Off:</b> Sunday</p>

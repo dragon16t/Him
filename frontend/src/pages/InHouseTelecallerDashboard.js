@@ -60,7 +60,23 @@ export default function InHouseTelecallerDashboard() {
 
   const logCall = async () => {
     if (!callForm.contact_name) return toast.error("Name required");
-    try { await axios.post(`${API}/inhouse/call-logs`, callForm); toast.success("Call logged!"); setShowLogCall(false); setCallForm({ contact_name: "", phone: "", call_type: "outreach", notes: "" }); fetchData(); } catch (e) { toast.error("Failed"); }
+    try {
+      await axios.post(`${API}/inhouse/call-logs`, callForm);
+      // Auto-update matching hiring candidate's status to "contacted" (if not already past that)
+      try {
+        const phoneTrim = (callForm.phone || "").replace(/\D/g, "").slice(-10);
+        if (phoneTrim) {
+          const match = hiringEntries.find(h => (h.phone || "").replace(/\D/g, "").slice(-10) === phoneTrim);
+          if (match && !["interviewed", "selected", "hired", "rejected"].includes(match.status)) {
+            await axios.put(`${API}/hiring/candidates/${match.id}`, { status: "contacted", last_contact_notes: callForm.notes });
+          }
+        }
+      } catch (_) { /* non-blocking */ }
+      toast.success("Call logged & candidate marked Contacted");
+      setShowLogCall(false);
+      setCallForm({ contact_name: "", phone: "", call_type: "outreach", notes: "" });
+      fetchData();
+    } catch (e) { toast.error("Failed"); }
   };
 
   const logInfluencer = async () => {

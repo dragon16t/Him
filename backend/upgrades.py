@@ -74,12 +74,12 @@ def init_upgrades(**kw):
 # Helper: team scope resolvers
 # ========================================================================
 async def _sm_team_ids(sm_id: str) -> List[str]:
-    tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(500)
+    tcs = await db.telecallers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(5000)
     asms = await db.assistant_sales_managers.find({"managed_by": sm_id}, {"_id": 0, "id": 1}).to_list(50)
     return [t["id"] for t in tcs] + [a["id"] for a in asms] + [sm_id]
 
 async def _dm_team_ids(dm_id: str) -> List[str]:
-    ags = await db.agents.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(500)
+    ags = await db.agents.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(5000)
     adms = await db.assistant_district_managers.find({"managed_by": dm_id}, {"_id": 0, "id": 1}).to_list(50)
     return [a["id"] for a in ags] + [a["id"] for a in adms] + [dm_id]
 
@@ -131,6 +131,7 @@ def _date_range_query(field: str, frm: Optional[str], to: Optional[str]) -> dict
 @router.get("/v2/orders")
 async def get_orders_v2(
     status: Optional[str] = None,
+    payment_type: Optional[str] = None,
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
     created_by: Optional[str] = None,
@@ -154,6 +155,16 @@ async def get_orders_v2(
         query["status"] = status
     if created_by:
         query["created_by"] = created_by
+    # Payment type filter — accepts "cod" or "prepaid" (which maps to online+upi)
+    if payment_type and payment_type != "all":
+        pt = payment_type.lower()
+        if pt == "prepaid":
+            query["payment_type"] = {"$in": ["online", "upi", "prepaid"]}
+        elif pt == "cod":
+            # COD if explicitly cod OR field missing/empty (legacy orders default to COD)
+            query["$or"] = (query.get("$or") or []) + [{"payment_type": "cod"}, {"payment_type": {"$exists": False}}, {"payment_type": ""}]
+        else:
+            query["payment_type"] = pt
     query.update(_date_range_query("created_at", from_date, to_date))
     limit = max(1, min(int(limit or 50), 500))
     skip = max(0, int(skip or 0))
@@ -376,7 +387,7 @@ async def bulk_labels(data: dict, current_user: dict = Depends(_auth)):
     """Generate a single multi-page PDF (4 labels per A4 page)."""
     ids = data.get("order_ids") or []
     if not ids: raise HTTPException(status_code=400, detail="order_ids required")
-    orders = await db.orders.find({"id": {"$in": ids}}, {"_id": 0}).to_list(500)
+    orders = await db.orders.find({"id": {"$in": ids}}, {"_id": 0}).to_list(5000)
     if not orders: raise HTTPException(status_code=404, detail="No orders found")
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -484,7 +495,7 @@ async def list_all_employees(current_user: dict = Depends(_auth)):
         raise HTTPException(status_code=403, detail="Admin only")
     out = []
     for coll, role in {v: k for k, v in ROLE_COLLECTIONS.items()}.items():
-        users = await db[coll].find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+        users = await db[coll].find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
         for u in users:
             u["role"] = role
             out.append(u)
@@ -509,7 +520,7 @@ async def hr_efficiency(d: Optional[str] = None, current_user: dict = Depends(_a
     employees = []
     for coll, role in {v: k for k, v in ROLE_COLLECTIONS.items()}.items():
         if role == "admin": continue
-        users = await db[coll].find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+        users = await db[coll].find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
         for u in users:
             uid = u.get("id")
             att = await db.attendance.find_one({"user_id": uid, "date": day}, {"_id": 0}) or {}
@@ -671,11 +682,11 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
     # HR-specific section
     hr_section = {}
     if role in ("hr_manager", "admin"):
-        new_candidates = await db.hiring_candidates.find({"created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
-        hr_calls = await db.hr_call_logs.find({"call_date": day}, {"_id": 0}).to_list(500)
-        hired = await db.hiring_candidates.find({"hired_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
-        attendance_today = await db.attendance.find({"date": day}, {"_id": 0}).to_list(500)
-        leaves_today = await db.leaves.find({"start_date": {"$lte": day}, "end_date": {"$gte": day}, "status": "approved"}, {"_id": 0}).to_list(200)
+        new_candidates = await db.hiring_candidates.find({"created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(5000)
+        hr_calls = await db.hr_call_logs.find({"call_date": day}, {"_id": 0}).to_list(5000)
+        hired = await db.hiring_candidates.find({"hired_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(5000)
+        attendance_today = await db.attendance.find({"date": day}, {"_id": 0}).to_list(5000)
+        leaves_today = await db.leaves.find({"start_date": {"$lte": day}, "end_date": {"$gte": day}, "status": "approved"}, {"_id": 0}).to_list(5000)
         hr_section = {
             "candidates_added": len(new_candidates),
             "hr_calls": len(hr_calls),
@@ -716,7 +727,7 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
         new_camps = await db.campaigns.count_documents(camps_q)
         active_camps = await db.campaigns.count_documents({"status": "active"})
         # Ad spend from any campaign that has a daily_spend field for `day`
-        all_camps = await db.campaigns.find({}, {"_id": 0}).to_list(500)
+        all_camps = await db.campaigns.find({}, {"_id": 0}).to_list(5000)
         spend_today = 0.0
         for c in all_camps:
             for sp in (c.get("daily_spend") or []):
@@ -779,7 +790,7 @@ async def _daily_report_data(scope_user: dict, target_date: date) -> dict:
     # Finance manager-specific section: expenses approved, payroll, fund-requests for the day.
     finance_section = {}
     if role in ("finance_manager", "admin"):
-        approved_exps = await db.expenses.find({"status": "approved", "created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(500)
+        approved_exps = await db.expenses.find({"status": "approved", "created_at": {"$gte": day, "$lt": day + "T99"}}, {"_id": 0}).to_list(5000)
         pending_exps = await db.expenses.count_documents({"status": "pending"})
         approved_today_amt = sum(e.get("amount", 0) for e in approved_exps)
         fund_today = await db.fund_requests.count_documents({"created_at": {"$gte": day, "$lt": day + "T99"}})
@@ -1372,7 +1383,7 @@ async def delhivery_sync_once():
     """Poll Delhivery for every shipped order with AWB; update status if changed."""
     if not DELHIVERY_API_KEY:
         return {"synced": 0, "skipped": "no_api_key"}
-    orders = await db.orders.find({"awb_number": {"$nin": [None, ""]}, "status": {"$in": ["shipped", "confirmed"]}}, {"_id": 0}).to_list(500)
+    orders = await db.orders.find({"awb_number": {"$nin": [None, ""]}, "status": {"$in": ["shipped", "confirmed"]}}, {"_id": 0}).to_list(5000)
     synced = 0; updated = 0; errors = 0
     for o in orders:
         awb = o.get("awb_number") or ""
