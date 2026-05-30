@@ -5142,7 +5142,7 @@ async def _backfill_created_by_names():
             for id_field, name_field, role_field in mappings:
                 # Find docs that have an id but a missing/blank name
                 async for doc in db[coll_name].find(
-                    {id_field: {"$exists": True, "$ne": "", "$ne": None},
+                    {id_field: {"$exists": True, "$nin": ["", None]},
                      "$or": [{name_field: {"$exists": False}}, {name_field: ""}, {name_field: None}]},
                     {"_id": 0, "id": 1, id_field: 1}
                 ):

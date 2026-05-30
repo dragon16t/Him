@@ -58,12 +58,24 @@ export default function TelecallerDashboard() {
   const [instructions, setInstructions] = useState([]);
   const [relCalls, setRelCalls] = useState({calls:[],stats:{}});
   // Live-computed status counts (No Response, Busy, Interested, etc.) — refreshed whenever leads change.
+  // Only counts leads that pass the BASELINE visibility filter (not routed_to_collab, not recently-ordered).
+  // This guarantees: chip count === number shown when that chip is clicked (with tab set to "all").
   const statusCounts = React.useMemo(() => {
-    const counts = { all: 0, new: 0, interested: 0, follow_up: 0, no_response: 0, busy: 0, ordered: 0, not_interested: 0 };
+    const counts = { all: 0, new: 0, interested: 0, follow_up: 0, no_response: 0, busy: 0, ordered: 0, order_created: 0, not_interested: 0 };
+    const todayStr = new Date().toISOString().split("T")[0];
+    const isRecent = (l) => {
+      if (l.status !== "order_created" && l.status !== "converted" && l.status !== "delivered") return false;
+      const ref = l.last_order_date || (l.updated_at || "").slice(0,10);
+      if (!ref) return false;
+      const ageMs = new Date(todayStr) - new Date(ref);
+      return ageMs >= 0 && ageMs < 30 * 24 * 60 * 60 * 1000;
+    };
     (leads || []).forEach(l => {
       if (l.status === "routed_to_collab") return;
+      if (isRecent(l)) return;
       counts.all += 1;
       if (counts.hasOwnProperty(l.status)) counts[l.status] += 1;
+      if (l.status === "ordered") counts.order_created += 1;
     });
     return counts;
   }, [leads]);
@@ -107,11 +119,6 @@ export default function TelecallerDashboard() {
       setOrders(oR.data.orders||[]);
       try { const lb = await axios.get(`${API}/leaderboard/telecaller`); setLeaderboard(lb.data.leaderboard||[]); } catch {}
       setInstructions(iR.data.instructions||[]); setRelCalls(rc.data);
-      // Fetch live status counts (filter badges)
-      try {
-        const sc = await axios.get(`${API}/lead-status-counts`);
-        setStatusCounts(sc.data.counts || {});
-      } catch {}
     } catch (err) { console.error(err); }
     setLoading(false);
   }, []);
@@ -119,8 +126,19 @@ export default function TelecallerDashboard() {
 
   const today = new Date().toISOString().split("T")[0];
   const nowIso = new Date().toISOString();
-  // Leads that still need conversion (interested or marked ordered but no order in the system yet)
+  // Hide leads routed to collab and recently-ordered leads from active views
   const orderedLeadIds = new Set((orders || []).map(o => o.lead_id).filter(Boolean));
+  // Track how many delivered/confirmed orders each lead has placed → used for "REPEAT × N" badges
+  const ordersByLead = React.useMemo(() => {
+    const map = {};
+    (orders || []).forEach(o => {
+      if (o.status === "cancelled" || o.status === "rejected" || o.deleted) return;
+      const key = o.lead_id || (o.customer_phone || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+      if (!key) return;
+      map[key] = (map[key] || 0) + 1;
+    });
+    return map;
+  }, [orders]);
   const isPendingConversion = (l) => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id);
 
   // Smart priority — lower number = higher in the list
@@ -144,8 +162,9 @@ export default function TelecallerDashboard() {
   };
 
   const isRecentlyOrdered = (l) => {
-    // Hide leads whose order was created within the last 30 days
-    if (l.status !== "order_created" && l.status !== "converted") return false;
+    // Hide leads whose order was created/delivered within the last 30 days from active "Today" actionable buckets.
+    // They reappear automatically once 30d window passes (next_repeat_order_date kicks in).
+    if (l.status !== "order_created" && l.status !== "converted" && l.status !== "delivered") return false;
     const ref = l.last_order_date || (l.updated_at || "").slice(0,10);
     if (!ref) return false;
     const ageMs = new Date(today) - new Date(ref);
@@ -206,13 +225,27 @@ export default function TelecallerDashboard() {
       // When searching, BYPASS tab filter so user can find leads from any tab
       return true;
     }
-    if (tab === "today") return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
-    if (tab === "repeat") return l.next_repeat_order_date && l.next_repeat_order_date <= today;
-    if (tab === "relationship") return l.next_relationship_date && l.next_relationship_date <= today;
+    if (tab === "today") {
+      // Exclude leads that already delivered in the last 30 days from "Today" — they belong in Repeat once due
+      if (isRecentlyOrdered(l)) return false;
+      return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
+    }
+    if (tab === "repeat") return !!l.next_repeat_order_date;  // show DUE + UPCOMING; sorted asc by date below
+    if (tab === "relationship") return !!l.next_relationship_date;
     if (tab === "interested") return l.status === "interested" || isPendingConversion(l);
     if (tab === "all") return true;
     return true;
   }).sort((a, b) => {
+    // Repeat / Relation tabs: sort by their respective date asc (overdue first, then nearest upcoming)
+    if (tab === "repeat") {
+      const da = a.next_repeat_order_date || "9999-99-99";
+      const db = b.next_repeat_order_date || "9999-99-99";
+      if (da !== db) return da.localeCompare(db);
+    } else if (tab === "relationship") {
+      const da = a.next_relationship_date || "9999-99-99";
+      const db = b.next_relationship_date || "9999-99-99";
+      if (da !== db) return da.localeCompare(db);
+    }
     const pa = leadPriority(a), pb = leadPriority(b);
     if (pa !== pb) return pa - pb;
     // Within the same priority, newer leads first (created_at desc)
@@ -414,9 +447,34 @@ export default function TelecallerDashboard() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-3 bg-white rounded-full border border-[#E5E3DB] p-1 overflow-x-auto">
-          {[{v:"today",l:`Today (${leads.filter(l=>l.status==="new"||l.next_follow_up_date===today).length})`},{v:"repeat",l:`Repeat (${leads.filter(l=>l.next_repeat_order_date&&l.next_repeat_order_date<=today).length})`},{v:"relationship",l:`Relation (${leads.filter(l=>l.next_relationship_date&&l.next_relationship_date<=today).length})`},{v:"interested",l:`Interested (${statusCounts.interested ?? 0})`},{v:"calls",l:"Today's Calls"},{v:"all",l:`All Leads (${leads.length})`},{v:"orders",l:`📦 Orders (${orders.length})`},{v:"commissions",l:`💰 Commissions (${commission.count||0})`},{v:"tasks",l:"Tasks"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"instructions",l:"Guide"}].map(t=>(
-            <button key={t.v} onClick={()=>setTab(t.v)} className={`px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap ${tab===t.v?"bg-[#3B5249] text-white":"text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid={`tc-tab-${t.v}`}>{t.l}</button>
-          ))}
+          {(() => {
+            const todayCount = leads.filter(l =>
+              l.status !== "routed_to_collab" && !isRecentlyOrdered(l) &&
+              (l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) ||
+               (l.next_repeat_order_date && l.next_repeat_order_date <= today) ||
+               (l.next_relationship_date && l.next_relationship_date <= today))
+            ).length;
+            const repeatTotal = leads.filter(l => l.next_repeat_order_date).length;
+            const repeatDue = leads.filter(l => l.next_repeat_order_date && l.next_repeat_order_date <= today).length;
+            const relationTotal = leads.filter(l => l.next_relationship_date).length;
+            const relationDue = leads.filter(l => l.next_relationship_date && l.next_relationship_date <= today).length;
+            const tabs = [
+              {v:"today", l:`Today (${todayCount})`},
+              {v:"repeat", l:`Repeat (${repeatDue}/${repeatTotal})`},
+              {v:"relationship", l:`Relation (${relationDue}/${relationTotal})`},
+              {v:"interested", l:`Interested (${statusCounts.interested ?? 0})`},
+              {v:"calls", l:"Today's Calls"},
+              {v:"all", l:`All Leads (${statusCounts.all ?? leads.length})`},
+              {v:"orders", l:`Orders (${orders.length})`},
+              {v:"commissions", l:`Commissions (${commission.count||0})`},
+              {v:"tasks", l:"Tasks"},
+              {v:"leaderboard", l:"Leaderboard"},
+              {v:"instructions", l:"Guide"},
+            ];
+            return tabs.map(t => (
+              <button key={t.v} onClick={()=>setTab(t.v)} className={`px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap ${tab===t.v?"bg-[#3B5249] text-white":"text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid={`tc-tab-${t.v}`}>{t.l}</button>
+            ));
+          })()}
         </div>
 
         {/* ACTION BAR */}
@@ -541,7 +599,7 @@ export default function TelecallerDashboard() {
                   {v:"ordered",l:`Order Created (${statusCounts.order_created ?? 0})`},
                   {v:"not_interested",l:`Not Interested (${statusCounts.not_interested ?? 0})`},
                 ].map(s=>(
-                  <button key={s.v} onClick={()=>setStatusFilter(s.v)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap border transition ${statusFilter===s.v?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white text-[#59615D] border-[#E5E3DB] hover:border-[#3B5249]"}`} data-testid={`status-filter-${s.v}`}>{s.l}</button>
+                  <button key={s.v} onClick={()=>{ setStatusFilter(s.v); if (s.v !== "all") setTab("all"); }} className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap border transition ${statusFilter===s.v?"bg-[#3B5249] text-white border-[#3B5249]":"bg-white text-[#59615D] border-[#E5E3DB] hover:border-[#3B5249]"}`} data-testid={`status-filter-${s.v}`}>{s.l}</button>
                 ))}
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -549,7 +607,7 @@ export default function TelecallerDashboard() {
                 {dateFilter && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={()=>setDateFilter("")}>Clear date</Button>}
                 <Input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search name / phone / email / lead-id / product / city" className="rounded-xl h-8 text-xs flex-1 min-w-[180px]" data-testid="leads-search"/>
                 <span className="text-[10px] text-[#59615D] ml-auto" data-testid="leads-showing-counter">
-                  Showing <b className="text-[#3B5249]">{filteredLeads.length}</b> of <b className="text-[#3B5249]">{leads.filter(x=>x.status!=="routed_to_collab").length}</b> total
+                  Showing <b className="text-[#3B5249]">{filteredLeads.length}</b> of <b className="text-[#3B5249]">{statusCounts.all ?? leads.filter(x=>x.status!=="routed_to_collab").length}</b> total
                 </span>
               </div>
             </div>
@@ -566,6 +624,12 @@ export default function TelecallerDashboard() {
                     <StatusBadge status={lead.status} />
                     {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
                     {orderedLeadIds.has(lead.id) && <Badge className="bg-blue-100 text-blue-800 text-[10px]" data-testid={`order-placed-${lead.id}`}>ORDER PLACED</Badge>}
+                    {(() => {
+                      const phoneKey = (lead.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+                      const n = ordersByLead[lead.id] || ordersByLead[phoneKey] || 0;
+                      if (n >= 2) return <Badge className="bg-emerald-100 text-emerald-800 text-[10px]" data-testid={`repeat-count-${lead.id}`}>REPEAT × {n}</Badge>;
+                      return null;
+                    })()}
                     {lead.last_order_date && <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">REPEAT CUSTOMER</Badge>}
                     {lead.next_repeat_order_date && lead.next_repeat_order_date <= today && <Badge className="bg-orange-100 text-orange-800 text-[10px]">REPEAT DUE</Badge>}
                     {lead.next_relationship_date && lead.next_relationship_date <= today && <Badge className="bg-pink-100 text-pink-800 text-[10px]">RELATION CALL</Badge>}
@@ -726,7 +790,7 @@ export default function TelecallerDashboard() {
         activeKey={tab}
         onSelect={setTab}
         items={[
-          { key: "today", label: "Today", icon: Phone, badge: leads.filter(l=>l.status==="new"||l.next_follow_up_date===today).length },
+          { key: "today", label: "Today", icon: Phone, badge: leads.filter(l => l.status !== "routed_to_collab" && !isRecentlyOrdered(l) && (l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today))).length },
           { key: "all", label: "Leads", icon: Users, badge: leads.length },
           { key: "orders", label: "Orders", icon: TrendingUp, badge: orders.length },
           { key: "commissions", label: "Earned", icon: IndianRupee },
