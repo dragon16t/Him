@@ -73,6 +73,13 @@ export default function TelecallerDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [leadPage, setLeadPage] = useState(1);
   const LEADS_PER_PAGE = 25;
+  const leadListRef = React.useRef(null);
+  // Scroll to top of the lead list whenever the page changes — feels like a normal "next page"
+  useEffect(() => {
+    if (leadListRef.current) {
+      leadListRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [leadPage]);
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [showAddLead, setShowAddLead] = useState(false);
   const [showCallLog, setShowCallLog] = useState(false);
@@ -546,7 +553,7 @@ export default function TelecallerDashboard() {
                 </span>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2" ref={leadListRef}>
             {filteredLeads.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No leads in this category</p>:
             filteredLeads.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE).map(lead => (
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
@@ -579,18 +586,35 @@ export default function TelecallerDashboard() {
             ))}
           </div>
           {/* Pagination — only show when more than one page */}
-          {filteredLeads.length > LEADS_PER_PAGE && (
-            <div className="flex items-center justify-between mt-3 pt-3 border-t border-[#E5E3DB]" data-testid="leads-pagination">
-              <p className="text-[10px] text-[#59615D]">
-                Showing {(leadPage-1)*LEADS_PER_PAGE+1}–{Math.min(leadPage*LEADS_PER_PAGE, filteredLeads.length)} of <b>{filteredLeads.length}</b> leads
-              </p>
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(p=>Math.max(1,p-1))} className="rounded-full h-7 px-3 text-[10px]" data-testid="leads-prev">Prev</Button>
-                <span className="text-[10px] text-[#59615D] px-2">Page {leadPage} / {Math.ceil(filteredLeads.length/LEADS_PER_PAGE)}</span>
-                <Button size="sm" variant="outline" disabled={leadPage>=Math.ceil(filteredLeads.length/LEADS_PER_PAGE)} onClick={()=>setLeadPage(p=>p+1)} className="rounded-full h-7 px-3 text-[10px]" data-testid="leads-next">Next</Button>
+          {filteredLeads.length > LEADS_PER_PAGE && (() => {
+            const totalPages = Math.ceil(filteredLeads.length / LEADS_PER_PAGE);
+            // Build a compact page-number list (first, ..., neighbours, ..., last)
+            const pageNums = [];
+            const push = (n) => { if (!pageNums.includes(n) && n >= 1 && n <= totalPages) pageNums.push(n); };
+            push(1); push(2);
+            push(leadPage - 1); push(leadPage); push(leadPage + 1);
+            push(totalPages - 1); push(totalPages);
+            pageNums.sort((a,b) => a - b);
+            const final = [];
+            pageNums.forEach((n, i) => { if (i && n - pageNums[i-1] > 1) final.push("…"); final.push(n); });
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-[#E5E3DB]" data-testid="leads-pagination">
+                <p className="text-[10px] text-[#59615D]">
+                  Showing <b>{(leadPage-1)*LEADS_PER_PAGE+1}–{Math.min(leadPage*LEADS_PER_PAGE, filteredLeads.length)}</b> of <b className="text-[#3B5249]">{filteredLeads.length}</b> leads · Page <b>{leadPage}</b> of <b>{totalPages}</b>
+                </p>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(1)} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-first">« First</Button>
+                  <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(p=>Math.max(1,p-1))} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-prev">‹ Prev</Button>
+                  {final.map((n, i) => n === "…"
+                    ? <span key={`d${i}`} className="text-[10px] text-[#59615D] px-1">…</span>
+                    : <Button key={n} size="sm" variant={n===leadPage?"default":"outline"} onClick={()=>setLeadPage(n)} className={`rounded-full h-7 min-w-[28px] px-2 text-[10px] ${n===leadPage?"bg-[#3B5249] text-white":""}`} data-testid={`leads-page-${n}`}>{n}</Button>
+                  )}
+                  <Button size="sm" variant="outline" disabled={leadPage>=totalPages} onClick={()=>setLeadPage(p=>Math.min(totalPages,p+1))} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-next">Next ›</Button>
+                  <Button size="sm" variant="outline" disabled={leadPage>=totalPages} onClick={()=>setLeadPage(totalPages)} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-last">Last »</Button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           </>
         )}
       </div>
