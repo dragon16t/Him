@@ -57,9 +57,18 @@ export default function TelecallerDashboard() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [instructions, setInstructions] = useState([]);
   const [relCalls, setRelCalls] = useState({calls:[],stats:{}});
+  // Live-computed status counts (No Response, Busy, Interested, etc.) — refreshed whenever leads change.
+  const statusCounts = React.useMemo(() => {
+    const counts = { all: 0, new: 0, interested: 0, follow_up: 0, no_response: 0, busy: 0, ordered: 0, not_interested: 0 };
+    (leads || []).forEach(l => {
+      if (l.status === "routed_to_collab") return;
+      counts.all += 1;
+      if (counts.hasOwnProperty(l.status)) counts[l.status] += 1;
+    });
+    return counts;
+  }, [leads]);
   const [tab, setTab] = useState("today");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [statusCounts, setStatusCounts] = useState({});
   const [dateFilter, setDateFilter] = useState("");  // YYYY-MM-DD; empty = all dates
   const [searchQuery, setSearchQuery] = useState("");
   const [leadPage, setLeadPage] = useState(1);
@@ -174,13 +183,19 @@ export default function TelecallerDashboard() {
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
+      // Phone number normalization: strip non-digits + leading 91 / 0 so "9061720705",
+      // "+91 9061720705", "9061-720-705", "09061720705" all match the same lead.
+      const qDigits = q.replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+      const phoneRaw = (l.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+      const altPhone = (l.alternate_phone || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+      const phoneMatch = !!qDigits && qDigits.length >= 4 && (phoneRaw.includes(qDigits) || altPhone.includes(qDigits));
       // Expanded search across more fields: name, phone, alternate phone, email, lead ID, product, address, city
       const hay = [
         l.name, l.phone_number, l.alternate_phone, l.email, l.id,
         l.product_interest, (l.interested_products||[]).join(" "),
         l.address, l.city, l.notes, l.status,
       ].filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
+      if (!hay.includes(q) && !phoneMatch) return false;
       // When searching, BYPASS tab filter so user can find leads from any tab
       return true;
     }
@@ -392,7 +407,7 @@ export default function TelecallerDashboard() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-3 bg-white rounded-full border border-[#E5E3DB] p-1 overflow-x-auto">
-          {[{v:"today",l:`Today (${leads.filter(l=>l.status==="new"||l.next_follow_up_date===today).length})`},{v:"repeat",l:"Repeat"},{v:"relationship",l:"Relation"},{v:"interested",l:"Interested"},{v:"calls",l:"Today's Calls"},{v:"all",l:`All Leads (${leads.length})`},{v:"orders",l:`📦 Orders (${orders.length})`},{v:"commissions",l:`💰 Commissions (${commission.count||0})`},{v:"tasks",l:"Tasks"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"instructions",l:"Guide"}].map(t=>(
+          {[{v:"today",l:`Today (${leads.filter(l=>l.status==="new"||l.next_follow_up_date===today).length})`},{v:"repeat",l:`Repeat (${leads.filter(l=>l.next_repeat_order_date&&l.next_repeat_order_date<=today).length})`},{v:"relationship",l:`Relation (${leads.filter(l=>l.next_relationship_date&&l.next_relationship_date<=today).length})`},{v:"interested",l:`Interested (${statusCounts.interested ?? 0})`},{v:"calls",l:"Today's Calls"},{v:"all",l:`All Leads (${leads.length})`},{v:"orders",l:`📦 Orders (${orders.length})`},{v:"commissions",l:`💰 Commissions (${commission.count||0})`},{v:"tasks",l:"Tasks"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"instructions",l:"Guide"}].map(t=>(
             <button key={t.v} onClick={()=>setTab(t.v)} className={`px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap ${tab===t.v?"bg-[#3B5249] text-white":"text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid={`tc-tab-${t.v}`}>{t.l}</button>
           ))}
         </div>

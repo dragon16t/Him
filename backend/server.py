@@ -1099,6 +1099,8 @@ async def get_orders(status: Optional[str] = None, date_filter: Optional[str] = 
         ags = await db.agents.find({"managed_by": current_user.get('managed_by','')}, {"_id": 0, "id": 1}).to_list(5000)
         ids = [a['id'] for a in ags] + [current_user['id'], current_user.get('managed_by','')]
         query['created_by'] = {'$in': ids}
+    # Hide soft-deleted orders from the main list (they live in the Trash view)
+    query['deleted'] = {"$ne": True}
     if status: query['status'] = status
     if date_filter:  # YYYY-MM-DD
         query['created_at'] = {"$regex": f"^{date_filter}"}
