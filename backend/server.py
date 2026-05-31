@@ -1334,9 +1334,8 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
             "next_repeat_order_date": (today + timedelta(days=35)).isoformat(),
             "updated_at": now
         }})
-    # Record revenue in finance ledger
-    pay_method = "cash" if order.get('payment_type') == "cod" else "bank"
-    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
+    # Record revenue in finance ledger — always credit to CASH for delivered orders
+    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="cash", created_by=current_user['id'])
     return {"message": "Order delivered - commission credited"}
 
 @api_router.put("/orders/{order_id}/reject")
@@ -3433,8 +3432,8 @@ async def ship_and_deliver(order_id: str, current_user: dict = Depends(get_curre
         await db.commissions.insert_one(comm)
         coll_map = {"telecaller": "telecallers", "agent": "agents", "district_manager": "managers", "sales_manager": "sales_managers"}
         if cr in coll_map: await db[coll_map[cr]].update_one({"id": order['created_by']}, {"$inc": {"commission_earned": amt}})
-    # Revenue in finance
-    pay_method = "cash" if order.get('payment_type') == "cod" else "bank"
+    # Revenue in finance — credit to CASH (delivery payments are received as cash; user transfers to bank manually)
+    pay_method = "cash"
     await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
     if settlement_amt > 0:
         await record_transaction("debit", "settlement_charge", settlement_amt, f"Settlement for {order_id}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
@@ -6222,7 +6221,8 @@ async def mark_order_delivered_inv(oid: str, background_tasks: BackgroundTasks, 
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": oid}, {"$set": {"status": "delivered", "delivered_at": now, "delivered_by": current_user['id'], "delivered_by_name": current_user.get('name',''), "updated_at": now}})
     # Trigger commission chain
-    pay_method = "cash" if order.get('payment_type') == "cod" else "bank"
+    # Delivered payment → credit to CASH (received from delivery agent)
+    pay_method = "cash"
     await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {oid} delivered", reference_id=oid, method=pay_method, created_by=current_user['id'])
     creator_id = order.get('created_by', '')
     creator_role = order.get('created_by_role', '') or None
