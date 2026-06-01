@@ -637,8 +637,30 @@ export default function TelecallerDashboard() {
                   </div>
                 </div>
                 {lead.remarks && <p className="text-xs text-[#59615D] mb-2">{lead.remarks}</p>}
+                {lead.next_follow_up_date && (() => {
+                  const dt = lead.next_follow_up_date + (lead.next_follow_up_time ? `T${lead.next_follow_up_time}` : "");
+                  const dueNow = isFollowUpDueNow(lead);
+                  const tone = dueNow ? "bg-red-50 border-red-300 text-red-800" : "bg-amber-50 border-amber-300 text-amber-800";
+                  const label = dueNow ? "FOLLOW-UP DUE" : "NEXT FOLLOW-UP";
+                  const human = (() => {
+                    try {
+                      const d = new Date(dt);
+                      if (isNaN(d.getTime())) return dt;
+                      const dateStr = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+                      const timeStr = lead.next_follow_up_time ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }) : "";
+                      return timeStr ? `${dateStr}, ${timeStr}` : dateStr;
+                    } catch { return dt; }
+                  })();
+                  return (
+                    <div className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium mb-2 ${tone}`} data-testid={`followup-chip-${lead.id}`}>
+                      <Clock className="w-3 h-3" />
+                      <span className="uppercase tracking-wider opacity-80">{label}:</span>
+                      <span className="font-semibold">{human}</span>
+                    </div>
+                  );
+                })()}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:"",next_follow_up_time:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
                   <WhatsAppCTA
                     phone={lead.phone_number}
                     message={`Hi ${lead.name && lead.name!=="Unknown" ? lead.name : ""}, this is from Celesta Glow. ${lead.status === "interested" ? "Just following up — would you like to place your order today?" : "Just checking in — how can we help?"}`}
