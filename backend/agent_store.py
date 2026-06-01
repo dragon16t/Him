@@ -417,10 +417,24 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
     async def _ensure_seed():
         if not await db.store_settings.find_one({"_id": "store_settings"}):
             await db.store_settings.insert_one(dict(DEFAULT_STORE_SETTINGS))
-        # Seed products if collection is empty
+        # Seed products if collection is empty (with sort_order)
         if await db.store_products.count_documents({}) == 0:
-            for p in DEFAULT_PRODUCTS + DEFAULT_COMBOS:
-                await db.store_products.insert_one({**p, "created_at": _now(), "updated_at": _now()})
+            for idx, p in enumerate(DEFAULT_PRODUCTS):
+                await db.store_products.insert_one({**p, "sort_order": (idx + 1) * 10, "created_at": _now(), "updated_at": _now()})
+            for idx, p in enumerate(DEFAULT_COMBOS):
+                await db.store_products.insert_one({**p, "sort_order": (idx + 1) * 10, "created_at": _now(), "updated_at": _now()})
+        # Backfill: assign sort_order to existing products that don't have one
+        # Non-combos get 10/20/30/... in current name order; combos likewise.
+        missing_noncombo = []
+        async for p in db.store_products.find({"is_combo": False, "sort_order": {"$exists": False}}, {"_id": 0, "id": 1, "name": 1}).sort("name", 1):
+            missing_noncombo.append(p)
+        for idx, p in enumerate(missing_noncombo):
+            await db.store_products.update_one({"id": p["id"]}, {"$set": {"sort_order": (idx + 1) * 10}})
+        missing_combo = []
+        async for p in db.store_products.find({"is_combo": True, "sort_order": {"$exists": False}}, {"_id": 0, "id": 1, "name": 1}).sort("name", 1):
+            missing_combo.append(p)
+        for idx, p in enumerate(missing_combo):
+            await db.store_products.update_one({"id": p["id"]}, {"$set": {"sort_order": (idx + 1) * 10}})
 
     async def _get_settings() -> dict:
         await _ensure_seed()
@@ -558,7 +572,8 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
         if not agent:
             raise HTTPException(404, "Agent storefront not found")
         items = []
-        async for p in db.store_products.find({"active": True}):
+        # Sort: non-combos first by sort_order ASC, then combos by sort_order ASC, then name
+        async for p in db.store_products.find({"active": True}).sort([("is_combo", 1), ("sort_order", 1), ("name", 1)]):
             items.append(_strip_mongo(p))
         return {"products": items}
 

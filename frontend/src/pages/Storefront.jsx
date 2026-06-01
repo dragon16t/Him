@@ -183,7 +183,8 @@ function WhatsAppFloat() {
 function StoreHome({ slug, meta, products }) {
   const navigate = useNavigate();
   const cart = useCart();
-  const bestSellers = products.filter(p => !p.is_combo).slice(0, 4);
+  // Show ALL non-combo products on the home page (sorted by backend's sort_order field)
+  const bestSellers = products.filter(p => !p.is_combo);
   const combos = products.filter(p => p.is_combo);
   // Featured combo: prefer the Complete Anti-Aging Kit, else first combo
   const featuredCombo = combos.find(c => /anti-aging|complete/i.test(c.name)) || combos[0];

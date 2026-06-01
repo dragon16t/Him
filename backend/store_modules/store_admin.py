@@ -79,7 +79,7 @@ def register(router, db, get_current_user, helpers):
         ensure_admin(current_user)
         await ensure_seed()
         out = []
-        async for p in db.store_products.find().sort([("is_combo", 1), ("name", 1)]):
+        async for p in db.store_products.find().sort([("is_combo", 1), ("sort_order", 1), ("name", 1)]):
             out.append(strip_mongo(p))
         return {"products": out}
 
@@ -119,6 +119,7 @@ def register(router, db, get_current_user, helpers):
             "active": bool(data.get("active", True)),
             "rating": float(data.get("rating", 4.8) or 4.8),
             "review_count": int(data.get("review_count", 0) or 0),
+            "sort_order": int(data.get("sort_order", 999) or 999),
             "created_at": now(),
             "updated_at": now(),
         }
@@ -130,11 +131,12 @@ def register(router, db, get_current_user, helpers):
         ensure_admin(current_user)
         allowed = {"name", "tagline", "short_desc", "long_desc", "ingredients", "how_to_use", "benefits",
                    "price", "mrp", "image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
-                   "stock", "active", "rating", "review_count"}
+                   "stock", "active", "rating", "review_count", "sort_order"}
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "price" in updates: updates["price"] = int(updates["price"] or 0)
         if "mrp" in updates: updates["mrp"] = int(updates["mrp"] or 0)
         if "stock" in updates: updates["stock"] = int(updates["stock"] or 0)
+        if "sort_order" in updates: updates["sort_order"] = int(updates["sort_order"] or 999)
         if updates:
             updates["updated_at"] = now()
             await db.store_products.update_one({"id": pid}, {"$set": updates})

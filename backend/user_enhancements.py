@@ -22,16 +22,24 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
 
     # ---------- 1. Pickup Locations ----------
     DEFAULT_PICKUP_LOCATIONS = [
-        {"id": "pickup-parakkal", "name": "Parakkal",
-         "address": "Parakkal Warehouse, Calicut, Kerala",
-         "is_default": True, "active": True},
         {"id": "pickup-office", "name": "Office",
          "address": "Celesta Glow HQ, Cherutti Road, Calicut, Kerala 673032",
+         "is_default": True, "active": True},
+        {"id": "pickup-parakkal", "name": "Parakkal",
+         "address": "Parakkal Warehouse, Calicut, Kerala",
          "is_default": False, "active": True},
         {"id": "pickup-kochi", "name": "Kochi",
          "address": "Kochi Distribution Center, Kerala",
          "is_default": False, "active": True},
     ]
+
+    async def _ensure_office_is_default():
+        """One-time backfill: if 'Office' exists and is not default (or default is Parakkal),
+        flip the default to Office. Idempotent — safe to run every request."""
+        office = await db.pickup_locations.find_one({"name": "Office", "active": True})
+        if office and not office.get("is_default"):
+            await db.pickup_locations.update_many({}, {"$set": {"is_default": False}})
+            await db.pickup_locations.update_one({"id": office["id"]}, {"$set": {"is_default": True}})
 
     @api_router.get("/pickup-locations")
     async def list_pickup_locations(current_user: dict = Depends(get_current_user)):
@@ -39,6 +47,9 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
         if not locs:
             await db.pickup_locations.insert_many([{**l} for l in DEFAULT_PICKUP_LOCATIONS])
             locs = [{**l} for l in DEFAULT_PICKUP_LOCATIONS]
+        await _ensure_office_is_default()
+        # Re-read after potential default flip so the caller sees the correct is_default
+        locs = await db.pickup_locations.find({"active": True}, {"_id": 0}).to_list(50)
         return {"locations": locs}
 
     @api_router.post("/pickup-locations")

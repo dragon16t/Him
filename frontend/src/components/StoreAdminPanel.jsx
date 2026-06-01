@@ -364,6 +364,7 @@ export default function StoreAdminPanel() {
                     <span className="font-medium text-[13px] text-[#2C3531]">₹{p.price}</span>
                     {p.mrp > p.price && <span className="text-[11px] text-[#7B6D5A] line-through">₹{p.mrp}</span>}
                     <span className="text-[10px] text-[#7B6D5A]">• Stock: {p.stock}</span>
+                    <span className="text-[10px] text-[#7B6D5A]">• Sort: <b>{p.sort_order ?? 999}</b></span>
                   </div>
                   <div className="flex gap-1 mt-2">
                     <Button size="sm" variant="outline" onClick={() => setEditProd({ ...p })} className="h-7 text-[10px] rounded-full" data-testid={`edit-${p.slug}`}><Pencil className="w-3 h-3 mr-1"/>Edit</Button>
@@ -415,7 +416,7 @@ export default function StoreAdminPanel() {
 
       {/* Product edit / create */}
       <ProductEditDialog open={!!editProd || showNew} onClose={() => { setEditProd(null); setShowNew(false); }}
-        initial={editProd || { name: "", tagline: "", short_desc: "", long_desc: "", price: 0, mrp: 0, image: "", stock: 100, active: true, is_combo: tab === "combos", ingredients: [], benefits: [], how_to_use: "", badges: [], size: "" }}
+        initial={editProd || { name: "", tagline: "", short_desc: "", long_desc: "", price: 0, mrp: 0, image: "", stock: 100, active: true, is_combo: tab === "combos", ingredients: [], benefits: [], how_to_use: "", badges: [], size: "", sort_order: 999 }}
         products={products}
         onSave={saveProduct}/>
 
@@ -448,10 +449,14 @@ function ProductEditDialog({ open, onClose, initial, onSave, products }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label className="text-[11px]">Size</Label><Input value={p.size} onChange={e => setF("size", e.target.value)} placeholder="30 ml"/></div>
-            <div className="flex items-center gap-3 pt-5">
-              <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.active} onCheckedChange={v => setF("active", v)}/>Active</label>
-              <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.is_combo} onCheckedChange={v => setF("is_combo", v)}/>Combo</label>
+            <div>
+              <Label className="text-[11px]">Sort Order <span className="text-[#7B6D5A]">(lower = shown first)</span></Label>
+              <Input type="number" value={p.sort_order ?? 999} onChange={e => setF("sort_order", Number(e.target.value))} data-testid="prod-sort-order" placeholder="10, 20, 30..."/>
             </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.active} onCheckedChange={v => setF("active", v)}/>Active</label>
+            <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.is_combo} onCheckedChange={v => setF("is_combo", v)}/>Combo</label>
           </div>
           <ImageUploadField label="Primary Image *" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
           <div className="border-t border-[#E5E3DB] pt-3">
