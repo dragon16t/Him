@@ -15,7 +15,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
  * Default positions (auto-seeded): Digital Marketing Intern × 4, HR × 1,
  * Executive Sales (Part-time) × 2, Telecalling × 2.
  */
-export default function HiringPositionsPanel({ embedded = false }) {
+export default function HiringPositionsPanel({ embedded = false, onSelectPosition }) {
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);

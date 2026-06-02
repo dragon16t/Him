@@ -1334,8 +1334,8 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
             "next_repeat_order_date": (today + timedelta(days=35)).isoformat(),
             "updated_at": now
         }})
-    # Record revenue in finance ledger — always credit to CASH for delivered orders
-    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="cash", created_by=current_user['id'])
+    # Record revenue in finance ledger — credit to BANK (Delhivery settles COD payouts to seller's bank account)
+    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="bank", created_by=current_user['id'])
     return {"message": "Order delivered - commission credited"}
 
 @api_router.put("/orders/{order_id}/reject")
@@ -3432,8 +3432,8 @@ async def ship_and_deliver(order_id: str, current_user: dict = Depends(get_curre
         await db.commissions.insert_one(comm)
         coll_map = {"telecaller": "telecallers", "agent": "agents", "district_manager": "managers", "sales_manager": "sales_managers"}
         if cr in coll_map: await db[coll_map[cr]].update_one({"id": order['created_by']}, {"$inc": {"commission_earned": amt}})
-    # Revenue in finance — credit to CASH (delivery payments are received as cash; user transfers to bank manually)
-    pay_method = "cash"
+    # Revenue in finance — credit to BANK (Delhivery settles COD/prepaid into bank account)
+    pay_method = "bank"
     await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
     if settlement_amt > 0:
         await record_transaction("debit", "settlement_charge", settlement_amt, f"Settlement for {order_id}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
@@ -6221,8 +6221,8 @@ async def mark_order_delivered_inv(oid: str, background_tasks: BackgroundTasks, 
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": oid}, {"$set": {"status": "delivered", "delivered_at": now, "delivered_by": current_user['id'], "delivered_by_name": current_user.get('name',''), "updated_at": now}})
     # Trigger commission chain
-    # Delivered payment → credit to CASH (received from delivery agent)
-    pay_method = "cash"
+    # Delivered payment → credit to BANK (Delhivery settles into seller's bank account)
+    pay_method = "bank"
     await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {oid} delivered", reference_id=oid, method=pay_method, created_by=current_user['id'])
     creator_id = order.get('created_by', '')
     creator_role = order.get('created_by_role', '') or None
@@ -8245,6 +8245,40 @@ async def startup():
         )
     except Exception as _e:
         logger.warning(f"Store URL backfill failed: {_e}")
+    # Backfill: any order_revenue credit (or order_return debit) wrongly recorded as
+    # method=cash → flip to method=bank and rebalance cash/bank totals. Idempotent.
+    try:
+        rev_rows = await db.finance_ledger.find(
+            {"category": "order_revenue", "method": "cash", "type": "credit"},
+            {"_id": 0, "id": 1, "amount": 1}
+        ).to_list(100000)
+        ret_rows = await db.finance_ledger.find(
+            {"category": "order_return", "method": "cash", "type": "debit"},
+            {"_id": 0, "id": 1, "amount": 1}
+        ).to_list(100000)
+        rev_total = sum(r.get("amount", 0) for r in rev_rows)
+        ret_total = sum(r.get("amount", 0) for r in ret_rows)
+        if rev_rows:
+            await db.finance_ledger.update_many(
+                {"category": "order_revenue", "method": "cash", "type": "credit"},
+                {"$set": {"method": "bank"}}
+            )
+        if ret_rows:
+            await db.finance_ledger.update_many(
+                {"category": "order_return", "method": "cash", "type": "debit"},
+                {"$set": {"method": "bank"}}
+            )
+        if rev_total or ret_total:
+            # Revenue: was added to cash, should be in bank → move
+            # Return: was subtracted from cash, should be from bank → move
+            await db.finance_balance.update_one(
+                {"id": "main"},
+                {"$inc": {"cash": -(rev_total - ret_total), "bank": (rev_total - ret_total)}},
+                upsert=True,
+            )
+            logger.info(f"Order revenue cash→bank migration: revenue rows={len(rev_rows)} (Rs.{rev_total}), return rows={len(ret_rows)} (Rs.{ret_total})")
+    except Exception as _e:
+        logger.warning(f"Order revenue cash→bank backfill failed: {_e}")
     # Performance: Create indexes
     await db.orders.create_index("status")
     await db.orders.create_index("created_by")

@@ -1423,7 +1423,7 @@ async def delhivery_sync_once():
                     if not existing_txn:
                         try:
                             from server import record_transaction as _record_txn
-                            pay_method = "cash"  # Delivered payment is always received as cash from the courier
+                            pay_method = "bank"  # Delhivery COD payout settles to seller's bank account
                             await _record_txn(
                                 "credit", "order_revenue", o.get("total_amount", 0),
                                 f"Order {o['id']} delivered (auto-sync) - {o.get('customer_name','')}",
@@ -1439,7 +1439,7 @@ async def delhivery_sync_once():
                         if not already_reversed:
                             try:
                                 from server import record_transaction as _record_txn
-                                pay_method = "cash"  # Reverse the same way it was credited
+                                pay_method = "bank"  # Reverse the same way it was credited
                                 await _record_txn(
                                     "debit", "order_return", o.get("total_amount", 0),
                                     f"Order {o['id']} returned/RTO (auto-sync) - {o.get('customer_name','')}",
