@@ -290,15 +290,17 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     # ===== Delhivery Contract + Customer Identification (DIRECTLY UNDER FROM ADDRESS) =====
     contract_no = "41377633" if is_cod else "41196151"
     cid = "1261445435"
-    contract_under_from_y = from_y - 12 - len(from_lines) * 8 - 4
+    contract_under_from_y = from_y - 12 - len(from_lines) * 8 - 6
     c.setFillColor(HexColor("#1F2937"))
-    c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(x0 + pad, contract_under_from_y, f"Contract No: {contract_no}    |    Customer Identification: {cid}")
+    # Auto-shrink font so it fits within the label width
+    cid_text = f"Contract No: {contract_no}  |  Customer Identification: {cid}"
+    cid_font_size = 9
+    while cid_font_size >= 7 and c.stringWidth(cid_text, "Helvetica-Bold", cid_font_size) > (w - 2 * pad):
+        cid_font_size -= 0.25
+    c.setFont("Helvetica-Bold", cid_font_size)
+    c.drawString(x0 + pad, contract_under_from_y, cid_text)
 
-    # ===== Divider (moved further down so it doesn't cross the DELIVER TO header) =====
-    c.setStrokeColor(HexColor("#E5E3DB"))
-    c.setLineWidth(0.4)
-    c.line(x0 + pad, TO_TOP + 5 * mm, x0 + w - pad, TO_TOP + 5 * mm)
+    # (Divider above DELIVER TO removed per request — extra whitespace is the visual separator now.)
 
     # ===== TO block — drawn within [TO_BOTTOM, TO_TOP] window =====
     cy = TO_TOP
