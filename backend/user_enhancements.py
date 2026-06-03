@@ -147,10 +147,35 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
                       "cancelled_at": datetime.now(timezone.utc).isoformat(),
                       "cancel_reason": f"Order deleted: {reason}"}}
         )
+        # Reverse revenue + return rows in finance ledger so cash/bank balances are correct
+        try:
+            from server import record_transaction as _rt
+            rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
+            if rev:
+                already_reversed = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_deleted_reversal", "type": "debit"})
+                if not already_reversed:
+                    await _rt("debit", "order_deleted_reversal", rev.get("amount", 0),
+                              f"Order {order_id} deleted — reversing revenue", reference_id=order_id,
+                              method=rev.get("method", "bank"), created_by=current_user['id'])
+        except Exception as _e:
+            logger.warning(f"finance reversal on delete failed for {order_id}: {_e}")
+        # Reset the linked lead so it stops showing "ORDER PLACED" / "delivered" on TC/SM dashboards
+        lead_id = order.get("lead_id")
+        if lead_id:
+            await db.leads.update_one({"id": lead_id}, {"$set": {
+                "status": "interested",
+                "last_order_id": "",
+                "last_order_amount": 0,
+                "last_order_products": "",
+                "last_order_date": "",
+                "next_repeat_order_date": "",
+                "next_relationship_date": "",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }})
         await log_audit("delete_order", "order", order_id, current_user['id'],
                         current_user.get('name', ''),
                         f"Order soft-deleted (Rs.{order.get('total_amount', 0)}) — reason: {reason}")
-        return {"message": "Order deleted", "order_id": order_id}
+        return {"message": "Order deleted — finance reversed, lead unlinked", "order_id": order_id}
 
     @api_router.post("/orders/{order_id}/restore")
     async def restore_order(order_id: str, current_user: dict = Depends(get_current_user)):

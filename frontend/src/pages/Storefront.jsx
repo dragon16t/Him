@@ -200,27 +200,47 @@ function StoreHome({ slug, meta, products }) {
       {/* HERO CARD */}
       <section className="max-w-2xl mx-auto px-4 pt-4">
         <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#F0F9F4] to-white border border-[#E5F0E8]">
-          <div className="relative z-10 p-6 pr-32">
+          <div className="relative z-10 p-6">
             <div className="inline-flex items-center gap-1.5 bg-[#DCFCE7] text-[#15803D] text-[10px] tracking-[0.18em] uppercase px-3 py-1 rounded-full mb-4" data-testid="hero-eyebrow">
               <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]"/> Anti-Aging
             </div>
-            <h1 className="font-serif text-[26px] leading-[1.15] text-[#1F2937] mb-1">Visible firming</h1>
-            <h1 className="font-serif italic text-[26px] leading-[1.15] text-[#16A34A] mb-3">& youthful glow.</h1>
-            <p className="text-[12px] text-[#6B7280] leading-relaxed mb-5 max-w-[200px]">{meta?.settings?.hero_subtitle?.slice(0, 110) || "Clinical-grade Retinol, Vitamin C and Peptides — formulated for Indian skin to reduce fine lines and brighten in 4 weeks."}</p>
-            <div className="flex flex-col gap-2 max-w-[240px]">
-              <Button onClick={() => navigate(`/store/${slug}/products`)} className="bg-[#15803D] hover:bg-[#166534] text-white rounded-full px-5 h-10 text-[13px]" data-testid="hero-cta">
+            <h1 className="font-serif text-[28px] leading-[1.15] text-[#1F2937] mb-1">{meta?.settings?.hero_title || "Visible firming"}</h1>
+            <h1 className="font-serif italic text-[28px] leading-[1.15] text-[#16A34A] mb-3">{meta?.settings?.hero_title_accent || "& youthful glow."}</h1>
+            <p className="text-[13px] text-[#6B7280] leading-relaxed mb-5">{meta?.settings?.hero_subtitle || "Clinical-grade Retinol, Vitamin C and Peptides — formulated for Indian skin to reduce fine lines and brighten in 4 weeks."}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => navigate(`/store/${slug}/products`)} className="bg-[#15803D] hover:bg-[#166534] text-white rounded-full px-5 h-11 text-[13px]" data-testid="hero-cta">
                 Shop the routine <ArrowRight className="w-4 h-4 ml-1"/>
               </Button>
-              <Button variant="outline" onClick={() => navigate(`/store/${slug}/products?tab=combos`)} className="bg-white border-[#E5E7EB] rounded-full px-5 h-10 text-[13px] text-[#15803D]">
-                <Sparkles className="w-4 h-4 mr-1"/>Free Skin Analysis
+              <Button variant="outline" onClick={() => navigate(`/store/${slug}/products?tab=combos`)} className="bg-white border-[#E5E7EB] rounded-full px-5 h-11 text-[13px] text-[#15803D]" data-testid="hero-combos-cta">
+                <Sparkles className="w-4 h-4 mr-1"/>Shop Combos
               </Button>
             </div>
           </div>
-          <div className="absolute right-0 top-0 bottom-0 w-[40%] z-0">
-            <img src={meta?.settings?.hero_image || products[0]?.image} alt="hero" className="w-full h-full object-cover opacity-90"/>
-          </div>
         </div>
       </section>
+
+      {/* BANNER CAROUSEL — admin-uploaded promo banners, scrolls sideways */}
+      {Array.isArray(meta?.settings?.banners) && meta.settings.banners.length > 0 && (
+        <section className="max-w-2xl mx-auto px-4 pt-4" data-testid="banner-carousel">
+          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+            {meta.settings.banners.map((b, idx) => {
+              const url = typeof b === "string" ? b : b?.image;
+              const link = typeof b === "string" ? "" : (b?.link || "");
+              if (!url) return null;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => link && navigate(link.startsWith("/") ? link : `/store/${slug}${link.startsWith("/") ? link : "/" + link}`)}
+                  className="relative shrink-0 w-[88%] aspect-[16/9] snap-center overflow-hidden rounded-[20px] border border-[#E5E7EB] bg-[#F9FAFB]"
+                  data-testid={`banner-${idx}`}
+                >
+                  <img src={url} alt={`Banner ${idx + 1}`} className="w-full h-full object-cover"/>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* TRUST STRIP */}
       <section className="max-w-2xl mx-auto px-4 pt-5">
@@ -255,7 +275,7 @@ function StoreHome({ slug, meta, products }) {
           <div className="rounded-[24px] overflow-hidden shadow-xl cursor-pointer" onClick={() => navigate(`/store/${slug}/product/${featuredCombo.slug}`)} data-testid="featured-combo-card">
             {/* Photo on top */}
             <div className="aspect-[16/9] overflow-hidden bg-gradient-to-b from-[#F0F9F4] to-white">
-              <img src={featuredCombo.image} alt={featuredCombo.name} className="w-full h-full object-cover"/>
+              <img src={featuredCombo.card_image || featuredCombo.image} alt={featuredCombo.name} className="w-full h-full object-cover"/>
             </div>
             {/* Dark green body */}
             <div className="relative bg-gradient-to-br from-[#0F5132] via-[#0A3D2E] to-[#052E22] text-white p-6 pt-9">
@@ -459,7 +479,7 @@ function ProductCard({ p, slug }) {
         <button className="absolute top-2.5 right-2.5 z-10 w-7 h-7 rounded-full bg-white shadow-sm flex items-center justify-center" onClick={e => {e.stopPropagation(); navigator.share?.({title: p.name, url: window.location.origin + `/store/${slug}/product/${p.slug}`}) || navigator.clipboard.writeText(window.location.origin + `/store/${slug}/product/${p.slug}`); toast.success("Link copied");}} data-testid={`share-${p.slug}`}>
           <Share2 className="w-3.5 h-3.5 text-[#6B7280]"/>
         </button>
-        <img src={p.image} alt={p.name} className="w-full h-full object-cover"/>
+        <img src={p.card_image || p.image} alt={p.name} className="w-full h-full object-cover"/>
       </div>
       <div className="p-3 flex-1 flex flex-col">
         <div className="text-[9px] tracking-[0.15em] uppercase text-[#16A34A] font-medium mb-0.5">Celesta Glow</div>

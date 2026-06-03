@@ -226,11 +226,10 @@ export default function StoreAdminPanel() {
             <h4 className="font-heading text-[14px] text-[#2C3531] mb-1">Homepage Content</h4>
             <div><Label className="text-[11px]">Announcement Bar (top of page)</Label><Input value={settings.announcement_bar || ""} onChange={e => setSettings({ ...settings, announcement_bar: e.target.value })}/></div>
             <div className="grid md:grid-cols-2 gap-3">
-              <div><Label className="text-[11px]">Hero Title</Label><Input value={settings.hero_title || ""} onChange={e => setSettings({ ...settings, hero_title: e.target.value })}/></div>
-              <div><Label className="text-[11px]">Hero CTA Button</Label><Input value={settings.hero_cta || ""} onChange={e => setSettings({ ...settings, hero_cta: e.target.value })}/></div>
+              <div><Label className="text-[11px]">Hero Title (plain)</Label><Input value={settings.hero_title || ""} onChange={e => setSettings({ ...settings, hero_title: e.target.value })} placeholder="Visible firming"/></div>
+              <div><Label className="text-[11px]">Hero Title Accent (italic green)</Label><Input value={settings.hero_title_accent || ""} onChange={e => setSettings({ ...settings, hero_title_accent: e.target.value })} placeholder="&amp; youthful glow."/></div>
             </div>
             <div><Label className="text-[11px]">Hero Subtitle</Label><Textarea rows={2} value={settings.hero_subtitle || ""} onChange={e => setSettings({ ...settings, hero_subtitle: e.target.value })}/></div>
-            <ImageUploadField label="Hero Image" value={settings.hero_image} onChange={(v) => setSettings({ ...settings, hero_image: v })} testIdPrefix="hero-img"/>
             <div><Label className="text-[11px]">Offer Banner (mid-page)</Label><Input value={settings.offer_banner || ""} onChange={e => setSettings({ ...settings, offer_banner: e.target.value })}/></div>
             <div><Label className="text-[11px]">Founder Note (footer)</Label><Textarea rows={2} value={settings.founder_note || ""} onChange={e => setSettings({ ...settings, founder_note: e.target.value })}/></div>
             <div>
@@ -293,6 +292,60 @@ export default function StoreAdminPanel() {
                 className="rounded-full text-[11px] h-8"
                 data-testid="carousel-add-btn"
               ><Plus className="w-3 h-3 mr-1"/>Add Image</Button>
+            </div>
+          </div>
+
+          {/* Promo Banners — horizontal-scroll banner carousel below the hero */}
+          <div className="bg-[#FBF7F0] border border-[#E5E3DB] p-5 rounded space-y-3" data-testid="banners-mgr">
+            <h4 className="font-heading text-[14px] text-[#2C3531] mb-1">Promo Banners (below hero — scroll sideways)</h4>
+            <p className="text-[11px] text-[#7B6D5A]">Upload up to 10 banner images. They appear right under the hero on the storefront home and scroll horizontally on swipe. Optional link is the slug to open inside the storefront (e.g. <code>/products?tab=combos</code>).</p>
+            <div className="space-y-2">
+              {((settings.banners) || []).map((b, i) => {
+                const cur = typeof b === "string" ? { image: b, link: "" } : (b || { image: "", link: "" });
+                return (
+                  <div key={i} className="flex flex-col sm:flex-row gap-2 border border-[#E5E3DB] rounded p-3 bg-white" data-testid={`banner-row-${i}`}>
+                    <div className="flex-1">
+                      <ImageUploadField
+                        value={cur.image || ""}
+                        onChange={(v) => {
+                          const arr = [...(settings.banners || [])];
+                          arr[i] = { ...cur, image: v };
+                          setSettings({ ...settings, banners: arr });
+                        }}
+                        testIdPrefix={`banner-${i}`}
+                      />
+                      <Input
+                        value={cur.link || ""}
+                        onChange={e => {
+                          const arr = [...(settings.banners || [])];
+                          arr[i] = { ...cur, link: e.target.value };
+                          setSettings({ ...settings, banners: arr });
+                        }}
+                        placeholder="/products?tab=combos (optional click-through)"
+                        className="mt-2 text-[12px]"
+                        data-testid={`banner-link-${i}`}
+                      />
+                    </div>
+                    <Button
+                      type="button" size="sm" variant="outline"
+                      onClick={() => {
+                        const arr = [...(settings.banners || [])];
+                        arr.splice(i, 1);
+                        setSettings({ ...settings, banners: arr });
+                      }}
+                      className="rounded-full text-[11px] h-8 text-red-600 border-red-300 sm:w-24 self-start"
+                      data-testid={`banner-del-${i}`}
+                    ><Trash2 className="w-3 h-3 mr-1"/>Remove</Button>
+                  </div>
+                );
+              })}
+              <Button
+                type="button" size="sm" variant="outline"
+                onClick={() => setSettings({ ...settings, banners: [...(settings.banners || []), { image: "", link: "" }] })}
+                disabled={(settings.banners || []).length >= 10}
+                className="rounded-full text-[11px] h-8"
+                data-testid="banner-add-btn"
+              ><Plus className="w-3 h-3 mr-1"/>Add Banner</Button>
             </div>
           </div>
 
@@ -458,7 +511,8 @@ function ProductEditDialog({ open, onClose, initial, onSave, products }) {
             <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.active} onCheckedChange={v => setF("active", v)}/>Active</label>
             <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.is_combo} onCheckedChange={v => setF("is_combo", v)}/>Combo</label>
           </div>
-          <ImageUploadField label="Primary Image *" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
+          <ImageUploadField label="Primary Image * (used on product detail page)" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
+          <ImageUploadField label="Home Card Image (shown on storefront home + combo grid — defaults to Primary if blank)" value={p.card_image || ""} onChange={(v) => setF("card_image", v)} testIdPrefix="prod-card-image"/>
           <div className="border-t border-[#E5E3DB] pt-3">
             <Label className="text-[11px] mb-2 block">Gallery Images (up to 5 additional)</Label>
             <MultiImageUploader

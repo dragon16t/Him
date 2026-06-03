@@ -245,6 +245,27 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.setFont("Helvetica-Oblique", 6.5)
     c.drawString(x0 + pad, y0 + h - 12 * mm, COMPANY.get("tagline", "Premium Beauty")[:50])
 
+    # ===== Payment banner — BIG "COD Rs.XXX" or "PREPAID" on top right =====
+    pay_type = (order.get("payment_type") or "cod").lower()
+    is_cod = pay_type == "cod"
+    amt = order.get("total_amount", 0) or 0
+    if is_cod:
+        banner_text = f"COD  Rs.{amt:.0f}"
+        banner_color = HexColor("#B91C1C")  # bold red
+    else:
+        banner_text = "PREPAID"
+        banner_color = HexColor("#15803D")  # green
+    c.setFillColor(banner_color)
+    c.setFont("Helvetica-Bold", 16)
+    btw = c.stringWidth(banner_text, "Helvetica-Bold", 16)
+    # Right-aligned inside header, white background pill
+    bx = x0 + w - pad - btw - 4
+    by = y0 + h - 9 * mm - 2
+    c.setFillColor("white")
+    c.roundRect(bx - 4, by - 1, btw + 8, 5.5 * mm, 1.5 * mm, stroke=0, fill=1)
+    c.setFillColor(banner_color)
+    c.drawString(bx, by + 1.5 * mm, banner_text)
+
     # ===== FROM block =====
     from_y = y0 + h - HEADER_H - 4
     c.setFillColor(HexColor("#59615D"))
@@ -331,6 +352,15 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(accent)
     c.drawString(x0 + pad, max(cy, TO_BOTTOM + 4), "Phone: " + phone_str[:20])
+
+    # ===== Delhivery Contract + Customer Identification (below address) =====
+    # COD orders use a different contract number than prepaid; CID is shared.
+    contract_no = "41377633" if is_cod else "41196151"
+    cid = "1261445435"
+    c.setFillColor(HexColor("#1F2937"))
+    c.setFont("Helvetica", 6.5)
+    contract_y = max(cy - 13, TO_BOTTOM - 2)
+    c.drawString(x0 + pad, contract_y, f"Contract No: {contract_no}    |    Customer Identification: {cid}")
 
     # ===== Bottom strip — Order ID + Payment + AWB + Total =====
     c.setFillColor(primary)

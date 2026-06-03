@@ -39,16 +39,28 @@ def register(router, db, get_current_user, helpers):
     async def admin_update_store_settings(data: dict, current_user: dict = Depends(get_current_user)):
         ensure_admin(current_user)
         allowed = {"razorpay_key_id", "razorpay_key_secret", "razorpay_enabled", "cod_enabled",
-                   "hero_title", "hero_subtitle", "hero_cta", "hero_image",
+                   "hero_title", "hero_title_accent", "hero_subtitle", "hero_cta", "hero_image",
                    "announcement_bar", "trust_badges", "offer_banner", "founder_note", "testimonials",
                    "home_carousel_images", "home_faqs", "product_faqs", "public_base_url",
-                   "bottom_banner_image", "bottom_banner_caption"}
+                   "bottom_banner_image", "bottom_banner_caption", "banners"}
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         # Don't overwrite the secret with empty string
         if "razorpay_key_secret" in updates and not updates["razorpay_key_secret"]:
             updates.pop("razorpay_key_secret")
         if "home_carousel_images" in updates:
             updates["home_carousel_images"] = validate_carousel_images(updates["home_carousel_images"])
+        if "banners" in updates:
+            # Accept array of {image, link?} OR plain URLs; clamp to 10 entries
+            raw = updates["banners"] or []
+            if not isinstance(raw, list):
+                raise HTTPException(400, "banners must be an array")
+            out = []
+            for b in raw[:10]:
+                if isinstance(b, str) and b.strip():
+                    out.append({"image": b.strip()[:500], "link": ""})
+                elif isinstance(b, dict) and b.get("image"):
+                    out.append({"image": str(b["image"])[:500], "link": str(b.get("link", ""))[:300]})
+            updates["banners"] = out
         if "home_faqs" in updates:
             updates["home_faqs"] = validate_faqs(updates["home_faqs"], "home_faqs")
         if "product_faqs" in updates:
@@ -109,6 +121,7 @@ def register(router, db, get_current_user, helpers):
             "price": int(data.get("price", 0) or 0),
             "mrp": int(data.get("mrp", 0) or 0),
             "image": data.get("image", ""),
+            "card_image": data.get("card_image", ""),
             "gallery": data.get("gallery") or [],
             "badges": data.get("badges") or [],
             "size": data.get("size", ""),
@@ -130,7 +143,7 @@ def register(router, db, get_current_user, helpers):
     async def admin_update_product(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
         ensure_admin(current_user)
         allowed = {"name", "tagline", "short_desc", "long_desc", "ingredients", "how_to_use", "benefits",
-                   "price", "mrp", "image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
+                   "price", "mrp", "image", "card_image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
                    "stock", "active", "rating", "review_count", "sort_order"}
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "price" in updates: updates["price"] = int(updates["price"] or 0)

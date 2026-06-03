@@ -1159,6 +1159,18 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     order.pop("_id", None)
     if order['lead_id']:
         await db.leads.update_one({"id": order['lead_id']}, {"$set": {"status": "order_created", "updated_at": datetime.now(timezone.utc).isoformat()}})
+    # Prepaid orders → credit revenue to BANK immediately on order creation
+    # (customer has already paid online/UPI). COD is credited only after delivery sync.
+    pt = (data.get("payment_type") or "cod").lower()
+    if pt in ("prepaid", "upi", "online", "card", "netbanking"):
+        try:
+            await record_transaction(
+                "credit", "order_revenue", order["total_amount"],
+                f"Order {order_id} prepaid ({pt}) - {order['customer_name']}",
+                reference_id=order_id, method="bank", created_by=creator_id or "system",
+            )
+        except Exception as _e:
+            logger.warning(f"prepaid revenue record failed for {order_id}: {_e}")
     return {"order": order, "message": "Order created successfully"}
 
 def _can_edit_order(order: dict, user: dict) -> tuple[bool, str]:
@@ -1334,8 +1346,11 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
             "next_repeat_order_date": (today + timedelta(days=35)).isoformat(),
             "updated_at": now
         }})
-    # Record revenue in finance ledger — credit to BANK (Delhivery settles COD payouts to seller's bank account)
-    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="bank", created_by=current_user['id'])
+    # Record revenue in finance ledger — credit to BANK (Delhivery settles COD payouts to seller's bank account).
+    # Skip if a credit was already recorded (e.g., prepaid was credited at order creation).
+    existing_rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
+    if not existing_rev:
+        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="bank", created_by=current_user['id'])
     return {"message": "Order delivered - commission credited"}
 
 @api_router.put("/orders/{order_id}/reject")
@@ -3433,8 +3448,11 @@ async def ship_and_deliver(order_id: str, current_user: dict = Depends(get_curre
         coll_map = {"telecaller": "telecallers", "agent": "agents", "district_manager": "managers", "sales_manager": "sales_managers"}
         if cr in coll_map: await db[coll_map[cr]].update_one({"id": order['created_by']}, {"$inc": {"commission_earned": amt}})
     # Revenue in finance — credit to BANK (Delhivery settles COD/prepaid into bank account)
+    # Skip if a credit already exists (e.g., prepaid credited at creation).
     pay_method = "bank"
-    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
+    existing_rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
+    if not existing_rev:
+        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
     if settlement_amt > 0:
         await record_transaction("debit", "settlement_charge", settlement_amt, f"Settlement for {order_id}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
     # Update lead
@@ -6221,9 +6239,12 @@ async def mark_order_delivered_inv(oid: str, background_tasks: BackgroundTasks, 
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": oid}, {"$set": {"status": "delivered", "delivered_at": now, "delivered_by": current_user['id'], "delivered_by_name": current_user.get('name',''), "updated_at": now}})
     # Trigger commission chain
-    # Delivered payment → credit to BANK (Delhivery settles into seller's bank account)
+    # Delivered payment → credit to BANK (Delhivery settles into seller's bank account).
+    # Skip if a credit already exists (prepaid).
     pay_method = "bank"
-    await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {oid} delivered", reference_id=oid, method=pay_method, created_by=current_user['id'])
+    existing_rev = await db.finance_ledger.find_one({"reference_id": oid, "category": "order_revenue", "type": "credit"})
+    if not existing_rev:
+        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {oid} delivered", reference_id=oid, method=pay_method, created_by=current_user['id'])
     creator_id = order.get('created_by', '')
     creator_role = order.get('created_by_role', '') or None
     if not creator_role:

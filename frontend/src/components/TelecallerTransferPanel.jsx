@@ -28,27 +28,12 @@ export default function TelecallerTransferPanel() {
   const loadData = async () => {
     try {
       const [tcRes, smRes, histRes] = await Promise.all([
-        axios.get(`${API}/admin/users?role=telecallers`).catch(() => ({ data: { users: [] } })),
-        axios.get(`${API}/admin/users?role=sales_managers`).catch(() => ({ data: { users: [] } })),
+        axios.get(`${API}/telecallers/all`).catch(() => ({ data: { telecallers: [] } })),
+        axios.get(`${API}/sales-managers`).catch(() => ({ data: { sales_managers: [] } })),
         axios.get(`${API}/admin/telecaller-transfers`).catch(() => ({ data: { transfers: [] } })),
       ]);
-      // Fallback if admin/users isn't shaped that way — use a generic list endpoint
-      const tcList = tcRes.data?.users || tcRes.data?.telecallers || [];
-      const smList = smRes.data?.users || smRes.data?.sales_managers || [];
-      // If empty (different API shape), try fetching from all-users
-      if (tcList.length === 0) {
-        try {
-          const { data } = await axios.get(`${API}/admin/all-users`);
-          const all = data.users || [];
-          setTcs(all.filter(u => u.role === "telecaller"));
-          setSms(all.filter(u => u.role === "sales_manager"));
-        } catch {
-          setTcs([]); setSms([]);
-        }
-      } else {
-        setTcs(tcList);
-        setSms(smList);
-      }
+      setTcs(tcRes.data?.telecallers || tcRes.data?.users || []);
+      setSms(smRes.data?.sales_managers || smRes.data?.users || []);
       setHistory(histRes.data?.transfers || []);
     } catch (e) {
       toast.error("Failed to load transfer data");
