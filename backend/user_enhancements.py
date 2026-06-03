@@ -23,7 +23,7 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
     # ---------- 1. Pickup Locations ----------
     DEFAULT_PICKUP_LOCATIONS = [
         {"id": "pickup-office", "name": "Office",
-         "address": "Celesta Glow HQ, Cherutti Road, Calicut, Kerala 673032",
+         "address": "Veegal Enterprises, Nechkadan Tower 3rd Floor, Eranhipalam, Kerala 673006",
          "is_default": True, "active": True},
         {"id": "pickup-parakkal", "name": "Parakkal",
          "address": "Parakkal Warehouse, Calicut, Kerala",

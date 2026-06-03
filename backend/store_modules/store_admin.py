@@ -42,7 +42,7 @@ def register(router, db, get_current_user, helpers):
                    "hero_title", "hero_title_accent", "hero_subtitle", "hero_cta", "hero_image",
                    "announcement_bar", "trust_badges", "offer_banner", "founder_note", "testimonials",
                    "home_carousel_images", "home_faqs", "product_faqs", "public_base_url",
-                   "bottom_banner_image", "bottom_banner_caption", "banners"}
+                   "bottom_banner_image", "bottom_banner_caption", "banners", "banners_enabled"}
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         # Don't overwrite the secret with empty string
         if "razorpay_key_secret" in updates and not updates["razorpay_key_secret"]:
@@ -122,6 +122,7 @@ def register(router, db, get_current_user, helpers):
             "mrp": int(data.get("mrp", 0) or 0),
             "image": data.get("image", ""),
             "card_image": data.get("card_image", ""),
+            "home_image": data.get("home_image", ""),
             "gallery": data.get("gallery") or [],
             "badges": data.get("badges") or [],
             "size": data.get("size", ""),
@@ -143,7 +144,7 @@ def register(router, db, get_current_user, helpers):
     async def admin_update_product(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
         ensure_admin(current_user)
         allowed = {"name", "tagline", "short_desc", "long_desc", "ingredients", "how_to_use", "benefits",
-                   "price", "mrp", "image", "card_image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
+                   "price", "mrp", "image", "card_image", "home_image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
                    "stock", "active", "rating", "review_count", "sort_order"}
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "price" in updates: updates["price"] = int(updates["price"] or 0)

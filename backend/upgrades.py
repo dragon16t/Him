@@ -245,7 +245,7 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.setFont("Helvetica-Oblique", 6.5)
     c.drawString(x0 + pad, y0 + h - 12 * mm, COMPANY.get("tagline", "Premium Beauty")[:50])
 
-    # ===== Payment banner — BIG "COD Rs.XXX" or "PREPAID" on top right =====
+    # ===== Payment banner — "COD Rs.XXX" or "PREPAID" pill, fits inside header strip =====
     pay_type = (order.get("payment_type") or "cod").lower()
     is_cod = pay_type == "cod"
     amt = order.get("total_amount", 0) or 0
@@ -255,16 +255,21 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     else:
         banner_text = "PREPAID"
         banner_color = HexColor("#15803D")  # green
-    c.setFillColor(banner_color)
-    c.setFont("Helvetica-Bold", 16)
-    btw = c.stringWidth(banner_text, "Helvetica-Bold", 16)
-    # Right-aligned inside header, white background pill
-    bx = x0 + w - pad - btw - 4
-    by = y0 + h - 9 * mm - 2
+    # Auto-size font down so the pill always fits within (HEADER right half) width
+    pill_max_w = (w / 2) - pad - 4
+    font_size = 13
+    while font_size >= 9 and c.stringWidth(banner_text, "Helvetica-Bold", font_size) > (pill_max_w - 10):
+        font_size -= 0.5
+    btw = c.stringWidth(banner_text, "Helvetica-Bold", font_size)
+    pill_w = btw + 10
+    pill_h = HEADER_H - 4 * mm  # fit comfortably inside header
+    bx = x0 + w - pad - pill_w
+    by = y0 + h - 2 * mm - pill_h
     c.setFillColor("white")
-    c.roundRect(bx - 4, by - 1, btw + 8, 5.5 * mm, 1.5 * mm, stroke=0, fill=1)
+    c.roundRect(bx, by, pill_w, pill_h, 2 * mm, stroke=0, fill=1)
     c.setFillColor(banner_color)
-    c.drawString(bx, by + 1.5 * mm, banner_text)
+    c.setFont("Helvetica-Bold", font_size)
+    c.drawString(bx + 5, by + (pill_h - font_size) / 2 + 1, banner_text)
 
     # ===== FROM block =====
     from_y = y0 + h - HEADER_H - 4
@@ -273,18 +278,27 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.drawString(x0 + pad, from_y - 4, "FROM:")
     c.setFont("Helvetica", 7)
     c.setFillColor("black")
-    for i, line in enumerate([
+    from_lines = [
         COMPANY.get("name", "Celesta Glow"),
         COMPANY.get("address_line1", ""),
         COMPANY.get("address_line2", ""),
         "Phone: " + COMPANY.get("phone", ""),
-    ]):
+    ]
+    for i, line in enumerate(from_lines):
         c.drawString(x0 + pad, from_y - 12 - i * 8, line[:55])
 
-    # ===== Divider =====
+    # ===== Delhivery Contract + Customer Identification (DIRECTLY UNDER FROM ADDRESS) =====
+    contract_no = "41377633" if is_cod else "41196151"
+    cid = "1261445435"
+    contract_under_from_y = from_y - 12 - len(from_lines) * 8 - 4
+    c.setFillColor(HexColor("#1F2937"))
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(x0 + pad, contract_under_from_y, f"Contract No: {contract_no}    |    Customer Identification: {cid}")
+
+    # ===== Divider (moved further down so it doesn't cross the DELIVER TO header) =====
     c.setStrokeColor(HexColor("#E5E3DB"))
     c.setLineWidth(0.4)
-    c.line(x0 + pad, TO_TOP + 2 * mm, x0 + w - pad, TO_TOP + 2 * mm)
+    c.line(x0 + pad, TO_TOP + 5 * mm, x0 + w - pad, TO_TOP + 5 * mm)
 
     # ===== TO block — drawn within [TO_BOTTOM, TO_TOP] window =====
     cy = TO_TOP
@@ -352,15 +366,6 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(accent)
     c.drawString(x0 + pad, max(cy, TO_BOTTOM + 4), "Phone: " + phone_str[:20])
-
-    # ===== Delhivery Contract + Customer Identification (below address) =====
-    # COD orders use a different contract number than prepaid; CID is shared.
-    contract_no = "41377633" if is_cod else "41196151"
-    cid = "1261445435"
-    c.setFillColor(HexColor("#1F2937"))
-    c.setFont("Helvetica", 6.5)
-    contract_y = max(cy - 13, TO_BOTTOM - 2)
-    c.drawString(x0 + pad, contract_y, f"Contract No: {contract_no}    |    Customer Identification: {cid}")
 
     # ===== Bottom strip — Order ID + Payment + AWB + Total =====
     c.setFillColor(primary)

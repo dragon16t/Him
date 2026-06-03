@@ -295,10 +295,22 @@ export default function StoreAdminPanel() {
             </div>
           </div>
 
-          {/* Promo Banners — horizontal-scroll banner carousel below the hero */}
+          {/* Promo Banners — horizontal-scroll banner carousel between trust strip and featured combo */}
           <div className="bg-[#FBF7F0] border border-[#E5E3DB] p-5 rounded space-y-3" data-testid="banners-mgr">
-            <h4 className="font-heading text-[14px] text-[#2C3531] mb-1">Promo Banners (below hero — scroll sideways)</h4>
-            <p className="text-[11px] text-[#7B6D5A]">Upload up to 10 banner images. They appear right under the hero on the storefront home and scroll horizontally on swipe. Optional link is the slug to open inside the storefront (e.g. <code>/products?tab=combos</code>).</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-heading text-[14px] text-[#2C3531] mb-1">Promo Banners (position 4 — between trust strip &amp; featured combo)</h4>
+                <p className="text-[11px] text-[#7B6D5A]">Upload up to 10 banner images. Banners scroll sideways on the storefront home. The section is automatically hidden if no banners are uploaded, or if you switch it OFF below.</p>
+              </div>
+              <label className="flex items-center gap-2 text-[12px] shrink-0 ml-3">
+                <Switch
+                  checked={settings.banners_enabled !== false}
+                  onCheckedChange={v => setSettings({ ...settings, banners_enabled: v })}
+                  data-testid="banners-enabled-toggle"
+                />
+                <span className="text-[#3B5249] font-medium">Show banners</span>
+              </label>
+            </div>
             <div className="space-y-2">
               {((settings.banners) || []).map((b, i) => {
                 const cur = typeof b === "string" ? { image: b, link: "" } : (b || { image: "", link: "" });
@@ -469,7 +481,7 @@ export default function StoreAdminPanel() {
 
       {/* Product edit / create */}
       <ProductEditDialog open={!!editProd || showNew} onClose={() => { setEditProd(null); setShowNew(false); }}
-        initial={editProd || { name: "", tagline: "", short_desc: "", long_desc: "", price: 0, mrp: 0, image: "", stock: 100, active: true, is_combo: tab === "combos", ingredients: [], benefits: [], how_to_use: "", badges: [], size: "", sort_order: 999 }}
+        initial={editProd || { name: "", tagline: "", short_desc: "", long_desc: "", price: 0, mrp: 0, image: "", card_image: "", home_image: "", stock: 100, active: true, is_combo: tab === "combos", ingredients: [], benefits: [], how_to_use: "", badges: [], size: "", sort_order: 999 }}
         products={products}
         onSave={saveProduct}/>
 
@@ -512,7 +524,10 @@ function ProductEditDialog({ open, onClose, initial, onSave, products }) {
             <label className="flex items-center gap-2 text-[12px]"><Switch checked={!!p.is_combo} onCheckedChange={v => setF("is_combo", v)}/>Combo</label>
           </div>
           <ImageUploadField label="Primary Image * (used on product detail page)" value={p.image} onChange={(v) => setF("image", v)} testIdPrefix="prod-image"/>
-          <ImageUploadField label="Home Card Image (shown on storefront home + combo grid — defaults to Primary if blank)" value={p.card_image || ""} onChange={(v) => setF("card_image", v)} testIdPrefix="prod-card-image"/>
+          <ImageUploadField label="Home Card Image (small card on storefront home + sub-combo card — defaults to Primary if blank)" value={p.card_image || ""} onChange={(v) => setF("card_image", v)} testIdPrefix="prod-card-image"/>
+          {!!p.is_combo && (
+            <ImageUploadField label="Combo Home Image (large featured combo on homepage — defaults to Card / Primary if blank)" value={p.home_image || ""} onChange={(v) => setF("home_image", v)} testIdPrefix="prod-home-image"/>
+          )}
           <div className="border-t border-[#E5E3DB] pt-3">
             <Label className="text-[11px] mb-2 block">Gallery Images (up to 5 additional)</Label>
             <MultiImageUploader

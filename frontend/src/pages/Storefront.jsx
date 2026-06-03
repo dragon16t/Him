@@ -219,28 +219,7 @@ function StoreHome({ slug, meta, products }) {
         </div>
       </section>
 
-      {/* BANNER CAROUSEL — admin-uploaded promo banners, scrolls sideways */}
-      {Array.isArray(meta?.settings?.banners) && meta.settings.banners.length > 0 && (
-        <section className="max-w-2xl mx-auto px-4 pt-4" data-testid="banner-carousel">
-          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
-            {meta.settings.banners.map((b, idx) => {
-              const url = typeof b === "string" ? b : b?.image;
-              const link = typeof b === "string" ? "" : (b?.link || "");
-              if (!url) return null;
-              return (
-                <button
-                  key={idx}
-                  onClick={() => link && navigate(link.startsWith("/") ? link : `/store/${slug}${link.startsWith("/") ? link : "/" + link}`)}
-                  className="relative shrink-0 w-[88%] aspect-[16/9] snap-center overflow-hidden rounded-[20px] border border-[#E5E7EB] bg-[#F9FAFB]"
-                  data-testid={`banner-${idx}`}
-                >
-                  <img src={url} alt={`Banner ${idx + 1}`} className="w-full h-full object-cover"/>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* (Banner carousel moved to between trust strip and featured combo — admin-controlled, disabled by default until banners uploaded) */}
 
       {/* TRUST STRIP */}
       <section className="max-w-2xl mx-auto px-4 pt-5">
@@ -264,6 +243,31 @@ function StoreHome({ slug, meta, products }) {
         </div>
       </section>
 
+      {/* BANNER CAROUSEL — admin-uploaded promo banners (position 4: between trust strip and featured combo).
+          Hidden unless admin uploads at least one banner AND keeps banners_enabled !== false. */}
+      {meta?.settings?.banners_enabled !== false && Array.isArray(meta?.settings?.banners) &&
+       meta.settings.banners.filter(b => (typeof b === "string" ? b : b?.image)).length > 0 && (
+        <section className="max-w-2xl mx-auto px-4 pt-5" data-testid="banner-carousel">
+          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+            {meta.settings.banners.map((b, idx) => {
+              const url = typeof b === "string" ? b : b?.image;
+              const link = typeof b === "string" ? "" : (b?.link || "");
+              if (!url) return null;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => link && navigate(link.startsWith("/") ? `/store/${slug}${link}` : `/store/${slug}/${link}`)}
+                  className="relative shrink-0 w-[88%] aspect-[16/9] snap-center overflow-hidden rounded-[20px] border border-[#E5E7EB] bg-[#F9FAFB]"
+                  data-testid={`banner-${idx}`}
+                >
+                  <img src={url} alt={`Banner ${idx + 1}`} className="w-full h-full object-cover"/>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* FEATURED ANTI-AGING KIT (mandatory design) */}
       {featuredCombo && (
         <section className="max-w-2xl mx-auto px-4 pt-6">
@@ -275,7 +279,7 @@ function StoreHome({ slug, meta, products }) {
           <div className="rounded-[24px] overflow-hidden shadow-xl cursor-pointer" onClick={() => navigate(`/store/${slug}/product/${featuredCombo.slug}`)} data-testid="featured-combo-card">
             {/* Photo on top */}
             <div className="aspect-[16/9] overflow-hidden bg-gradient-to-b from-[#F0F9F4] to-white">
-              <img src={featuredCombo.card_image || featuredCombo.image} alt={featuredCombo.name} className="w-full h-full object-cover"/>
+              <img src={featuredCombo.home_image || featuredCombo.card_image || featuredCombo.image} alt={featuredCombo.name} className="w-full h-full object-cover"/>
             </div>
             {/* Dark green body */}
             <div className="relative bg-gradient-to-br from-[#0F5132] via-[#0A3D2E] to-[#052E22] text-white p-6 pt-9">

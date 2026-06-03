@@ -1023,7 +1023,7 @@ export default function HRManagerDashboard() {
               <p>• <b>Weekly Off:</b> Sunday</p>
               <p>• <b>Probation:</b> 3 months · <b>Notice Period:</b> 30 days</p>
               <p>• <b>Leave:</b> 12 CL + 12 SL + 12 EL per annum (pro-rata)</p>
-              <p>• <b>Company:</b> Veegal Enterprises LLP, Cherutti Road, Calicut, Kerala 673032</p>
+              <p>• <b>Company:</b> Veegal Enterprises, Nechkadan Tower 3rd Floor, Eranhipalam, Kerala 673006</p>
               <p>• <b>Contact:</b> +91 94461 25745 · manager@celestaglow.com</p>
             </div>
           </div></TabsContent>
@@ -1331,7 +1331,7 @@ export default function HRManagerDashboard() {
             <div><Label className="text-xs">Message</Label><Textarea value={emailForm.message} onChange={e=>setEmailForm(f=>({...f,message:e.target.value}))} className="rounded-xl min-h-[120px]" placeholder="Type your message here..."/></div>
           </>}
 
-          <p className="text-[10px] text-[#3B5249] bg-[#F9F8F6] p-2 rounded-lg">📄 Letter is generated on official Celesta Glow letterhead — Veegal Enterprises LLP, Cherutti Road, Calicut, Kerala 673032 · 📞 +91 94461 25745 · ✉ manager@celestaglow.com</p>
+          <p className="text-[10px] text-[#3B5249] bg-[#F9F8F6] p-2 rounded-lg">📄 Letter is generated on official Celesta Glow letterhead — Veegal Enterprises, Nechkadan Tower 3rd Floor, Eranhipalam, Kerala 673006 · 📞 +91 94461 25745 · ✉ manager@celestaglow.com</p>
           <Button onClick={handleSendEmail} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="send-email-btn"><Mail className="w-4 h-4 mr-1"/>Send {emailForm.template==="custom"?"Email":"Letter"}</Button>
         </div>
       </DialogContent></Dialog>

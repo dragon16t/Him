@@ -35,8 +35,8 @@ SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
 COMPANY = {
     "name": "Celesta Glow Private Limited",
     "tagline": "Premium Beauty • Wellness • Skincare",
-    "address_line1": "Veegal Enterprises LLP, Cherutti Road",
-    "address_line2": "Calicut, Kerala 673032, India",
+    "address_line1": "Veegal Enterprises, Nechkadan Tower 3rd Floor",
+    "address_line2": "Eranhipalam, Kerala 673006, India",
     "phone": "+91 94461 25745",
     "email": "manager@celestaglow.com",
     "website": "www.celestaglow.com",
