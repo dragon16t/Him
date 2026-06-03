@@ -436,11 +436,11 @@ export default function FinanceManagerDashboard() {
           {proofPath ? (
             <div className="space-y-3">
               <div className="bg-[#F9F8F6] rounded-xl overflow-hidden">
-                <img src={`${process.env.REACT_APP_BACKEND_URL}/api/files/${proofPath}`} alt="Payment proof" className="w-full max-h-96 object-contain" onError={(e)=>{e.target.style.display='none';e.target.nextSibling.style.display='block';}} data-testid="proof-image"/>
+                <img src={`${process.env.REACT_APP_BACKEND_URL}/api/files/${proofPath}?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} alt="Payment proof" className="w-full max-h-96 object-contain" onError={(e)=>{e.target.style.display='none';e.target.nextSibling.style.display='block';}} data-testid="proof-image"/>
                 <p className="text-center py-8 text-[#59615D] text-sm hidden">Unable to load image</p>
               </div>
               <div className="flex gap-2">
-                <a href={`${process.env.REACT_APP_BACKEND_URL}/api/files/${proofPath}`} target="_blank" rel="noreferrer" className="flex-1">
+                <a href={`${process.env.REACT_APP_BACKEND_URL}/api/files/${proofPath}?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} target="_blank" rel="noreferrer" className="flex-1">
                   <Button variant="outline" className="w-full rounded-full text-xs"><ExternalLink className="w-3 h-3 mr-1"/>Open in New Tab</Button>
                 </a>
               </div>

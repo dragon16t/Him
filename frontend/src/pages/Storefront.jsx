@@ -268,70 +268,8 @@ function StoreHome({ slug, meta, products }) {
         </section>
       )}
 
-      {/* FEATURED ANTI-AGING KIT (mandatory design) */}
-      {featuredCombo && (
-        <section className="max-w-2xl mx-auto px-4 pt-6">
-          <div className="flex justify-center mb-3">
-            <span className="inline-flex items-center gap-1.5 bg-[#FFF8E7] text-[#A16207] text-[10px] tracking-[0.18em] uppercase px-4 py-1.5 rounded-full">
-              <Sparkles className="w-3 h-3 text-[#D97706]"/> Flagship • Best Value <Sparkles className="w-3 h-3 text-[#D97706]"/>
-            </span>
-          </div>
-          <div className="rounded-[24px] overflow-hidden shadow-xl cursor-pointer" onClick={() => navigate(`/store/${slug}/product/${featuredCombo.slug}`)} data-testid="featured-combo-card">
-            {/* Photo on top */}
-            <div className="aspect-[16/9] overflow-hidden bg-gradient-to-b from-[#F0F9F4] to-white">
-              <img src={featuredCombo.home_image || featuredCombo.card_image || featuredCombo.image} alt={featuredCombo.name} className="w-full h-full object-cover"/>
-            </div>
-            {/* Dark green body */}
-            <div className="relative bg-gradient-to-br from-[#0F5132] via-[#0A3D2E] to-[#052E22] text-white p-6 pt-9">
-              {/* SAVE pill */}
-              {featuredCombo.mrp > featuredCombo.price && (
-                <div className="absolute -top-4 left-6">
-                  <span className="inline-flex items-center bg-gradient-to-r from-[#F59E0B] to-[#D97706] text-white text-[13px] font-bold px-5 py-2 rounded-full shadow-lg">
-                    SAVE ₹{featuredCombo.mrp - featuredCombo.price}
-                  </span>
-                </div>
-              )}
-
-              <h2 className="font-serif font-bold text-[26px] leading-tight mb-2 text-white">{featuredCombo.name.replace("Celesta Glow ", "")}</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed mb-4 max-w-[90%]">{featuredCombo.short_desc}</p>
-
-              {/* Rating */}
-              <div className="flex items-center gap-2 mb-4">
-                <div className="flex">{[...Array(5)].map((_,i) => <Star key={i} className="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]"/>)}</div>
-                <span className="text-[13px] font-medium">{featuredCombo.rating}</span>
-                <span className="text-[12px] text-white/60">|</span>
-                <span className="text-[12px] text-white/80">{featuredCombo.review_count?.toLocaleString()}+ reviews</span>
-              </div>
-
-              {/* What's Inside checklist */}
-              <div className="mb-5">
-                <div className="text-[10px] tracking-[0.22em] uppercase text-[#A7F3D0] mb-2.5">What's Inside</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {["Cleanser","Serum","Eye Cream","Night Cream","Sunscreen"].map((item, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 border border-[#A7F3D0]/40 rounded-full px-3 py-1 text-[11px] text-white">
-                      <Check className="w-3 h-3 text-[#A7F3D0]"/> {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Price */}
-              <div className="mb-5">
-                <div className="flex items-baseline gap-2">
-                  <span className="font-serif text-[36px] font-bold text-white">₹{featuredCombo.price.toLocaleString()}</span>
-                  <span className="text-[12px] text-white/70">all-inclusive</span>
-                </div>
-                <div className="text-[14px] text-white/50 line-through">₹{featuredCombo.mrp.toLocaleString()}</div>
-              </div>
-
-              {/* CTA */}
-              <Button onClick={(e) => { e.stopPropagation(); cart.add(featuredCombo); }} className="w-full h-12 bg-gradient-to-r from-[#FBBF24] via-[#F59E0B] to-[#FBBF24] hover:brightness-110 text-[#1F2937] font-semibold rounded-full text-[14px] shadow-lg" data-testid="featured-add-kit">
-                <ShoppingCart className="w-4 h-4 mr-2"/> Add Complete Kit <ArrowRight className="w-4 h-4 ml-1"/>
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
+      {/* (Featured Anti-Aging Kit hero section removed per admin request — combos now surface
+          only via the BESTSELLERS / All Products grid and the Combos tab.) */}
 
       {/* BESTSELLERS */}
       <section className="max-w-2xl mx-auto px-4 pt-8">

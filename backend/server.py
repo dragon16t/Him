@@ -3103,11 +3103,31 @@ async def upload_payment_proof(file: UploadFile = File(...), current_user: dict 
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @api_router.get("/files/{file_path:path}")
-async def download_file(file_path: str, current_user: dict = Depends(get_current_user)):
+async def download_file(file_path: str, request: Request):
+    """Serve a stored file artifact. Auth is enforced via either:
+       (a) Authorization: Bearer header (when fetched by axios), or
+       (b) ?token=<jwt> query string (when opened in a new browser tab via target="_blank").
+       The path itself is an unguessable storage key so a leak of the URL alone is low-risk.
+    """
+    token = None
+    auth_h = request.headers.get("Authorization", "") if request else ""
+    if auth_h.lower().startswith("bearer "):
+        token = auth_h.split(" ", 1)[1].strip()
+    if not token and request:
+        token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        if not payload.get("sub"):
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
     try:
         data, ct = get_object(file_path)
         return Response(content=data, media_type=ct)
-    except: raise HTTPException(status_code=404, detail="File not found")
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
 
 # ==================== AI ====================
 @api_router.post("/ai/parse-lead")
