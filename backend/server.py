@@ -3018,14 +3018,14 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
             "follow_ups": await db.leads.count_documents({"assigned_to": uid, "next_follow_up_date": today}),
             "repeat_orders": await db.leads.count_documents({"assigned_to": uid, "next_repeat_order_date": today}),
             "relationship_calls": await db.leads.count_documents({"assigned_to": uid, "next_relationship_date": today}),
-            "my_orders": await db.orders.count_documents({"created_by": uid}),
+            "my_orders": await db.orders.count_documents({"created_by": uid, "deleted": {"$ne": True}}),
             "pending_tasks": await db.tasks.count_documents({"assigned_to": uid, "status": "pending"})
         }
     elif role in ['district_manager','sales_manager']:
-        confirmed = await db.orders.find({"status":"confirmed"},{"_id":0,"total_amount":1}).to_list(1000)
+        confirmed = await db.orders.find({"status":"confirmed","deleted":{"$ne":True}},{"_id":0,"total_amount":1}).to_list(1000)
         stats = {
-            "total_orders": await db.orders.count_documents({}),
-            "pending_orders": await db.orders.count_documents({"status":"pending"}),
+            "total_orders": await db.orders.count_documents({"deleted":{"$ne":True}}),
+            "pending_orders": await db.orders.count_documents({"status":"pending","deleted":{"$ne":True}}),
             "active_agents": await db.agents.count_documents({"status":"active"}),
             "total_leads": await db.leads.count_documents({}),
             "total_revenue": round(sum(o.get("total_amount",0) for o in confirmed),2),
@@ -3035,12 +3035,12 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     elif role == 'agent':
         uid = current_user['id']
         today = date.today().isoformat()
-        my_dlv = await db.orders.find({"created_by":uid,"status":"delivered"},{"_id":0,"total_amount":1}).to_list(5000)
+        my_dlv = await db.orders.find({"created_by":uid,"status":"delivered","deleted":{"$ne":True}},{"_id":0,"total_amount":1}).to_list(5000)
         comms = await db.commissions.find({"user_id":uid},{"_id":0,"commission_amount":1}).to_list(5000)
         stats = {
             "total_sales": round(sum(o.get("total_amount",0) for o in my_dlv),2),
             "total_commission": round(sum(c.get("commission_amount",0) for c in comms),2),
-            "total_orders": await db.orders.count_documents({"created_by": uid}),
+            "total_orders": await db.orders.count_documents({"created_by": uid, "deleted":{"$ne":True}}),
             "repeat_visits": await db.leads.count_documents({"assigned_to": uid, "next_repeat_order_date": today}),
             "pending_tasks": await db.tasks.count_documents({"assigned_to": uid, "status": "pending"})
         }
