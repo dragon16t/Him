@@ -278,15 +278,25 @@ export default function BudgetingCalendar() {
           <div className="space-y-3 py-2">
             <div>
               <Label className="text-xs">Category *</Label>
-              <Select value={bForm.category} onValueChange={(v) => setBForm({ ...bForm, category: v })}>
-                <SelectTrigger className="rounded-xl" data-testid="budget-cat"><SelectValue placeholder="Pick an expense category" /></SelectTrigger>
-                <SelectContent>
-                  {expenseHeads.map(h => (
-                    <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-[#59615D] mt-1">Categories come from your Expense Heads — adding an expense in this category will reduce remaining budget automatically.</p>
+              <div className="flex gap-2">
+                <Select value={bForm.category && expenseHeads.some(h => h.name === bForm.category) ? bForm.category : ""} onValueChange={(v) => setBForm({ ...bForm, category: v })}>
+                  <SelectTrigger className="rounded-xl flex-1" data-testid="budget-cat"><SelectValue placeholder="Pick an expense head…" /></SelectTrigger>
+                  <SelectContent>
+                    {expenseHeads.map(h => (
+                      <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-[10px] text-[#59615D] self-center">or</span>
+              </div>
+              <Input
+                value={bForm.category}
+                onChange={(e) => setBForm({ ...bForm, category: e.target.value })}
+                placeholder="Or type a custom category (e.g. Diwali Promo)"
+                className="rounded-xl mt-2 text-[12px]"
+                data-testid="budget-cat-custom"
+              />
+              <p className="text-[10px] text-[#59615D] mt-1">Pick an Expense Head from the dropdown <b>or</b> type a one-off category for this budget cycle. Any expense logged with the same category name will reduce the remaining budget automatically.</p>
             </div>
             <div>
               <Label className="text-xs">Budget Amount (Rs.) *</Label>

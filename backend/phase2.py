@@ -355,6 +355,155 @@ async def gst_invoice(oid: str, current_user: dict = Depends(_auth)):
 
 
 # ========================================================================
+# Manual GST Invoice (SM enters shop + items + GST by hand)
+# ========================================================================
+def _manual_invoice_pdf(inv: dict) -> bytes:
+    """Build a printable GST invoice from a manual invoice doc with arbitrary
+    line items and per-line GST %. Layout matches the order-based invoice."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    primary = HexColor(COMPANY.get("primary_color", "#3B5249"))
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=15 * mm, bottomMargin=15 * mm, leftMargin=15 * mm, rightMargin=15 * mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=primary, fontSize=20, spaceAfter=2)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=primary, fontSize=11, spaceAfter=4, spaceBefore=8)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9, leading=12)
+    el = []
+    el.append(Paragraph("<b>Celesta Glow</b> · Tax Invoice", h1))
+    el.append(Paragraph(f"GSTIN: {COMPANY.get('gstin', '32XXXXX0000X1ZX')} · State: Kerala (32)", body))
+    el.append(Paragraph(f"{COMPANY.get('address_line1','')}, {COMPANY.get('address_line2','')}", body))
+    el.append(Spacer(1, 6))
+    cust = inv.get("customer") or {}
+    rows = [
+        ["Invoice No.", inv["id"], "Date", (inv.get("created_at") or "")[:10]],
+        ["Bill To", cust.get("shop_name", "—"), "Payment", inv.get("payment_terms", "—")],
+        ["Contact", cust.get("contact_person", "—"), "Place of Supply", cust.get("state", "Kerala")],
+    ]
+    t = Table(rows, colWidths=[30 * mm, 60 * mm, 30 * mm, 60 * mm])
+    t.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),HexColor("#F9F8F6")),("BACKGROUND",(2,0),(2,-1),HexColor("#F9F8F6")),
+                            ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTNAME",(2,0),(2,-1),"Helvetica-Bold"),
+                            ("FONTSIZE",(0,0),(-1,-1),9),("BOX",(0,0),(-1,-1),0.4,primary),
+                            ("INNERGRID",(0,0),(-1,-1),0.3,HexColor("#E5E3DB")),("PADDING",(0,0),(-1,-1),5)]))
+    el.append(t)
+    el.append(Paragraph("Bill To:", h2))
+    el.append(Paragraph(
+        f"<b>{cust.get('shop_name','')}</b><br/>{cust.get('address','')}<br/>"
+        f"{cust.get('city','')}, {cust.get('state','Kerala')} - {cust.get('pincode','')}<br/>"
+        f"Phone: {cust.get('phone','')}<br/>GSTIN: {cust.get('gstin','—')}", body))
+    el.append(Paragraph("Items", h2))
+    item_rows = [["#", "Description", "HSN", "Qty", "Rate", "GST %", "Line Total"]]
+    sub = 0.0
+    gst_sum = 0.0
+    for i, it in enumerate(inv.get("items", []), 1):
+        qty = float(it.get("qty", 1) or 1)
+        price = float(it.get("price", 0) or 0)
+        gst_pct = float(it.get("gst_pct", 18) or 18)
+        line = qty * price
+        line_gst = line * gst_pct / 100
+        sub += line
+        gst_sum += line_gst
+        item_rows.append([str(i), (it.get("name") or "")[:40], it.get("hsn", "3304"),
+                          f"{qty:g}", f"Rs.{price:.2f}", f"{gst_pct:.0f}%",
+                          f"Rs.{line + line_gst:.2f}"])
+    t = Table(item_rows, colWidths=[10 * mm, 55 * mm, 18 * mm, 14 * mm, 23 * mm, 18 * mm, 27 * mm])
+    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),primary),("TEXTCOLOR",(0,0),(-1,0),"white"),
+                            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),
+                            ("BOX",(0,0),(-1,-1),0.5,primary),("INNERGRID",(0,0),(-1,-1),0.3,HexColor("#E5E3DB")),
+                            ("PADDING",(0,0),(-1,-1),5),("ALIGN",(3,1),(-1,-1),"RIGHT")]))
+    el.append(t)
+    in_state = (cust.get("state", "") or "Kerala").lower() == "kerala"
+    cgst = gst_sum / 2 if in_state else 0
+    sgst = gst_sum / 2 if in_state else 0
+    igst = gst_sum if not in_state else 0
+    grand = sub + gst_sum
+    tax_rows = [
+        ["Sub-total (taxable)", f"Rs.{sub:.2f}"],
+        ["CGST", f"Rs.{cgst:.2f}"],
+        ["SGST", f"Rs.{sgst:.2f}"],
+        ["IGST", f"Rs.{igst:.2f}"],
+        ["Grand Total", f"Rs.{grand:.2f}"],
+    ]
+    t = Table(tax_rows, colWidths=[100 * mm, 60 * mm])
+    t.setStyle(TableStyle([("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("BACKGROUND",(0,-1),(-1,-1),HexColor("#F9F8F6")),
+                            ("FONTSIZE",(0,0),(-1,-1),9),("ALIGN",(-1,0),(-1,-1),"RIGHT"),
+                            ("BOX",(0,0),(-1,-1),0.5,primary),("INNERGRID",(0,0),(-1,-1),0.3,HexColor("#E5E3DB")),
+                            ("PADDING",(0,0),(-1,-1),5)]))
+    el.append(Spacer(1, 4))
+    el.append(t)
+    if inv.get("notes"):
+        el.append(Spacer(1, 4))
+        el.append(Paragraph(f"<b>Notes:</b> {inv['notes']}", body))
+    el.append(Spacer(1, 6))
+    el.append(Paragraph(f"<i>Amount in words: Indian Rupees {int(grand)} only.</i>", body))
+    el.append(Paragraph(f"<font color='#A66E4E'>Authorised Signatory · {COMPANY.get('name','Celesta Glow')} · {datetime.now(timezone.utc).strftime('%d %b %Y')}</font>", body))
+    doc.build(el)
+    buf.seek(0)
+    return buf.read()
+
+
+@router.post("/invoices/manual")
+async def create_manual_invoice(data: dict, current_user: dict = Depends(_auth)):
+    if current_user["role"] not in ("admin", "sales_manager", "finance_manager"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    customer = data.get("customer") or {}
+    items = data.get("items") or []
+    if not customer.get("shop_name") or not items:
+        raise HTTPException(status_code=400, detail="Shop name + items required")
+    serial = await db.manual_invoices.count_documents({}) + 1
+    inv_id = f"CG/INV/{datetime.now(timezone.utc).strftime('%Y%m')}/{serial:04d}"
+    inv = {
+        "id": inv_id,
+        "customer": customer,
+        "items": items,
+        "notes": data.get("notes", ""),
+        "payment_terms": data.get("payment_terms", ""),
+        "subtotal": float(data.get("subtotal", 0) or 0),
+        "gst_total": float(data.get("gst_total", 0) or 0),
+        "grand_total": float(data.get("grand_total", 0) or 0),
+        "created_by": current_user["id"],
+        "created_by_name": current_user.get("name", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.manual_invoices.insert_one(inv)
+    inv.pop("_id", None)
+    return {"invoice_id": inv_id, "invoice": inv}
+
+
+@router.get("/invoices/manual")
+async def list_manual_invoices(current_user: dict = Depends(_auth)):
+    if current_user["role"] not in ("admin", "sales_manager", "finance_manager"):
+        raise HTTPException(status_code=403)
+    items = await db.manual_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"invoices": items, "total": len(items)}
+
+
+@router.get("/invoices/{inv_id:path}/pdf")
+async def manual_invoice_pdf(inv_id: str, request: Request):
+    """Accepts JWT via Authorization header OR ?token=... query (so the PDF can be opened in a new tab)."""
+    import jwt
+    JWT_SECRET = os.environ.get("JWT_SECRET", "celesta-glow-secret-key-2024-secure")
+    auth_h = request.headers.get("Authorization", "")
+    token = auth_h.split(" ", 1)[1].strip() if auth_h.lower().startswith("bearer ") else request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    inv = await db.manual_invoices.find_one({"id": inv_id}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    pdf = _manual_invoice_pdf(inv)
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{inv_id.replace("/","-")}.pdf"'})
+
+
+
+# ========================================================================
 # Trash / Restore (P2 #23)
 # ========================================================================
 @router.get("/trash/leads")

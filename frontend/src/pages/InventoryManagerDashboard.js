@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
+import LabelPrintButton, { BulkLabelButton } from "../components/LabelPrintButton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -86,6 +87,18 @@ export default function InventoryManagerDashboard() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   const markDelivered = async (oid) => { try { await axios.put(`${API}/inventory/orders/${oid}/deliver`); toast.success("Delivered! Commission credited."); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+  const markReturned = async (oid) => {
+    const reason = window.prompt("Reason for return / RTO?", "Customer rejected delivery");
+    if (!reason) return;
+    try {
+      await axios.put(`${API}/orders/${oid}/status`, { status: "returned", reason });
+      await axios.post(`${API}/returns`, { order_id: oid, reason, type: "return", amount: 0 }).catch(() => {});
+      toast.success("Marked as returned. Revenue/commission reversed.");
+      fetchData();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed");
+    }
+  };
   const openDetail = (o) => { setDetailOrder(o); setShowOrderDetail(true); };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
@@ -123,13 +136,15 @@ export default function InventoryManagerDashboard() {
         {/* Filters */}
         <div className="flex gap-2 mb-4 flex-wrap items-center">
           <div className="relative flex-1 max-w-xs"><Search className="w-4 h-4 absolute left-3 top-2 text-[#59615D]"/><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search orders/address..." className="rounded-full pl-9 h-8 text-xs"/></div>
-          <div className="flex gap-1">{["all",...statuses].map(s=>(<button key={s} onClick={()=>setStatusFilter(s)} className={`px-2.5 py-1 rounded-full text-[9px] font-medium capitalize ${statusFilter===s?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{s}</button>))}</div>
+          <div className="flex gap-1">{["all",...statuses,"returned"].map(s=>(<button key={s} onClick={()=>setStatusFilter(s)} className={`px-2.5 py-1 rounded-full text-[9px] font-medium capitalize ${statusFilter===s?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{s}</button>))}</div>
           <div className="flex items-center gap-1 bg-white rounded-full px-2 py-0.5 border border-[#E5E3DB]">
             <span className="text-[9px] text-[#59615D] uppercase">Date</span>
             <Input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)} className="h-6 text-[10px] border-0 p-1 w-32" data-testid="inv-date-filter"/>
             {dateFilter && <button onClick={()=>setDateFilter("")} className="text-[9px] text-[#B75D69] underline">clear</button>}
           </div>
           <div className="flex gap-1">{MONTHS.map(m=>(<button key={m.v} onClick={()=>{setMonth(m.v); setDateFilter("");}} className={`px-2 py-0.5 rounded-full text-[9px] ${month===m.v&&!dateFilter?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{m.l}</button>))}<button onClick={()=>{setMonth("all"); setDateFilter("");}} className={`px-2 py-0.5 rounded-full text-[9px] ${month==="all"&&!dateFilter?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>All</button></div>
+          {/* Bulk label download for the currently filtered set */}
+          <BulkLabelButton orderIds={filtered.map(o => o.id)} compact />
         </div>
 
         {/* Order Pipeline */}
@@ -161,8 +176,10 @@ export default function InventoryManagerDashboard() {
                         {o.tracking_link && <a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[9px] text-purple-700 underline block truncate">📦 {o.courier_name||"Track"}</a>}
                         <div className="flex gap-1 mt-2 flex-wrap" onClick={e=>e.stopPropagation()}>
                           <DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact />
+                          <LabelPrintButton orderId={o.id} compact label="Label" />
                           {status==="confirmed"&&!o.awb_number&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>markShipped(o)} data-testid={`ship-${o.id}`}><Truck className="w-3 h-3 mr-1"/>Manual</Button>}
                           {status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-6" onClick={()=>markDelivered(o.id)} data-testid={`deliver-${o.id}`}><Check className="w-3 h-3 mr-1"/>Deliver</Button>}
+                          {(status==="shipped"||status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 border-red-300 text-red-700 hover:bg-red-50" onClick={()=>markReturned(o.id)} data-testid={`return-${o.id}`}>Returned</Button>}
                         </div>
                       </div>
                     ))}</div>
@@ -180,7 +197,7 @@ export default function InventoryManagerDashboard() {
               <tbody>{filtered.map(o=>(
                 <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
-                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}</div></td></tr>
+                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}</div></td></tr>
               ))}</tbody></table></div>}
             </div>
           </TabsContent>

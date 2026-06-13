@@ -310,11 +310,11 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     cy -= 13
     # Customer name (bold, big)
     c.setFillColor("black")
-    c.setFont("Helvetica-Bold", 12)
+    c.setFont("Helvetica-Bold", 13)
     c.drawString(x0 + pad, cy, (order.get("customer_name") or "—")[:42])
-    cy -= 13
-    # Address (wrap by words, clip to avoid bottom strip)
-    c.setFont("Helvetica", 9.5)
+    cy -= 14
+    # Address (wrap by words, clip to avoid bottom strip) — INCREASED FONT
+    c.setFont("Helvetica", 11)
     addr = (order.get("customer_address") or "").strip()
     # Build city/state/pin line so we can reserve space for it
     parts = []
@@ -324,14 +324,14 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     city_line = ", ".join(parts)
     landmark = (order.get("customer_landmark") or "").strip()
     phone_str = (order.get("customer_phone") or "—")
-    # Reserve space: city_line + landmark (if any) + phone
+    # Reserve space: city_line + landmark (if any) + phone (bigger now)
     reserved_lines = 1 + (1 if landmark else 0) + 1
-    reserved_h = reserved_lines * 11 + 6
+    reserved_h = reserved_lines * 13 + 6
     addr_floor = TO_BOTTOM + reserved_h
-    # Wrap address by words
+    # Wrap address by words (fewer chars per line because font is bigger)
     words = addr.split()
     line_buf = ""
-    max_chars = max(20, int(w / 6.0))  # rough char width estimate at 9.5pt
+    max_chars = max(18, int(w / 7.0))
     addr_lines = []
     for w_ in words:
         candidate = (line_buf + " " + w_).strip() if line_buf else w_
@@ -344,28 +344,27 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     # Print only lines that fit; ellipsize the last one if truncated
     drawn = 0
     for ln in addr_lines:
-        if cy - 11 < addr_floor:
-            # Out of room — append ellipsis on previous line if anything was drawn
+        if cy - 13 < addr_floor:
             if drawn > 0:
-                c.drawString(x0 + w - 10 * mm, cy + 11, "…")
+                c.drawString(x0 + w - 10 * mm, cy + 13, "…")
             break
         c.drawString(x0 + pad, cy, ln)
-        cy -= 11
+        cy -= 13
         drawn += 1
     # City / state / pin
     if city_line:
-        c.setFont("Helvetica-Bold", 9.5)
-        c.drawString(x0 + pad, max(cy, TO_BOTTOM + reserved_h - 11), city_line[:60])
-        cy = max(cy, TO_BOTTOM + reserved_h - 11) - 11
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x0 + pad, max(cy, TO_BOTTOM + reserved_h - 13), city_line[:60])
+        cy = max(cy, TO_BOTTOM + reserved_h - 13) - 13
     # Landmark (optional)
     if landmark:
-        c.setFont("Helvetica-Oblique", 8.5)
+        c.setFont("Helvetica-Oblique", 10)
         c.setFillColor(HexColor("#59615D"))
         c.drawString(x0 + pad, cy, ("Landmark: " + landmark)[:60])
         c.setFillColor("black")
-        cy -= 11
+        cy -= 13
     # Phone (highlighted)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont("Helvetica-Bold", 12)
     c.setFillColor(accent)
     c.drawString(x0 + pad, max(cy, TO_BOTTOM + 4), "Phone: " + phone_str[:20])
 

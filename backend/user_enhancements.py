@@ -194,6 +194,68 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
                         current_user.get('name', ''), "Order restored from trash")
         return {"message": "Order restored"}
 
+    @api_router.put("/orders/{order_id}/status")
+    async def set_order_status(order_id: str, data: dict,
+                               current_user: dict = Depends(get_current_user)):
+        """Generic status updater with automatic finance/commission reversal on return/RTO.
+        Allowed roles: admin, sales_manager, inventory_manager."""
+        if current_user['role'] not in ('admin', 'sales_manager', 'inventory_manager'):
+            raise HTTPException(status_code=403, detail="Not authorized")
+        new_status = (data.get("status") or "").strip().lower()
+        if new_status not in ('pending', 'confirmed', 'shipped', 'delivered', 'returned', 'rto', 'cancelled'):
+            raise HTTPException(status_code=400, detail="Invalid status")
+        order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        prev_status = order.get("status")
+        reason = (data.get("reason") or "").strip()
+        update_set = {
+            "status": new_status,
+            "status_updated_at": datetime.now(timezone.utc).isoformat(),
+            "status_updated_by": current_user['id'],
+            "status_updated_by_name": current_user.get('name', ''),
+        }
+        if reason:
+            update_set["status_reason"] = reason
+        # Handle return/RTO: reverse revenue + cancel commission (idempotent)
+        if new_status in ('returned', 'rto'):
+            update_set["returned_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                from server import record_transaction as _rt
+                rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
+                if rev:
+                    already = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_return", "type": "debit"})
+                    if not already:
+                        await _rt("debit", "order_return", rev.get("amount", 0),
+                                  f"Order {order_id} returned — reversing revenue (reason: {reason or 'N/A'})",
+                                  reference_id=order_id, method=rev.get("method", "bank"),
+                                  created_by=current_user['id'])
+            except Exception as _e:
+                logger.warning(f"finance reversal on return failed for {order_id}: {_e}")
+            await db.commissions.update_many(
+                {"order_id": order_id, "status": {"$in": ["pending", "approved", "paid"]}},
+                {"$set": {"status": "cancelled",
+                          "cancelled_at": datetime.now(timezone.utc).isoformat(),
+                          "cancel_reason": f"Order returned: {reason or 'N/A'}"}}
+            )
+        # Handle delivered transitioning (idempotent revenue credit)
+        if new_status == 'delivered' and prev_status != 'delivered':
+            try:
+                from server import record_transaction as _rt
+                existing = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
+                if not existing:
+                    await _rt("credit", "order_revenue", order.get("total_amount", 0),
+                              f"Order {order_id} delivered (manual status change) - {order.get('customer_name', '')}",
+                              reference_id=order_id, method="bank", created_by=current_user['id'])
+                update_set["delivered_at"] = datetime.now(timezone.utc).isoformat()
+            except Exception as _e:
+                logger.warning(f"finance credit on delivery failed for {order_id}: {_e}")
+        await db.orders.update_one({"id": order_id}, {"$set": update_set})
+        await log_audit("update_order_status", "order", order_id, current_user['id'],
+                        current_user.get('name', ''),
+                        f"{prev_status} → {new_status}" + (f" ({reason})" if reason else ""))
+        return {"message": f"Order status updated to {new_status}", "order_id": order_id, "previous": prev_status}
+
     @api_router.get("/orders/trash")
     async def get_deleted_orders(current_user: dict = Depends(get_current_user)):
         if current_user['role'] not in ('admin', 'sales_manager'):

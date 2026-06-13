@@ -1551,7 +1551,7 @@ async def lead_score(lead_id: str, current_user: dict = Depends(get_current_user
         except Exception:
             pass
     # Prior orders signal (repeat propensity)
-    prior_orders = await db.orders.count_documents({"customer_phone": lead.get("phone_number_norm","") or lead.get("phone_number","")})
+    prior_orders = await db.orders.count_documents({"customer_phone": lead.get("phone_number_norm","") or lead.get("phone_number",""), "deleted":{"$ne":True}})
     if prior_orders > 0:
         score += min(20, prior_orders * 5); reasons.append(f"+{min(20, prior_orders*5)} prior orders ({prior_orders})")
     score = max(0, min(100, score))
@@ -1738,7 +1738,7 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
             call_count += len(lead.get("call_logs") or [])
         call_count += await db.inhouse_call_logs.count_documents({"caller_id": tc['id']})
         tc['total_calls'] = call_count
-        conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}})
+        conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}, "deleted":{"$ne":True}})
         tc['conversions'] = conv
         # Show leads ADDED BY this telecaller (not just assigned), so SM sees her real contribution
         tc['total_leads'] = await db.leads.count_documents({"created_by": tc['id']})
@@ -1799,6 +1799,7 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
             tc['window_calls'] = w_calls
             tc['window_conv'] = await db.orders.count_documents({
                 "created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]},
+                "deleted": {"$ne": True},
                 "$or": [{"created_at": {"$gte": cutoff_iso}}, {"order_date": {"$gte": cutoff_date_only}}]
             })
             # Date-prefix fallback so legacy docs (without TZ on created_at) still match
@@ -1859,7 +1860,7 @@ async def get_agents(current_user: dict = Depends(get_current_user)):
     today = date.today().isoformat()
     week_ago = (date.today() - timedelta(days=7)).isoformat()
     for a in agents:
-        orders = await db.orders.find({"created_by": a['id']}, {"_id": 0}).to_list(5000)
+        orders = await db.orders.find({"created_by": a['id'], "deleted":{"$ne":True}}, {"_id": 0}).to_list(5000)
         a['total_orders'] = len([o for o in orders if o.get('status') in ['confirmed','shipped','delivered']])
         a['total_sales_amount'] = sum(o.get('total_amount',0) for o in orders if o.get('status') in ['confirmed','shipped','delivered'])
         a['sales_today'] = sum(o.get('total_amount',0) for o in orders if o.get('created_at','')[:10]==today and o.get('status') in ['confirmed','shipped','delivered'])
@@ -2507,7 +2508,7 @@ async def send_perf_report(gid: str, data: dict = None, current_user: dict = Dep
         calls_count += await db.agent_call_logs.count_documents({"agent_id": mid, "call_date": {"$regex": f"^{date_prefix}"}})
         calls_count += await db.inhouse_call_logs.count_documents({"caller_id": mid, "created_at": {"$regex": f"^{date_prefix}"}})
         # Orders & revenue
-        orders_q = {"created_by": mid, "created_at": {"$regex": f"^{date_prefix}"}}
+        orders_q = {"created_by": mid, "created_at": {"$regex": f"^{date_prefix}"}, "deleted": {"$ne": True}}
         orders_count = await db.orders.count_documents(orders_q)
         revenue = 0
         async for o in db.orders.find(orders_q, {"_id":0,"total_amount":1,"status":1}):
@@ -3045,19 +3046,19 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
             "pending_tasks": await db.tasks.count_documents({"assigned_to": uid, "status": "pending"})
         }
     elif role == 'admin':
-        delivered = await db.orders.find({"status":"delivered"},{"_id":0,"total_amount":1}).to_list(1000)
+        delivered = await db.orders.find({"status":"delivered","deleted":{"$ne":True}},{"_id":0,"total_amount":1}).to_list(1000)
         # Only APPROVED expenses count toward the books — pending are awaiting decision and must not skew totals.
         approved_expenses_docs = await db.expenses.find({"status":"approved"},{"_id":0,"amount":1}).to_list(2000)
         pending_expenses_docs = await db.expenses.find({"status":"pending"},{"_id":0,"amount":1}).to_list(2000)
         total_investments = await db.investments.find({},{"_id":0,"amount":1}).to_list(5000)
         stats = {
             "total_leads": await db.leads.count_documents({}),
-            "total_orders": await db.orders.count_documents({}),
+            "total_orders": await db.orders.count_documents({"deleted":{"$ne":True}}),
             "total_revenue": round(sum(o.get("total_amount",0) for o in delivered),2),
             "telecaller_count": await db.telecallers.count_documents({}),
             "manager_count": await db.managers.count_documents({}),
             "agent_count": await db.agents.count_documents({}),
-            "pending_orders": await db.orders.count_documents({"status":"pending"}),
+            "pending_orders": await db.orders.count_documents({"status":"pending","deleted":{"$ne":True}}),
             "pending_fund_requests": await db.fund_requests.count_documents({"status":"pending"}),
             # ⬇️ Only approved amounts are debited from working capital — pending are surfaced separately
             "total_expenses": round(sum(e.get("amount",0) for e in approved_expenses_docs),2),
@@ -5074,7 +5075,7 @@ async def _backfill_telecaller_counts():
                 async for lead in db.leads.find({"assigned_to": uid}, {"_id": 0, "call_logs": 1}):
                     cnt += len(lead.get("call_logs") or [])
                 cnt += await db.inhouse_call_logs.count_documents({"caller_id": uid})
-                conv = await db.orders.count_documents({"created_by": uid, "status": {"$in": ["confirmed", "shipped", "delivered"]}})
+                conv = await db.orders.count_documents({"created_by": uid, "status": {"$in": ["confirmed", "shipped", "delivered"]}, "deleted": {"$ne": True}})
                 await db[coll_name].update_one({"id": uid}, {"$set": {"total_calls": cnt, "conversions": conv}})
     except Exception as e:
         logger.error(f"telecaller counters backfill skipped: {e}")
