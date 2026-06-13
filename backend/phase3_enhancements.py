@@ -340,6 +340,19 @@ def register_phase3(api_router, db, get_current_user, log_audit, logger):
             {"category": b["category"], "month": b["month"], "year": b["year"]},
             {"$set": b}, upsert=True
         )
+        # Auto-register as an Expense Head so the same category appears in expense
+        # / payment / budget dropdowns everywhere — only if it isn't already there.
+        existing = await db.expense_heads.find_one({"name": b["category"]})
+        if not existing:
+            await db.expense_heads.insert_one({
+                "id": f"head-budget-{uuid.uuid4().hex[:6]}",
+                "name": b["category"],
+                "keywords": "",
+                "expense_type": "variable",
+                "active": True,
+                "auto_created_from": "budget",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
         return {"budget": b}
 
     @api_router.delete("/finance/budgets/{bid}")
