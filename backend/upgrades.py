@@ -139,7 +139,7 @@ async def get_orders_v2(
     current_user: dict = Depends(_auth)
 ):
     """Paginated order list with date range + team scope. Used by SM/DM/Admin dashboards."""
-    query = {}
+    query = {"deleted": {"$ne": True}}
     role = current_user["role"]; uid = current_user["id"]
     if role == "sales_manager":
         query["created_by"] = {"$in": await _sm_team_ids(uid)}
