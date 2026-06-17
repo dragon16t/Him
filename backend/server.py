@@ -135,6 +135,34 @@ import pathlib
 from fastapi.staticfiles import StaticFiles
 _UPLOADS_DIR = pathlib.Path(__file__).parent / "uploads"
 _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# /api/uploads/<file> — first check disk cache; if not present (pod restarted
+# and ephemeral storage wiped), fall back to MongoDB and rehydrate the disk
+# cache so subsequent requests are fast. This route must be registered BEFORE
+# the StaticFiles mount so it takes precedence.
+@app.get("/api/uploads/{filename}")
+async def serve_uploaded_image(filename: str):
+    # Reject path traversal
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    fp = _UPLOADS_DIR / filename
+    if fp.exists():
+        from fastapi.responses import FileResponse
+        return FileResponse(str(fp))
+    # Fall back to MongoDB (the persistent store)
+    doc = await db.uploaded_images.find_one({"filename": filename}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Image not found")
+    # Rehydrate the disk cache for next time
+    try:
+        with open(fp, "wb") as f:
+            f.write(doc["data"])
+    except Exception:
+        pass
+    return Response(content=doc["data"], media_type=doc.get("content_type", "image/jpeg"))
+
+
 # Served at /api/uploads/<file> so it passes through Kubernetes ingress (which routes /api/* -> 8001)
 app.mount("/api/uploads", StaticFiles(directory=str(_UPLOADS_DIR)), name="uploads")
 
@@ -8287,6 +8315,43 @@ async def startup():
         )
     except Exception as _e:
         logger.warning(f"Store URL backfill failed: {_e}")
+    # Backfill: migrate any locally-cached uploads into MongoDB so they survive
+    # pod restarts. Idempotent — skips files that already exist in DB.
+    try:
+        from datetime import datetime, timezone
+        existing_filenames = set()
+        async for doc in db.uploaded_images.find({}, {"_id": 0, "filename": 1}):
+            existing_filenames.add(doc.get("filename"))
+        migrated = 0
+        for fp in _UPLOADS_DIR.iterdir():
+            if not fp.is_file():
+                continue
+            if fp.name in existing_filenames:
+                continue
+            ext = fp.suffix.lower()
+            ct = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                ".webp": "image/webp", ".gif": "image/gif", ".avif": "image/avif",
+            }.get(ext, "application/octet-stream")
+            try:
+                data = fp.read_bytes()
+                if len(data) > 10 * 1024 * 1024:  # safety: skip files > 10 MB
+                    continue
+                await db.uploaded_images.insert_one({
+                    "filename": fp.name,
+                    "content_type": ct,
+                    "data": data,
+                    "size": len(data),
+                    "uploaded_by": "disk_backfill",
+                    "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                })
+                migrated += 1
+            except Exception:
+                continue
+        if migrated:
+            logger.info(f"Image persistence backfill: migrated {migrated} files from disk → MongoDB")
+    except Exception as _e:
+        logger.warning(f"Image disk→MongoDB backfill failed: {_e}")
     # Backfill: any order_revenue credit (or order_return debit) wrongly recorded as
     # method=cash → flip to method=bank and rebalance cash/bank totals. Idempotent.
     try:

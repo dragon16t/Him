@@ -173,6 +173,9 @@ def register(router, db, get_current_user, helpers):
         return {"agents": out}
 
     # ------------------------------------------------------------- IMAGE UPLOAD
+    # Images are persisted in MongoDB (GridFS-style — stored as binary in the
+    # `uploaded_images` collection) so they survive container restarts and
+    # deployments. Local filesystem storage was lost every pod restart.
     @router.post("/admin/upload")
     async def admin_upload_image(
         file: UploadFile = File(...),
@@ -186,10 +189,28 @@ def register(router, db, get_current_user, helpers):
         data = await file.read()
         if len(data) > 5 * 1024 * 1024:
             raise HTTPException(400, "Image must be smaller than 5 MB")
-        uploads_dir = pathlib.Path(__file__).parent.parent / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone
+        import base64
         safe_name = f"img-{uuid.uuid4().hex[:12]}{ext}"
-        fp = uploads_dir / safe_name
-        with open(fp, "wb") as f:
-            f.write(data)
+        content_type = {
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".webp": "image/webp", ".gif": "image/gif", ".avif": "image/avif",
+        }.get(ext, "application/octet-stream")
+        # Store binary in MongoDB so it survives pod restarts.
+        await db.uploaded_images.insert_one({
+            "filename": safe_name,
+            "content_type": content_type,
+            "data": data,
+            "size": len(data),
+            "uploaded_by": current_user["id"],
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # Also persist to local /uploads as a cache (faster reads while pod alive).
+        try:
+            uploads_dir = pathlib.Path(__file__).parent.parent / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            with open(uploads_dir / safe_name, "wb") as f:
+                f.write(data)
+        except Exception:
+            pass
         return {"url": f"/api/uploads/{safe_name}", "filename": safe_name, "size": len(data)}
