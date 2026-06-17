@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupee, Loader2, X, ClipboardList, RefreshCw, Wallet, AlertTriangle, Trophy, Zap, Clock } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
+import CustomerPhotosPanel from "../components/CustomerPhotosPanel";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import DarkModeToggle from "../components/DarkModeToggle";
@@ -466,6 +467,7 @@ export default function TelecallerDashboard() {
               {v:"calls", l:"Today's Calls"},
               {v:"all", l:`All Leads (${statusCounts.all ?? leads.length})`},
               {v:"orders", l:`Orders (${orders.length})`},
+              {v:"photos", l:"📸 Customer Photos"},
               {v:"commissions", l:`Commissions (${commission.count||0})`},
               {v:"tasks", l:"Tasks"},
               {v:"leaderboard", l:"Leaderboard"},
@@ -556,6 +558,13 @@ export default function TelecallerDashboard() {
               ].map((ins,i)=>(<div key={`td-${i}`} className="border border-[#E5E3DB] rounded-lg p-3"><p className="font-heading font-medium text-xs mb-1">{ins.t}</p><pre className="text-[10px] text-[#59615D] whitespace-pre-wrap font-sans">{ins.c}</pre></div>))}
               {instructions.map(i=>(<div key={i.id} className="border border-[#E5E3DB] rounded-lg p-3"><p className="font-heading font-medium text-xs">{i.title}</p><p className="text-[10px] text-[#59615D]">{i.content}</p></div>))}
             </div>
+          </div>
+        )}
+
+        {/* CUSTOMER PHOTOS — TC can upload Before/After + see all photos for their customers */}
+        {tab === "photos" && (
+          <div className="mb-4" data-testid="tc-photos-panel">
+            <CustomerPhotosPanel />
           </div>
         )}
 

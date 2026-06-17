@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import axios from "axios";
 import UniversalLogin from "@/pages/UniversalLogin";
+import PhotoCapture from "@/pages/PhotoCapture";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { ConfirmProvider } from "@/components/ConfirmDialog";
 import { PageLoader } from "@/components/Skeletons";
@@ -182,6 +183,7 @@ function App() {
       <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<UniversalLogin />} />
+        <Route path="/photo-capture/:token" element={<PhotoCapture />} />
         <Route path="/store/:slug/*" element={<Storefront />} />
         <Route path="/live" element={<ProtectedRoute allowedRoles={["admin","sales_manager","district_manager","hr_manager","finance_manager"]}><LiveOpsWall /></ProtectedRoute>} />
         <Route path="/telecaller" element={<ProtectedRoute allowedRoles={["telecaller"]}><TelecallerDashboard /></ProtectedRoute>} />

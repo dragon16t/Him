@@ -8216,6 +8216,13 @@ try:
 except Exception as _p3:
     logger.error(f"phase3_enhancements registration failed: {_p3}")
 
+# Customer Photo Sessions (SM dashboard → send link → customer captures front/left/right)
+try:
+    from customer_photos import register_customer_photos
+    register_customer_photos(app, db, api_router, get_current_user, logger)
+except Exception as _cp:
+    logger.error(f"customer_photos registration failed: {_cp}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")
