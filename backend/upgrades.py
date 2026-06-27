@@ -135,6 +135,7 @@ async def get_orders_v2(
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
     created_by: Optional[str] = None,
+    sales_manager_id: Optional[str] = None,
     skip: int = 0, limit: int = 50,
     current_user: dict = Depends(_auth)
 ):
@@ -155,6 +156,11 @@ async def get_orders_v2(
         query["status"] = status
     if created_by:
         query["created_by"] = created_by
+    # Filter by Sales Manager — only honoured for admin/IM since other roles are
+    # already scoped to their own team
+    if sales_manager_id and role in ("admin", "inventory_manager"):
+        sm_ids = await _sm_team_ids(sales_manager_id)
+        query["created_by"] = {"$in": sm_ids}
     # Payment type filter — accepts "cod" or "prepaid" (which maps to online+upi)
     if payment_type and payment_type != "all":
         pt = payment_type.lower()

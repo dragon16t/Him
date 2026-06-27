@@ -50,6 +50,9 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [customerPhone, setCustomerPhone] = useState(null);
+  const [salesManagers, setSalesManagers] = useState([]);
+  const [smFilter, setSmFilter] = useState("all");
+  const canFilterBySm = role === "admin" || role === "inventory_manager";
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -59,6 +62,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
       if (paymentFilter !== "all") params.payment_type = paymentFilter;
       if (fromDate) params.from = fromDate;
       if (toDate) params.to = toDate;
+      if (canFilterBySm && smFilter !== "all") params.sales_manager_id = smFilter;
       const { data } = await axios.get(`${API}/v2/orders`, { params });
       setOrders(data.orders || []);
       setTotal(data.total || 0);
@@ -66,12 +70,15 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load orders");
     } finally { setLoading(false); }
-  }, [page, limit, status, paymentFilter, fromDate, toDate]);
+  }, [page, limit, status, paymentFilter, fromDate, toDate, smFilter, canFilterBySm]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => {
     axios.get(`${API}/products`).then(r => setProducts(r.data.products || [])).catch(() => {});
-  }, []);
+    if (canFilterBySm) {
+      axios.get(`${API}/sales-managers`).then(r => setSalesManagers(r.data.sales_managers || r.data || [])).catch(() => {});
+    }
+  }, [canFilterBySm]);
 
   const applyQuickRange = (kind) => {
     const today = new Date();
@@ -172,6 +179,17 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
             <SelectTrigger className="rounded-xl h-8 text-xs w-24" data-testid="orders-limit"><SelectValue /></SelectTrigger>
             <SelectContent>{[25, 50, 100, 200].map(n => <SelectItem key={n} value={String(n)}>{n}/page</SelectItem>)}</SelectContent>
           </Select>
+          {canFilterBySm && (
+            <Select value={smFilter} onValueChange={v => { setSmFilter(v); setPage(1); }}>
+              <SelectTrigger className="rounded-xl h-8 text-xs w-44" data-testid="orders-sm-filter"><SelectValue placeholder="Sales Manager" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sales Managers</SelectItem>
+                {salesManagers.map(sm => (
+                  <SelectItem key={sm.id} value={sm.id} data-testid={`sm-option-${sm.id}`}>{sm.name}{sm.is_head_of_sales ? " (Head)" : ""}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       </div>
 

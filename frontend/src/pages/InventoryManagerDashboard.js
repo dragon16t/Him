@@ -17,6 +17,7 @@ import { LogOut, Loader2, Package, Truck, Check, AlertTriangle, Search } from "l
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import PostOfficePanel from "../components/PostOfficePanel";
+import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
@@ -58,22 +59,31 @@ export default function InventoryManagerDashboard() {
   const [editForm, setEditForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", payment_type: "cod" });
   const [orderBadgeInput, setOrderBadgeInput] = useState("");
   const ORDER_BADGE_PRESETS = ["DTDC","Delhivery","India Post","Bluedart","XpressBees","Ekart","Verified","Shipment Delayed","Hold","COD Reject Risk","Repeat Customer","Priority"];
+  const [salesManagers, setSalesManagers] = useState([]);
+  const [smFilter, setSmFilter] = useState("all");
 
   const fetchData = useCallback(async () => {
-    try { const r = await axios.get(`${API}/inventory/orders`); setOrders(r.data.orders||[]); setStats(r.data.stats||{}); } catch {}
     try {
-      const [pr, ls, po, rt, vn] = await Promise.all([
+      const params = {};
+      if (smFilter !== "all") params.sales_manager_id = smFilter;
+      const r = await axios.get(`${API}/inventory/orders`, { params });
+      setOrders(r.data.orders||[]); setStats(r.data.stats||{});
+    } catch {}
+    try {
+      const [pr, ls, po, rt, vn, sm] = await Promise.all([
         axios.get(`${API}/products`).catch(()=>({data:{products:[]}})),
         axios.get(`${API}/products/low-stock`).catch(()=>({data:{products:[]}})),
         axios.get(`${API}/purchase-orders`).catch(()=>({data:{pos:[]}})),
         axios.get(`${API}/returns`).catch(()=>({data:{returns:[]}})),
-        axios.get(`${API}/vendors`).catch(()=>({data:{vendors:[]}}))
+        axios.get(`${API}/vendors`).catch(()=>({data:{vendors:[]}})),
+        axios.get(`${API}/sales-managers`).catch(()=>({data:{sales_managers:[]}})),
       ]);
       setProducts(pr.data.products||[]); setLowStock(ls.data.products||[]);
       setPurchaseOrders(po.data.pos||[]); setReturns(rt.data.returns||[]); setVendors(vn.data.vendors||[]);
+      setSalesManagers(sm.data.sales_managers || sm.data || []);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [smFilter]);
 
   const updateStock = async () => {
     if(!stockForm.pid) return toast.error("Select product");
@@ -257,6 +267,14 @@ export default function InventoryManagerDashboard() {
             {dateFilter && <button onClick={()=>setDateFilter("")} className="text-[9px] text-[#B75D69] underline">clear</button>}
           </div>
           <div className="flex gap-1">{MONTHS.map(m=>(<button key={m.v} onClick={()=>{setMonth(m.v); setDateFilter("");}} className={`px-2 py-0.5 rounded-full text-[9px] ${month===m.v&&!dateFilter?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{m.l}</button>))}<button onClick={()=>{setMonth("all"); setDateFilter("");}} className={`px-2 py-0.5 rounded-full text-[9px] ${month==="all"&&!dateFilter?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>All</button></div>
+          {/* Filter by Sales Manager */}
+          <div className="flex items-center gap-1 bg-white rounded-full px-2 py-0.5 border border-[#E5E3DB]" data-testid="inv-sm-filter-wrap">
+            <span className="text-[9px] text-[#59615D] uppercase">SM</span>
+            <select value={smFilter} onChange={e=>setSmFilter(e.target.value)} className="h-6 text-[10px] border-0 outline-none bg-transparent" data-testid="inv-sm-filter">
+              <option value="all">All Sales Managers</option>
+              {salesManagers.map(sm => <option key={sm.id} value={sm.id}>{sm.name}{sm.is_head_of_sales ? " (Head)" : ""}</option>)}
+            </select>
+          </div>
           {/* Bulk label download for the currently filtered set */}
           <BulkLabelButton orderIds={filtered.map(o => o.id)} compact />
         </div>
@@ -270,6 +288,7 @@ export default function InventoryManagerDashboard() {
             <TabsTrigger value="po" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-po">Purchase Orders</TabsTrigger>
             <TabsTrigger value="returns" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-returns">Returns/RTO</TabsTrigger>
             <TabsTrigger value="post" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-post">📮 India Post</TabsTrigger>
+            <TabsTrigger value="tcperf" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-tcperf">📊 TC Performance</TabsTrigger>
             <TabsTrigger value="mysheet" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-mysheet">My Sheet</TabsTrigger>
           </TabsList>
 
@@ -418,6 +437,15 @@ export default function InventoryManagerDashboard() {
           </TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Inventory Manager" /></TabsContent>
           <TabsContent value="post" className="animate-fade-in"><PostOfficePanel role="inventory_manager" /></TabsContent>
+          <TabsContent value="tcperf" className="animate-fade-in">
+            <div className="bg-white rounded-2xl border border-[#E5E3DB] p-4 mb-3 flex items-center gap-2">
+              <Label className="text-xs">Sales Manager</Label>
+              <select value={smFilter === "all" ? (salesManagers[0]?.id || "") : smFilter} onChange={e => setSmFilter(e.target.value)} className="rounded-full border border-[#E5E3DB] bg-white text-xs h-8 px-2" data-testid="inv-tcperf-sm-select">
+                {salesManagers.map(sm => <option key={sm.id} value={sm.id}>{sm.name}{sm.is_head_of_sales ? " (Head)" : ""}</option>)}
+              </select>
+            </div>
+            <TelecallerPerformanceCards smId={smFilter === "all" ? (salesManagers[0]?.id || "") : smFilter} title="Team Performance" />
+          </TabsContent>
         </Tabs>
       </div>
 

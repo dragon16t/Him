@@ -21,6 +21,7 @@ import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import OrdersPanel from "../components/OrdersPanel";
 import PostOfficePanel from "../components/PostOfficePanel";
+import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import DailyReportButton from "../components/DailyReportButton";
 import AdminEmployeesPanel from "../components/AdminEmployeesPanel";
 import AgentWithdrawPanel from "../components/AgentWithdrawPanel";
@@ -62,6 +63,31 @@ const ROLE_OPTIONS = [
   {value:"inventory_manager",label:"Inventory Manager",endpoint:"/inventory-managers",fields:["name","email","password"]},
   {value:"digital_marketing_manager",label:"Digital Marketing Manager",endpoint:"/digital-marketing-managers",fields:["name","email","password"]},
 ];
+
+// Admin wrapper that lets admin pick which SM's team to inspect
+function AdminTcPerfWrapper() {
+  const [sms, setSms] = useState([]);
+  const [smId, setSmId] = useState("");
+  useEffect(() => {
+    axios.get(`${API}/sales-managers`).then(r => {
+      const list = r.data.sales_managers || r.data || [];
+      setSms(list);
+      if (list.length && !smId) setSmId(list[0].id);
+    }).catch(() => {});
+  }, [smId]);
+  return (
+    <div className="space-y-3" data-testid="admin-tcperf-wrapper">
+      <div className="flex items-center gap-2 bg-white rounded-2xl border border-[#E5E3DB] p-3">
+        <Label className="text-xs">Sales Manager</Label>
+        <Select value={smId} onValueChange={setSmId}>
+          <SelectTrigger className="rounded-full h-8 text-xs w-64" data-testid="admin-tcperf-sm-select"><SelectValue placeholder="Pick a Sales Manager" /></SelectTrigger>
+          <SelectContent>{sms.map(sm => <SelectItem key={sm.id} value={sm.id}>{sm.name}{sm.is_head_of_sales ? " (Head)" : ""}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      {smId ? <TelecallerPerformanceCards smId={smId} title={`Performance — ${(sms.find(s => s.id === smId) || {}).name || ""}'s Team`} /> : <p className="text-center py-8 text-[#7B6D5A] text-sm">Pick a Sales Manager to view their telecallers' performance.</p>}
+    </div>
+  );
+}
 
 export default function AdminCRMPanel() {
   const navigate = useNavigate();
@@ -499,7 +525,7 @@ export default function AdminCRMPanel() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
+            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"tcperf",l:"📊 TC Performance"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -665,6 +691,7 @@ export default function AdminCRMPanel() {
           {/* ORDERS TAB — full workflow */}
           <TabsContent value="orders"><OrdersPanel role="admin" showCreateButton onCreateOrder={() => setShowOrderDlg(true)} /></TabsContent>
           <TabsContent value="post"><PostOfficePanel role="admin" /></TabsContent>
+          <TabsContent value="tcperf"><AdminTcPerfWrapper /></TabsContent>
 
           {/* EMPLOYEES TAB — Employee 360° */}
           <TabsContent value="employees"><AdminEmployeesPanel /></TabsContent>

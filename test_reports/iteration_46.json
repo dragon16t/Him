@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 46 — SM order filter (admin+IM) + NEW /api/sm/telecaller-performance + TC Performance tabs on Admin/SM/IM dashboards. Backend: 15/15 pytest tests passing. v2/orders honours sales_manager_id only for admin+inventory_manager (no leakage to other roles), inventory/orders honours sales_manager_id and 403s for non-admin/IM, sm/telecaller-performance returns full {range,from,to,sm_id,team,telecallers[],totals{}} shape with correct default 'today/7d/30d' handling, 400 on bad custom dates, 400 when admin omits sm_id, 403 for telecaller, and per-TC aggregation verified (created TEST_TCPerf_* order via telecaller1 — orders/qty/revenue increment correctly in the SM-scoped 'today' view). Frontend (Playwright): EVERY spec'd data-testid is present and renders correctly — Admin (admin-tab-tcperf, admin-tcperf-sm-select, tc-performance-cards with range chips today/7d/30d/custom + totals strip orders/qty/revenue/in_transit/delivered/returned + per-TC cards w/ Call+WhatsApp buttons + delivery_pct/rto_pct bars; orders-sm-filter dropdown in Orders panel filter row). Sales Manager (tab-tcperf with NO picker — auto-scoped to self; Hubby Brahman's team shows Ravi Kumar Asst SM card). Inventory Manager (inv-sm-filter in filter bar, inv-tab-tcperf, inv-tcperf-sm-select picker with TelecallerPerformanceCards below). Default range is 7d when no param passed. WhatsApp wa.me/91XXXXXXXXXX format confirmed in code review of _wa() / TelecallerPerformanceCards.jsx. No business-logic or UI defects detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_46_sm_tcperf.py",
+    "/app/test_reports/pytest/iter46_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sm_performance.py is a clean, self-contained module — team is correctly resolved as (telecallers managed_by sm_id) ∪ (assistant_sales_managers managed_by sm_id); SM scoping is enforced server-side regardless of any client-supplied sm_id (line 44-47), preventing cross-team leakage from a malicious SM client.",
+    "delivery_pct / rto_pct are computed against (delivered+returned) — the 'final-state' denominator — which correctly avoids penalising TCs for in-transit orders. Spec'd correctly.",
+    "v2/orders sales_manager_id branch only runs when role∈{admin,inventory_manager} (line 161 upgrades.py). Other roles' team-scope cannot be overridden — secure.",
+    "inventory/orders SM team resolution duplicates _sm_team_ids logic (server.py 6391-6396) — minor DRY violation; could call the shared helper but functionally identical.",
+    "TelecallerPerformanceCards.jsx renders WhatsApp links via wa.me/91XXXXXXXXXX (non-digits stripped, leading 91 normalised) — matches the global telephony convention used elsewhere (post_office._wa)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_46_sm_tcperf.py (new — 15 pytest tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (15/15 passing)", "frontend": "100% — every data-testid in the spec verified across Admin/SM/IM dashboards"},
+  "test_credentials": {
+    "admin": "admin@celestaglow.com / admin123",
+    "sales_manager": "salesmanager@celestaglow.com / sm123",
+    "telecaller_1": "telecaller1@celestaglow.com / tc123",
+    "inventory_manager": "inventory@celestaglow.com / inv123"
+  },
+  "seed_data_creation": "Created one TEST_TCPerf_<ts> order via telecaller1 (₹200 COD, qty 2) to exercise the per-TC aggregation assertion. TC1's order shows up in the SM-scoped 'today' performance view when TC1 is in the SM's team.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 46 regression baseline: /app/backend/tests/test_iteration_46_sm_tcperf.py. Run with `REACT_APP_BACKEND_URL=<preview> pytest backend/tests/test_iteration_46_sm_tcperf.py -v`. SM endpoints accept range∈{today,7d,30d,custom} with default 7d; custom requires both from+to YYYY-MM-DD. Admin/IM must pass sm_id else 400. Telecaller (and roles outside admin/SM/asst-SM/IM) get 403. The orders-sm-filter on Admin lives on the OrdersPanel filter row (second row after limit) and uses a shadcn Select so DOM .options is empty but the testid is on the trigger. The inv-sm-filter on the IM dashboard is a native <select> in the filter bar. Default empty TC list shows 'No telecallers in your team for this period.' on IM dashboard — correct empty-state when no SM is picked.",
+  "rca of the issue": "N/A — no defects observed in this iteration."
+}

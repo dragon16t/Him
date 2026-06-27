@@ -6381,13 +6381,19 @@ async def promote_tc_to_asm(data: dict, current_user: dict = Depends(get_current
 
 # ==================== INVENTORY MANAGER ====================
 @api_router.get("/inventory/orders")
-async def get_inventory_orders(status: Optional[str] = None, date_filter: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_inventory_orders(status: Optional[str] = None, date_filter: Optional[str] = None, sales_manager_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'inventory_manager']:
         raise HTTPException(status_code=403)
-    query = {}
+    query = {"deleted": {"$ne": True}}
     if status: query['status'] = status
     if date_filter:  # YYYY-MM-DD or YYYY-MM
         query['created_at'] = {"$regex": f"^{date_filter}"}
+    if sales_manager_id:
+        # Resolve SM team — telecallers + assistant SMs managed by this SM + the SM themselves
+        tcs = await db.telecallers.find({"managed_by": sales_manager_id}, {"_id": 0, "id": 1}).to_list(5000)
+        asms = await db.assistant_sales_managers.find({"managed_by": sales_manager_id}, {"_id": 0, "id": 1}).to_list(50)
+        team_ids = [t["id"] for t in tcs] + [a["id"] for a in asms] + [sales_manager_id]
+        query["created_by"] = {"$in": team_ids}
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
     stats = {"total": len(orders), "pending": len([o for o in orders if o.get('status')=='pending']),
              "confirmed": len([o for o in orders if o.get('status')=='confirmed']),
@@ -8400,6 +8406,13 @@ try:
     logger.info("post_office routes registered")
 except Exception as _po:
     logger.error(f"post_office registration failed: {_po}")
+
+try:
+    from sm_performance import register_sm_performance
+    register_sm_performance(api_router, db, get_current_user)
+    logger.info("sm_performance routes registered")
+except Exception as _sp:
+    logger.error(f"sm_performance registration failed: {_sp}")
 
 app.include_router(api_router)
 
