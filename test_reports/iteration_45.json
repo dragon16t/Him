@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 45 — India Post bulk-upload + telecaller follow-up flow. Backend: 16/16 active pytest tests passing (1 skipped — delivered-counter increment couldn't be exercised because the matched-FARI shipment in current upload was deduped to an older order that admin PUT /orders/{id} didn't expose). Validated: POST /api/post-office/upload parses 35-row Excel manifest (header 'Customer' + 'Service' split-cell layout) with admin/IM only (TC=403); dedupe-on-reupload flags all rows duplicate=True; FARI row scores against multiple seeded FARI orders and lands as 'matched' or 'ambiguous' (correct multi-candidate behaviour with candidates[] populated); SHARATH row matches by Kondotti area substring; matched orders are updated with courier_name='India Post', awb_number=tracking, india_post_article, tracking_link (indiapost.gov.in/...?article=...), badges contains 'India Post', status flipped to 'shipped'. GET /api/post-office/shipments lists+filters by match_status / telecaller_id / upload_id / date_str, stitches current_status from live order. GET /api/post-office/telecaller-stats returns per-TC delivered/returned/in_transit/pending counts. POST /api/post-office/relink/{id} attaches a different order, re-resolves TC, updates new order with courier+tracking+badges. DELETE /api/post-office/shipment/{id} works for admin/IM. POST /api/post-office/whatsapp-template returns wa_link_tc (wa.me/91XXXXXXXXXX?text=…), wa_link_customer, call_tc_link (tel:…), text includes article no. + tracking link + '3–4 working days' + follow-up ask; gracefully returns empty wa_link_tc/call_tc_link when TC phone missing (no 500); 404 for unknown shipment_id. Fixed one ObjectId-serialisation bug on the dedupe path. Frontend (Playwright): Admin dashboard '📮 India Post' tab renders Post Office Manifests panel with Upload Excel button + 6-card counts strip (Total/Matched/Review/Unmatched/Delivered/Returned) + Shipments+Telecaller Performance sub-tabs + filter chips (All/Matched/Ambiguous/Unmatched) + search box + date filter. Shipment row shows article #, date, In-Transit badge, customer, destination 'Kondotti town near bus stand', Order ID + phone + amount + address + Track/Call TC/WhatsApp/Relink buttons. WhatsApp modal opens with both Telecaller and Customer template cards (Copy + WhatsApp + Call TC). Inventory Manager dashboard also shows '📮 India Post' with identical functionality + Telecaller Performance grid showing TC card with Transit/Delivered/Returned/Other stat boxes, % bars, and Call+WhatsApp buttons.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/post-office/upload (dedupe branch)", "issue": "FIXED — find_one() on existing shipment did not exclude '_id', causing ObjectId-serialisation 500 on re-upload. Added projection {_id:0}."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_45_post_office.py",
+    "/app/test_reports/pytest/iter45_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Server-side: the SHARATH ambiguity-vs-match threshold is sensitive to seed-noise — multiple historical FARI orders cause the matcher to choose ambiguous. This is correct behaviour but the IM UI relies on the candidate buttons to resolve it — confirmed candidates[] is populated.",
+    "(Optional) Endpoint GET /api/orders/{id} does not exist (405); the front-end correctly fetches via the list, but exposing a single-order endpoint would simplify deep-links."
+  ],
+  "critical_code_review_comments": [
+    "post_office.py is a clean, self-contained module — _match_score gives well-weighted points for name+COD+area; ambiguity gap of <15 is reasonable.",
+    "_wa() correctly strips non-digits and prepends '91' for 10-digit Indian numbers; meets the wa.me format requirement (no '+', no leading 0).",
+    "Dedupe branch fixed to project away ObjectId (now matches the new-insert branch which already does doc.pop('_id', None)).",
+    "Order side-effects are atomic per row inside the upload loop — no transactional concerns as each row affects exactly one order doc.",
+    "register_post_office_routes() correctly wired in server.py lines 8398-8400.",
+    "PostOfficePanel.jsx renders both Admin and IM dashboards consistently — confirmed via UI."
+  ],
+  "updated_files": [
+    "/app/backend/post_office.py (bug fix: project {_id:0} on dedupe find_one)",
+    "/app/backend/tests/test_iteration_45_post_office.py (new — 17 pytest tests; 16 active passing, 1 skip)"
+  ],
+  "success_rate": {"backend": "100% (16/16 active passing, 1 skip)", "frontend": "100% on Admin + IM India Post panels — every spec'd UI element present and wired."},
+  "test_credentials": {"admin": "admin@celestaglow.com / admin123", "inventory_manager": "inventory@celestaglow.com / inv123", "telecaller_1": "telecaller1@celestaglow.com / tc123"},
+  "seed_data_creation": "Created two TEST orders via telecaller1: 'FARI <suffix>' (COD 900, Chaliyam) and 'SHARATH <suffix>' (COD 1199, Kondotti) to drive the matched-flow assertions. Multiple historical FARI orders exist across iterations — this is why FARI rows land as 'ambiguous' (correct behaviour; candidates[] populated).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression baseline /app/backend/tests/test_iteration_45_post_office.py — 17 tests (16 passing, 1 skip when no fresh matched shipment exists post-dedupe). Sample manifest is at /tmp/sheet.xlsx (35 rows, header 'Customer'+'Service' split-cell). Re-uploading the same file marks all rows duplicate=True — by design. To exercise the full match-flow on a fresh DB, call POST /api/admin/restore-seed body={password:'AMVPA2478F@123'} then seed orders with names matching manifest customers (FARI, SHARATH, SINAN, AYSHABI, KAMARUDHEEN). FastAPI login endpoint is POST /api/auth/login (NOT /api/login). GET /api/orders/{id} returns 405 — fetch via list GET /api/orders. Frontend Admin tab and IM tab both render PostOfficePanel.jsx identically.",
+  "rca of the issue": "ObjectId-serialisation bug on dedupe branch: post_office.py line 193 — find_one() did not project out '_id' before spreading into the response shipment_docs list, so on a re-upload (where every row hits the duplicate branch) the response payload contained Mongo ObjectId values, causing jsonable_encoder to raise 'ObjectId not iterable' and the endpoint to return 500. Mitigation: added projection {'_id': 0} to the find_one call. Verified: second upload now returns 200 with all rows flagged duplicate=True."
+}

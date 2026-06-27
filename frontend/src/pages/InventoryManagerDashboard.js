@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { LogOut, Loader2, Package, Truck, Check, AlertTriangle, Search } from "lucide-react";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
+import PostOfficePanel from "../components/PostOfficePanel";
 import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
@@ -268,6 +269,7 @@ export default function InventoryManagerDashboard() {
             <TabsTrigger value="stock" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-stock">Stock {lowStock.length>0&&<Badge className="ml-1 bg-red-500 text-white text-[8px]">{lowStock.length}</Badge>}</TabsTrigger>
             <TabsTrigger value="po" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-po">Purchase Orders</TabsTrigger>
             <TabsTrigger value="returns" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-returns">Returns/RTO</TabsTrigger>
+            <TabsTrigger value="post" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-post">📮 India Post</TabsTrigger>
             <TabsTrigger value="mysheet" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-mysheet">My Sheet</TabsTrigger>
           </TabsList>
 
@@ -415,6 +417,7 @@ export default function InventoryManagerDashboard() {
             </div>
           </TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Inventory Manager" /></TabsContent>
+          <TabsContent value="post" className="animate-fade-in"><PostOfficePanel role="inventory_manager" /></TabsContent>
         </Tabs>
       </div>
 

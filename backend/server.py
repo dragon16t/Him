@@ -8394,6 +8394,13 @@ try:
 except Exception as _ts:
     logger.error(f"today_stats registration failed: {_ts}")
 
+try:
+    from post_office import register_post_office_routes
+    register_post_office_routes(api_router, db, get_current_user, log_audit)
+    logger.info("post_office routes registered")
+except Exception as _po:
+    logger.error(f"post_office registration failed: {_po}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

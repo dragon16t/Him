@@ -20,6 +20,7 @@ import OrderEditDialog from "../components/OrderEditDialog";
 import MonthFilter, { filterByMonth } from "../components/MonthFilter";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import OrdersPanel from "../components/OrdersPanel";
+import PostOfficePanel from "../components/PostOfficePanel";
 import DailyReportButton from "../components/DailyReportButton";
 import AdminEmployeesPanel from "../components/AdminEmployeesPanel";
 import AgentWithdrawPanel from "../components/AgentWithdrawPanel";
@@ -498,7 +499,7 @@ export default function AdminCRMPanel() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
+            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -663,6 +664,7 @@ export default function AdminCRMPanel() {
 
           {/* ORDERS TAB — full workflow */}
           <TabsContent value="orders"><OrdersPanel role="admin" showCreateButton onCreateOrder={() => setShowOrderDlg(true)} /></TabsContent>
+          <TabsContent value="post"><PostOfficePanel role="admin" /></TabsContent>
 
           {/* EMPLOYEES TAB — Employee 360° */}
           <TabsContent value="employees"><AdminEmployeesPanel /></TabsContent>
