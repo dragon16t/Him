@@ -412,7 +412,8 @@ export default function InventoryManagerDashboard() {
       </DialogContent></Dialog>
 
       {/* Badge Management Dialog */}
-      <Dialog open={showBadges} onOpenChange={setShowBadges}><DialogContent className="rounded-2xl max-w-md" data-testid="badge-dialog"><DialogHeader><DialogTitle className="font-heading">Manage Badges {badgeProduct ? `— ${badgeProduct.name}` : ""}</DialogTitle></DialogHeader>
+      <Dialog open={showBadges} onOpenChange={setShowBadges}><DialogContent className="rounded-2xl max-w-md" data-testid="badge-dialog" aria-describedby="badge-dialog-desc"><DialogHeader><DialogTitle className="font-heading">Manage Badges {badgeProduct ? `— ${badgeProduct.name}` : ""}</DialogTitle></DialogHeader>
+        <p id="badge-dialog-desc" className="sr-only">Add or remove promotional badges shown on this product card.</p>
         {badgeProduct && <div className="space-y-3">
           <div>
             <Label className="text-xs">Current Badges</Label>
