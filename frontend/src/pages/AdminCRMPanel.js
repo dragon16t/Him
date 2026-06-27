@@ -712,7 +712,18 @@ export default function AdminCRMPanel() {
           </div>
             <div className="px-4 pt-3"><MonthFilter month={genMonth} year={genYear} day={genDay} onMonthChange={setGenMonth} onYearChange={setGenYear} onDayChange={setGenDay}/></div>
             {(() => {
-              const list = filterByMonth(leads||[], genMonth, genYear, "created_at", genDay).filter(l=>!search||l.name?.toLowerCase().includes(search.toLowerCase())||l.phone_number?.includes(search)||l.assigned_to_name?.toLowerCase().includes(search.toLowerCase()));
+              // Phone-aware search: strip non-digits + leading 91/0 for both query and lead phone
+              const searchLower = (search || "").toLowerCase();
+              const qDigits = (search || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+              const list = filterByMonth(leads||[], genMonth, genYear, "created_at", genDay).filter(l => {
+                if (!search) return true;
+                const phoneRaw = (l.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+                const phoneMatch = qDigits.length >= 4 && phoneRaw.includes(qDigits);
+                return l.name?.toLowerCase().includes(searchLower)
+                  || phoneMatch
+                  || l.phone_number?.includes(search)
+                  || l.assigned_to_name?.toLowerCase().includes(searchLower);
+              });
               return (<>
                 <p className="px-4 pb-2 text-xs text-[#59615D]">{list.length} lead(s)</p>
                 <table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Name","Phone","Telecaller / Agent","Source","Status","Interest","Last Order","Repeat","Relation","Created"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>

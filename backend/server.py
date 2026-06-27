@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks, WebSocket, WebSocketDisconnect, Body
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, logging, uuid, json, bcrypt, jwt, requests, smtplib, asyncio, secrets
@@ -421,6 +421,40 @@ async def seed_database():
             u["created_at"] = datetime.now(timezone.utc).isoformat()
             await db.admins.insert_one(u)
             logger.info(f"Seeded admin: {email}")
+
+    # 🔐 IDEMPOTENT ADMIN PASSWORD RECOVERY:
+    # If ADMIN_FORCE_RESET=true is set in env, force-reset the primary admin's
+    # password to ADMIN_FORCE_RESET_PASSWORD (or "admin123") on startup. This
+    # lets the user recover access after forgetting their production password
+    # by toggling the env var + redeploying. The flag should be cleared after.
+    if (os.environ.get("ADMIN_FORCE_RESET", "").lower() in ("1", "true", "yes")):
+        target_email = os.environ.get("ADMIN_FORCE_RESET_EMAIL", "admin@celestaglow.com")
+        new_pw = os.environ.get("ADMIN_FORCE_RESET_PASSWORD", "admin123")
+        try:
+            res = await db.admins.update_one(
+                {"email": target_email},
+                {"$set": {"password_hash": hash_password(new_pw),
+                          "force_reset_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            if res.matched_count:
+                logger.warning(f"🔐 ADMIN_FORCE_RESET applied to {target_email} (matched={res.matched_count})")
+            else:
+                # Admin not present — create from scratch using the seed shape so they can log in.
+                await db.admins.insert_one({
+                    "id": f"admin-{uuid.uuid4().hex[:6]}",
+                    "email": target_email,
+                    "name": "Admin User",
+                    "password_hash": hash_password(new_pw),
+                    "phone": "9999900001",
+                    "salary": 0,
+                    "incentive": 0,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "force_reset_at": datetime.now(timezone.utc).isoformat(),
+                })
+                logger.warning(f"🔐 ADMIN_FORCE_RESET created missing admin {target_email}")
+        except Exception as _e:
+            logger.error(f"ADMIN_FORCE_RESET failed: {_e}")
+
     # Honor a "system_wiped" flag — once admin has wiped everything, do NOT re-seed users / products / regions / demo data.
     wiped_doc = await db.app_config.find_one({"key": "system_wiped"})
     if wiped_doc and wiped_doc.get("value") is True:
@@ -841,6 +875,18 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     skip = max(0, int(skip or 0))
     total = await db.leads.count_documents(query)
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    # Dedupe by normalized phone for manager-style views — same customer should appear once
+    # (most recent lead per phone). Telecallers/agents keep their full pipeline.
+    if current_user['role'] in ('sales_manager', 'assistant_sales_manager', 'district_manager', 'assistant_district_manager', 'admin', 'finance_manager'):
+        seen = set(); deduped = []
+        for l in leads:
+            key = (l.get("phone_number_norm") or l.get("phone_number") or l.get("id") or "").strip()
+            if not key:
+                deduped.append(l); continue
+            if key in seen:
+                continue
+            seen.add(key); deduped.append(l)
+        leads = deduped
     return {"leads": leads, "total": total, "skip": skip, "limit": limit}
 
 @api_router.get("/leads/today-calls")
@@ -1200,6 +1246,52 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
         except Exception as _e:
             logger.warning(f"prepaid revenue record failed for {order_id}: {_e}")
     return {"order": order, "message": "Order created successfully"}
+
+@api_router.post("/orders/{order_id}/reorder")
+async def reorder_order(order_id: str, data: dict = Body(default={}), current_user: dict = Depends(get_current_user)):
+    """Clone an existing order's items + customer details into a fresh pending order.
+    Allowed for the original creator (telecaller/agent/inhouse_telecaller) or admin/SM/DM."""
+    src = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Original order not found")
+    role = current_user['role']; uid = current_user['id']
+    if role not in ('admin', 'sales_manager', 'assistant_sales_manager', 'district_manager', 'assistant_district_manager'):
+        if src.get("created_by") != uid:
+            raise HTTPException(status_code=403, detail="You can only re-order your own orders")
+    items = data.get("items") if data else None
+    if not items:
+        items = src.get("items", []) or []
+    if not items:
+        raise HTTPException(status_code=400, detail="Original order has no items to re-order")
+    total = sum((i.get("price", 0) or 0) * (i.get("quantity", 0) or 0) for i in items)
+    new_id = f"ORD-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    new_order = {
+        "id": new_id,
+        "customer_name": src.get("customer_name", ""),
+        "customer_phone": src.get("customer_phone", ""),
+        "customer_address": src.get("customer_address", ""),
+        "customer_city": src.get("customer_city", ""),
+        "customer_state": src.get("customer_state", "Kerala"),
+        "customer_pincode": src.get("customer_pincode", ""),
+        "customer_landmark": src.get("customer_landmark", ""),
+        "items": items,
+        "total_amount": data.get("total_amount", total) if data else total,
+        "payment_type": data.get("payment_type") if data and data.get("payment_type") else src.get("payment_type", "cod"),
+        "status": "pending",
+        "lead_id": src.get("lead_id", ""),
+        "reorder_of": order_id,
+        "tracking_link": "", "courier_name": "", "tracking_number": "",
+        "created_by": uid, "created_by_role": role, "created_by_name": current_user.get('name', ''),
+        "approved_by": None, "approved_at": None, "shipped_at": None, "delivered_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.orders.insert_one(new_order); new_order.pop("_id", None)
+    try:
+        await log_audit("reorder", "order", new_id, uid, current_user.get('name', ''), f"Re-order created from {order_id}")
+    except Exception:
+        pass
+    return {"order": new_order, "message": f"Re-order created from {order_id}"}
 
 def _can_edit_order(order: dict, user: dict) -> tuple[bool, str]:
     """Sync wrapper — kept for backwards compat with existing endpoints.
@@ -7352,6 +7444,38 @@ async def low_stock(current_user: dict = Depends(get_current_user)):
     products = await db.products.find({}, {"_id": 0}).to_list(5000)
     low = [p for p in products if (p.get("stock", 0) or 0) <= (p.get("low_stock_threshold", 10) or 10)]
     return {"products": low, "count": len(low)}
+
+@api_router.put("/products/{pid}/badges")
+async def update_product_badges(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Inventory Manager + Admin can manage product badges (e.g. 'Bestseller', 'New', 'Low Stock', 'Hot Pick').
+    Body: {"badges": ["string", ...]} OR {"add": "string"} / {"remove": "string"}."""
+    if current_user['role'] not in ['admin', 'inventory_manager']:
+        raise HTTPException(status_code=403, detail="Only admin or inventory manager can edit badges")
+    product = await db.products.find_one({"id": pid}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    current = list(product.get("badges") or [])
+    if "badges" in data and isinstance(data["badges"], list):
+        # Replace
+        new_badges = []
+        for b in data["badges"]:
+            b = (str(b or "")).strip()
+            if b and b not in new_badges:
+                new_badges.append(b)
+        new_badges = new_badges[:8]  # cap at 8
+    else:
+        new_badges = current[:]
+        add = (str(data.get("add") or "")).strip()
+        rem = (str(data.get("remove") or "")).strip()
+        if add and add not in new_badges:
+            new_badges.append(add)
+        if rem and rem in new_badges:
+            new_badges.remove(rem)
+        new_badges = new_badges[:8]
+    await db.products.update_one({"id": pid}, {"$set": {"badges": new_badges,
+        "badges_updated_at": datetime.now(timezone.utc).isoformat(),
+        "badges_updated_by": current_user.get('name') or current_user.get('id')}})
+    return {"badges": new_badges, "message": "Badges updated"}
 
 @api_router.post("/purchase-orders")
 async def create_po(data: dict, current_user: dict = Depends(get_current_user)):

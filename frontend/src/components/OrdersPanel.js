@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit2, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { Edit2, ChevronLeft, ChevronRight, Trash2, RotateCw } from "lucide-react";
 import OrderEditDialog from "./OrderEditDialog";
 import DelhiveryShipActions from "./DelhiveryShipActions";
 import LabelPrintButton, { BulkLabelButton } from "./LabelPrintButton";
@@ -100,6 +100,23 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Delete failed");
     }
+  };
+
+  const reorder = async (o) => {
+    if (!window.confirm(`Create a new pending order for ${o.customer_name} with the same items?`)) return;
+    try {
+      const r = await axios.post(`${API}/orders/${o.id}/reorder`);
+      toast.success(`Re-order ${r.data.order.id} created`);
+      fetchOrders();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Re-order failed");
+    }
+  };
+
+  const canReorder = (o) => {
+    if (o.deleted) return false;
+    // Allow re-order on completed/lost orders so the customer can be re-engaged
+    return ["delivered","returned","cancelled","rejected","not_delivered"].includes(o.status);
   };
 
   const canDelete = (o) => {
@@ -197,6 +214,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
                     </div>
                     <div className="flex gap-1.5 items-start flex-wrap">
                       {canEdit(o) && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2" onClick={() => setEditing(o)} data-testid={`edit-order-${o.id}`}><Edit2 className="w-3 h-3 mr-1" />Edit</Button>}
+                      {canReorder(o) && <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7 px-2 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249]/10" onClick={() => reorder(o)} data-testid={`reorder-${o.id}`}><RotateCw className="w-3 h-3 mr-1" />Re-order</Button>}
                       <LabelPrintButton orderId={o.id} compact />
                       <GstInvoiceButton orderId={o.id} compact />
                       {o.status === "pending" && (role === "admin" || role === "sales_manager" || role === "district_manager") && <Button size="sm" className="rounded-full text-[10px] h-7 px-2 bg-[#6B8E6B] text-white" onClick={() => approveOrder(o.id)} data-testid={`approve-${o.id}`}>Approve</Button>}

@@ -34,6 +34,9 @@ export default function InventoryManagerDashboard() {
   const [showStock, setShowStock] = useState(false);
   const [showPO, setShowPO] = useState(false);
   const [showReturn, setShowReturn] = useState(false);
+  const [showBadges, setShowBadges] = useState(false);
+  const [badgeProduct, setBadgeProduct] = useState(null);
+  const [badgeInput, setBadgeInput] = useState("");
   const [stockForm, setStockForm] = useState({pid:"",stock:0,low_stock_threshold:10});
   const [poForm, setPoForm] = useState({vendor_id:"",vendor_name:"",total_amount:0,expected_date:"",items:[]});
   const [returnForm, setReturnForm] = useState({order_id:"",reason:"",type:"return",amount:0,notes:""});
@@ -76,6 +79,28 @@ export default function InventoryManagerDashboard() {
   };
   const handlePO = async () => { if(!poForm.vendor_name||!poForm.total_amount) return toast.error("Fill fields"); try { await axios.post(`${API}/purchase-orders`, poForm); toast.success("PO created"); setShowPO(false); setPoForm({vendor_id:"",vendor_name:"",total_amount:0,expected_date:"",items:[]}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
   const handleReturn = async () => { if(!returnForm.order_id||!returnForm.reason) return toast.error("Fill fields"); try { await axios.post(`${API}/returns`, returnForm); toast.success("Return logged"); setShowReturn(false); setReturnForm({order_id:"",reason:"",type:"return",amount:0,notes:""}); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } };
+
+  const openBadges = (p) => { setBadgeProduct(p); setBadgeInput(""); setShowBadges(true); };
+  const addBadge = async () => {
+    const b = badgeInput.trim();
+    if (!b) return;
+    try {
+      const r = await axios.put(`${API}/products/${badgeProduct.id}/badges`, { add: b });
+      setBadgeProduct(bp => ({ ...bp, badges: r.data.badges }));
+      setProducts(ps => ps.map(p => p.id === badgeProduct.id ? { ...p, badges: r.data.badges } : p));
+      setBadgeInput("");
+      toast.success("Badge added");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const removeBadge = async (label) => {
+    try {
+      const r = await axios.put(`${API}/products/${badgeProduct.id}/badges`, { remove: label });
+      setBadgeProduct(bp => ({ ...bp, badges: r.data.badges }));
+      setProducts(ps => ps.map(p => p.id === badgeProduct.id ? { ...p, badges: r.data.badges } : p));
+      toast.success("Badge removed");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const PRESET_BADGES = ["Bestseller","New","Hot Pick","Limited","Trending","Premium","Eco","Combo Deal"];
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const markShipped = (o) => { setShipOrder(o); setShipForm({tracking_link:"",courier_name:"",tracking_number:""}); setShowShipDialog(true); };
@@ -111,11 +136,32 @@ export default function InventoryManagerDashboard() {
     if (statusFilter !== "all" && o.status !== statusFilter) return false;
     if (dateFilter) { if ((o.created_at||"").slice(0,10) !== dateFilter) return false; }
     else if (month !== "all") { const m = o.created_at?.slice(5,7)?.replace(/^0/,""); if (m !== month) return false; }
-    if (search) { const s = search.toLowerCase(); return (o.customer_name||"").toLowerCase().includes(s) || (o.id||"").toLowerCase().includes(s) || (o.customer_phone||"").includes(s) || (o.customer_address||"").toLowerCase().includes(s); }
+    if (search) {
+      const s = search.toLowerCase();
+      const itemMatch = (o.items||[]).some(it => (it.name||"").toLowerCase().includes(s));
+      return (o.customer_name||"").toLowerCase().includes(s) || (o.id||"").toLowerCase().includes(s) || (o.customer_phone||"").includes(s) || (o.customer_address||"").toLowerCase().includes(s) || itemMatch;
+    }
     return true;
   });
 
+  // Pagination for list view
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageEnd = pageStart + PAGE_SIZE;
+  const paginated = filtered.slice(pageStart, pageEnd);
+  // Reset to page 1 whenever filters reduce results below current page
+  if (page > totalPages && page !== 1) { setTimeout(() => setPage(1), 0); }
+
   const statuses = ["pending","confirmed","shipped","delivered"];
+
+  const itemsSummary = (o) => {
+    const its = o.items || [];
+    if (!its.length) return null;
+    const total = its.reduce((s, it) => s + (Number(it.quantity)||0), 0);
+    const first = its[0];
+    return `${first.name||"Product"}${its.length>1?` +${its.length-1} more`:""} (${total} qty)`;
+  };
 
   return (
     <div className="min-h-screen bg-[#F9F8F6]" data-testid="inventory-manager-dashboard">
@@ -176,6 +222,7 @@ export default function InventoryManagerDashboard() {
                         <p className="font-medium text-xs">{o.customer_name}</p>
                         <p className="text-[10px] text-[#59615D]">{o.customer_phone} | Rs.{o.total_amount}</p>
                         <p className="text-[10px] text-[#3B5249] truncate" title={o.customer_address}>📍 {o.customer_address || "No address"}</p>
+                        {itemsSummary(o) && <p className="text-[10px] text-[#2C3531] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>🛍️ {itemsSummary(o)}</p>}
                         <p className="text-[9px] text-[#A66E4E]">{o.created_at?.slice(0,10)} | {o.payment_type?.toUpperCase()}{o.created_by_name?` • by ${o.created_by_name}`:""}</p>
                         {o.tracking_link && <a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[9px] text-purple-700 underline block truncate">📦 {o.courier_name||"Track"}</a>}
                         <div className="flex gap-1 mt-2 flex-wrap" onClick={e=>e.stopPropagation()}>
@@ -197,12 +244,32 @@ export default function InventoryManagerDashboard() {
           <TabsContent value="list">
             <div className="bg-white rounded-xl border border-[#E5E3DB] p-5">
               {filtered.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No orders</p>:
-              <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Order","Customer","Phone","Address","Amount","Type","Date","Created By","Status","Tracking","Actions"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-              <tbody>{filtered.map(o=>(
-                <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
+              <>
+              <div className="flex items-center justify-between mb-3 text-[10px] text-[#59615D]">
+                <span>Showing {pageStart+1}-{Math.min(pageEnd, filtered.length)} of {filtered.length}</span>
+                <span>Page {safePage} / {totalPages}</span>
+              </div>
+              <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Order","Customer","Phone","Address","Products","Amount","Type","Date","Created By","Status","Tracking","Actions"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
+              <tbody>{paginated.map(o=>(
+                <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
                 <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}</div></td></tr>
-              ))}</tbody></table></div>}
+              ))}</tbody></table></div>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 mt-4" data-testid="inv-pagination">
+                  <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" disabled={safePage===1} onClick={()=>setPage(p=>Math.max(1,p-1))} data-testid="inv-pg-prev">‹ Prev</Button>
+                  {Array.from({length: totalPages}, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
+                    .map((p, idx, arr) => (
+                      <span key={p} className="flex items-center gap-1">
+                        {idx > 0 && arr[idx-1] !== p - 1 && <span className="text-[10px] text-[#59615D]">…</span>}
+                        <button onClick={()=>setPage(p)} className={`px-2.5 py-1 rounded-full text-[10px] font-medium ${safePage===p?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`} data-testid={`inv-pg-${p}`}>{p}</button>
+                      </span>
+                    ))}
+                  <Button size="sm" variant="outline" className="rounded-full text-[10px] h-7" disabled={safePage===totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))} data-testid="inv-pg-next">Next ›</Button>
+                </div>
+              )}
+              </>}
             </div>
           </TabsContent>
 
@@ -213,10 +280,41 @@ export default function InventoryManagerDashboard() {
               {lowStock.length>0 && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3"><p className="text-xs font-medium text-red-700"><AlertTriangle className="w-3 h-3 inline mr-1"/>Low-stock alert: {lowStock.length} products below threshold</p>
                 <div className="text-[10px] text-red-600 mt-1">{lowStock.slice(0,5).map(p=>p.name).join(", ")}</div></div>}
               {products.length===0 ? <p className="text-center py-6 text-[#59615D] text-sm">No products. Add via Admin.</p> :
-                <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="bg-[#F9F8F6]">{["Product","Stock","Threshold","Status"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase">{h}</th>)}</tr></thead>
-                  <tbody>{products.map(p=>{const isLow=(p.stock||0)<=(p.low_stock_threshold||10);return(
-                    <tr key={p.id} className="border-b" data-testid={`prod-${p.id}`}><td className="p-2 font-medium">{p.name}</td><td className="p-2"><span className={isLow?"text-red-700 font-bold":""}>{p.stock||0}</span></td><td className="p-2">{p.low_stock_threshold||10}</td><td className="p-2"><Badge className={`text-[8px] ${isLow?'bg-red-100 text-red-800':'bg-green-100 text-green-800'}`}>{isLow?'LOW':'OK'}</Badge></td></tr>
-                  );})}</tbody></table></div>}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="inv-product-grid">
+                  {products.map(p=>{
+                    const isLow=(p.stock||0)<=(p.low_stock_threshold||10);
+                    const img = p.image_url || p.image || (p.images||[])[0] || "";
+                    const badges = p.badges || [];
+                    return (
+                      <div key={p.id} className="border border-[#E5E3DB] rounded-xl overflow-hidden bg-white hover:shadow-md transition" data-testid={`prod-card-${p.id}`}>
+                        <div className="aspect-video bg-[#F9F8F6] flex items-center justify-center overflow-hidden">
+                          {img ? <img src={img} alt={p.name} className="w-full h-full object-cover" /> : <Package className="w-10 h-10 text-[#A66E4E]"/>}
+                        </div>
+                        <div className="p-3">
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium text-sm truncate" title={p.name}>{p.name}</p>
+                              <p className="text-[10px] text-[#59615D]">Rs.{p.price||0} • {p.category||"general"}</p>
+                            </div>
+                            <Badge className={`text-[8px] shrink-0 ${isLow?'bg-red-100 text-red-800':'bg-green-100 text-green-800'}`}>{isLow?'LOW':'OK'}</Badge>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-[10px]">
+                            <span className="text-[#59615D]">Stock: <b className={isLow?"text-red-700":"text-[#2C3531]"}>{p.stock||0}</b> / threshold {p.low_stock_threshold||10}</span>
+                          </div>
+                          {/* Badges row */}
+                          <div className="mt-2 flex flex-wrap gap-1 min-h-[24px]" data-testid={`prod-badges-${p.id}`}>
+                            {badges.length===0 ? <span className="text-[9px] text-[#A66E4E] italic">No badges</span> :
+                              badges.map(b => <Badge key={b} variant="outline" className="text-[9px] border-[#3B5249] text-[#3B5249] bg-[#3B5249]/5">{b}</Badge>)}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <Button size="sm" variant="outline" className="flex-1 rounded-full text-[10px] h-7" onClick={()=>{setStockForm({pid:p.id,stock:p.stock||0,low_stock_threshold:p.low_stock_threshold||10}); setShowStock(true);}} data-testid={`prod-update-stock-${p.id}`}>Update Stock</Button>
+                            <Button size="sm" className="flex-1 rounded-full text-[10px] h-7 bg-[#3B5249] text-white" onClick={()=>openBadges(p)} data-testid={`prod-manage-badges-${p.id}`}>Manage Badges</Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>}
             </div>
           </TabsContent>
 
@@ -310,6 +408,39 @@ export default function InventoryManagerDashboard() {
           <div className="text-xs"><b>Created by:</b> {detailOrder.created_by_name||'-'} ({detailOrder.created_by_role}) on {detailOrder.created_at?.slice(0,16).replace('T',' ')}</div>
           {detailOrder.tracking_link && <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 text-xs"><b>📦 Tracking:</b> {detailOrder.courier_name||""} {detailOrder.tracking_number||""}<br/><a href={detailOrder.tracking_link} target="_blank" rel="noreferrer" className="text-purple-700 underline">{detailOrder.tracking_link}</a><br/>{detailOrder.shipped_by_name && <span className="text-[10px] text-[#59615D]">Shipped by: {detailOrder.shipped_by_name} on {detailOrder.shipped_at?.slice(0,16).replace('T',' ')}</span>}</div>}
           {detailOrder.delivered_at && <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-xs"><b>✅ Delivered</b> on {detailOrder.delivered_at?.slice(0,16).replace('T',' ')}{detailOrder.delivered_by_name?` by ${detailOrder.delivered_by_name}`:""}</div>}
+        </div>}
+      </DialogContent></Dialog>
+
+      {/* Badge Management Dialog */}
+      <Dialog open={showBadges} onOpenChange={setShowBadges}><DialogContent className="rounded-2xl max-w-md" data-testid="badge-dialog"><DialogHeader><DialogTitle className="font-heading">Manage Badges {badgeProduct ? `— ${badgeProduct.name}` : ""}</DialogTitle></DialogHeader>
+        {badgeProduct && <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Current Badges</Label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5 min-h-[32px] p-2 bg-[#F9F8F6] rounded-lg" data-testid="badge-current-list">
+              {(badgeProduct.badges||[]).length===0 ? <span className="text-[10px] text-[#A66E4E] italic">No badges yet</span> :
+                (badgeProduct.badges||[]).map(b => (
+                  <button key={b} onClick={()=>removeBadge(b)} className="px-2 py-0.5 rounded-full text-[10px] bg-[#3B5249] text-white hover:bg-red-600 transition flex items-center gap-1" data-testid={`badge-chip-${b}`} title="Click to remove">
+                    {b} <span className="text-[12px] leading-none">×</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Quick Add</Label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {PRESET_BADGES.filter(p=>!(badgeProduct.badges||[]).includes(p)).map(p => (
+                <button key={p} onClick={()=>{setBadgeInput(p); setTimeout(addBadge,50);}} className="px-2 py-0.5 rounded-full text-[10px] bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#3B5249] hover:text-white transition" data-testid={`badge-preset-${p}`}>+ {p}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Custom Badge</Label>
+            <div className="flex gap-2 mt-1.5">
+              <Input value={badgeInput} onChange={e=>setBadgeInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') addBadge();}} placeholder="e.g. Editor's Pick" className="rounded-xl text-xs" data-testid="badge-input"/>
+              <Button onClick={addBadge} className="rounded-full bg-[#3B5249] text-white text-xs" data-testid="badge-add-btn">Add</Button>
+            </div>
+            <p className="text-[9px] text-[#A66E4E] mt-1">Max 8 badges per product. Click a badge to remove.</p>
+          </div>
         </div>}
       </DialogContent></Dialog>
     </div>

@@ -221,6 +221,12 @@ export default function AgentSalesPanel() {
                         <button onClick={()=>copyLink(a)} className="text-[#3B5249] hover:text-[#A66E4E]" data-testid={`copy-link-${a.slug}`}><Copy className="w-3 h-3"/></button>
                         <a href={a.store_url || `/store/${a.slug}`} target="_blank" rel="noreferrer" className="text-[#3B5249] hover:text-[#A66E4E]" data-testid={`open-link-${a.slug}`}><ExternalLink className="w-3 h-3"/></a>
                       </div>
+                      <div className="bg-[#F4F1EA] border border-[#E5E3DB] rounded p-2 text-[10px] text-[#59615D] flex items-center gap-2 mt-1.5">
+                        <span className="text-[10px] uppercase tracking-wide text-[#7B6D5A] font-semibold whitespace-nowrap">Portal:</span>
+                        <span className="text-[#3B5249] font-mono truncate flex-1">{a.agent_portal_url || `${origin}/store/${a.slug}/agent-login`}</span>
+                        <button onClick={()=>{navigator.clipboard.writeText(a.agent_portal_url || `${origin}/store/${a.slug}/agent-login`); toast.success("Agent portal link copied");}} className="text-[#3B5249] hover:text-[#A66E4E]" data-testid={`copy-portal-${a.slug}`}><Copy className="w-3 h-3"/></button>
+                        <a href={a.agent_portal_url || `/store/${a.slug}/agent-login`} target="_blank" rel="noreferrer" className="text-[#3B5249] hover:text-[#A66E4E]" data-testid={`open-portal-${a.slug}`}><ExternalLink className="w-3 h-3"/></a>
+                      </div>
                     </div>
                   );
                 })}

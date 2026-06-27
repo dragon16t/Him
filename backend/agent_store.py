@@ -1011,6 +1011,14 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
             "wallet_balance": 0.0,  # paid out commission balance
             "created_at": _now(),
         }
+        # Pre-compute store/portal URLs so they are present on the document immediately
+        try:
+            _s = await _get_settings()
+            _pub = (_s.get("public_base_url") or "https://software.celestaglow.com").rstrip("/")
+            doc["store_url"] = f"{_pub}/store/{slug}"
+            doc["agent_portal_url"] = f"{_pub}/store/{slug}/agent-login"
+        except Exception:
+            pass
         await db.store_agents.insert_one(doc)
 
         # Sync to HR employees collection as an external agent record (visible to HR for salary processing)

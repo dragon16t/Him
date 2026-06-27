@@ -117,6 +117,10 @@ export default function SocialMediaDashboard() {
   const [collabForm, setCollabForm] = useState({ barter_type: "free_product", product_tracking_link: "", products_sent: [], paid_amount: "", notes: "" });
   const [products, setProducts] = useState([]);
 
+  // ---- Zero-value influencer order ----
+  const [infOrderTarget, setInfOrderTarget] = useState(null);
+  const [infOrderForm, setInfOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_state: "Kerala", customer_pincode: "", customer_landmark: "", items: [], notes: "" });
+
   const fetchData = useCallback(async () => {
     try {
       const [pl, inf, cal, cds, pr] = await Promise.all([
@@ -340,6 +344,69 @@ export default function SocialMediaDashboard() {
       if (existing) return { ...f, products_sent: f.products_sent.filter(p => p.id !== productId) };
       return { ...f, products_sent: [...f.products_sent, { id: productId, name: productName }] };
     });
+  };
+
+  // ---- Open zero-value order for an influencer ----
+  const openInfOrder = (e) => {
+    setInfOrderTarget(e);
+    setInfOrderForm({
+      customer_name: e.influencer_name || "",
+      customer_phone: e.phone || e.contact || "",
+      customer_address: "",
+      customer_city: "",
+      customer_state: "Kerala",
+      customer_pincode: "",
+      customer_landmark: "",
+      items: [],
+      notes: `Influencer collaboration order (${e.platform || "social"} • ${e.followers || 0} followers)`,
+    });
+  };
+  const toggleInfOrderItem = (p) => {
+    setInfOrderForm(f => {
+      const i = f.items.findIndex(it => it.product_id === p.id);
+      if (i >= 0) {
+        const copy = [...f.items]; copy.splice(i, 1); return { ...f, items: copy };
+      }
+      return { ...f, items: [...f.items, { product_id: p.id, name: p.name, quantity: 1, price: 0 }] };
+    });
+  };
+  const updateInfOrderQty = (pid, q) => {
+    setInfOrderForm(f => ({ ...f, items: f.items.map(it => it.product_id === pid ? { ...it, quantity: Math.max(1, Number(q) || 1) } : it) }));
+  };
+  const submitInfOrder = async () => {
+    if (!infOrderTarget) return;
+    if (!infOrderForm.customer_address.trim()) return toast.error("Shipping address is required");
+    if (!infOrderForm.customer_phone.trim()) return toast.error("Phone number is required");
+    if (!infOrderForm.items.length) return toast.error("Select at least one product");
+    try {
+      const payload = {
+        customer_name: infOrderForm.customer_name,
+        customer_phone: infOrderForm.customer_phone,
+        customer_address: infOrderForm.customer_address.trim(),
+        customer_city: infOrderForm.customer_city,
+        customer_state: infOrderForm.customer_state,
+        customer_pincode: infOrderForm.customer_pincode,
+        customer_landmark: infOrderForm.customer_landmark,
+        items: infOrderForm.items.map(it => ({ ...it, price: 0 })),
+        total_amount: 0,
+        payment_type: "free_influencer",
+        notes: infOrderForm.notes,
+        influencer_id: infOrderTarget.id,
+        influencer_name: infOrderTarget.influencer_name,
+        source: "influencer",
+      };
+      const r = await axios.post(`${API}/orders`, payload);
+      const newId = r.data?.order?.id;
+      toast.success(`Influencer order ${newId} created (Rs.0)`);
+      // mark outreach as product_sent if currently pending/contacted
+      try {
+        if (["pending","contacted","responded"].includes(infOrderTarget.status)) {
+          await axios.put(`${API}/influencer/outreach/${infOrderTarget.id}`, { status: "product_sent" });
+        }
+      } catch {}
+      setInfOrderTarget(null);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create influencer order"); }
   };
   // SMM reviews CD's deliverable. NO live URL needed here.
   const reviewDeliverable = async (s, action, extra = {}) => {
@@ -946,6 +1013,7 @@ export default function SocialMediaDashboard() {
                         <div className="flex gap-1 items-center flex-shrink-0">
                           {callable && <Button size="sm" variant="outline" className="h-7 rounded-full text-[10px] border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249]/5" asChild><a href={`tel:${phone}`} data-testid={`inf-call-btn-${e.id}`}><Phone className="w-3 h-3 mr-1" />Call</a></Button>}
                           <Button size="sm" variant="outline" className="h-7 rounded-full text-[10px]" onClick={() => { setLogCallTarget(e); setLogCallForm({ outcome: "contacted", remarks: "", next_action: "", new_status: "contacted" }); }} data-testid={`inf-log-call-${e.id}`}><MessageSquare className="w-3 h-3 mr-1" />Log Call</Button>
+                          <Button size="sm" variant="outline" className="h-7 rounded-full text-[10px] border-emerald-400 text-emerald-700 hover:bg-emerald-50" onClick={() => openInfOrder(e)} data-testid={`inf-create-order-${e.id}`}><Truck className="w-3 h-3 mr-1" />+ Order (₹0)</Button>
                           <Select value={e.status} onValueChange={(v) => handleInfStatusChange(e, v)}>
                             <SelectTrigger className={`h-7 w-32 text-[9px] rounded-full border ${STATUS_STYLE(e.status)}`} data-testid={`inf-status-${e.id}`}><SelectValue /></SelectTrigger>
                             <SelectContent>{["pending", "contacted", "responded", "product_sent", "converted", "rejected"].map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s.replace("_", " ")}</SelectItem>)}</SelectContent>
@@ -1188,6 +1256,48 @@ export default function SocialMediaDashboard() {
               </div>
             </div>
             <Button onClick={confirmConvert} className="w-full rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="convert-submit"><CheckCircle2 className="w-3.5 h-3.5 mr-1" />Save & Mark Converted</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* INFLUENCER ZERO-VALUE ORDER DIALOG */}
+      <Dialog open={!!infOrderTarget} onOpenChange={(o) => !o && setInfOrderTarget(null)}>
+        <DialogContent className="rounded-2xl max-w-2xl max-h-[88vh] overflow-y-auto" data-testid="inf-order-dialog">
+          <DialogHeader><DialogTitle className="font-heading flex items-center gap-2"><Truck className="w-4 h-4 text-emerald-600" />Create Influencer Order — {infOrderTarget?.influencer_name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-900">
+              <p>Zero-value barter order (Rs.0). Used for shipping free product to influencers in exchange for content. Will appear in Inventory & shipping pipelines like any other order.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-[10px]">Recipient Name *</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_name} onChange={e => setInfOrderForm(f => ({ ...f, customer_name: e.target.value }))} data-testid="inf-order-name" /></div>
+              <div><Label className="text-[10px]">Phone *</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_phone} onChange={e => setInfOrderForm(f => ({ ...f, customer_phone: e.target.value }))} data-testid="inf-order-phone" /></div>
+            </div>
+            <div><Label className="text-[10px]">Address *</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_address} onChange={e => setInfOrderForm(f => ({ ...f, customer_address: e.target.value }))} data-testid="inf-order-address" /></div>
+            <div className="grid grid-cols-3 gap-2">
+              <div><Label className="text-[10px]">City</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_city} onChange={e => setInfOrderForm(f => ({ ...f, customer_city: e.target.value }))} /></div>
+              <div><Label className="text-[10px]">State</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_state} onChange={e => setInfOrderForm(f => ({ ...f, customer_state: e.target.value }))} /></div>
+              <div><Label className="text-[10px]">Pincode</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_pincode} onChange={e => setInfOrderForm(f => ({ ...f, customer_pincode: e.target.value }))} /></div>
+            </div>
+            <div><Label className="text-[10px]">Landmark (optional)</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.customer_landmark} onChange={e => setInfOrderForm(f => ({ ...f, customer_landmark: e.target.value }))} /></div>
+            <div>
+              <Label className="text-[10px]">Products * (price set to Rs.0)</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-1 max-h-56 overflow-y-auto p-1">
+                {products.length === 0 ? <p className="text-[10px] text-[#59615D] italic">No products in catalogue.</p> : products.map(p => {
+                  const selected = infOrderForm.items.find(it => it.product_id === p.id);
+                  return (
+                    <div key={p.id} className={`border rounded-lg p-2 text-xs flex items-center gap-2 cursor-pointer ${selected ? "border-emerald-500 bg-emerald-50" : "border-[#E5E3DB]"}`} onClick={() => toggleInfOrderItem(p)} data-testid={`inf-order-product-${p.id}`}>
+                      <input type="checkbox" checked={!!selected} readOnly className="pointer-events-none" />
+                      <span className="flex-1 truncate">{p.name}</span>
+                      {selected && (
+                        <Input type="number" min={1} value={selected.quantity} onChange={e => updateInfOrderQty(p.id, e.target.value)} onClick={ev => ev.stopPropagation()} className="w-16 h-7 rounded-lg text-[10px]" data-testid={`inf-order-qty-${p.id}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div><Label className="text-[10px]">Notes</Label><Input className="rounded-xl h-9 text-xs" value={infOrderForm.notes} onChange={e => setInfOrderForm(f => ({ ...f, notes: e.target.value }))} /></div>
+            <Button onClick={submitInfOrder} className="w-full rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="inf-order-submit"><Truck className="w-3.5 h-3.5 mr-1" />Create Order (Rs.0)</Button>
           </div>
         </DialogContent>
       </Dialog>
