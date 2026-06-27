@@ -102,7 +102,13 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     }
   };
 
-  const canDelete = (o) => (role === "admin" || role === "sales_manager") && !o.deleted;
+  const canDelete = (o) => {
+    if (o.deleted) return false;
+    if (role === "admin" || role === "sales_manager") return true;
+    // Telecallers can delete duplicate / mistaken orders only while status is still pending
+    if (role === "telecaller" || role === "inhouse_telecaller") return o.status === "pending" || !o.status;
+    return false;
+  };
 
   const toggleSel = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleSelAll = () => setSelected(s => s.length === orders.length ? [] : orders.map(o => o.id));

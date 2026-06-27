@@ -109,15 +109,22 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
     @api_router.delete("/orders/{order_id}/soft-delete")
     async def soft_delete_order(order_id: str, data: dict = None,
                                 current_user: dict = Depends(get_current_user)):
-        if current_user['role'] not in ('admin', 'sales_manager'):
+        if current_user['role'] not in ('admin', 'sales_manager', 'telecaller', 'inhouse_telecaller'):
             raise HTTPException(status_code=403,
-                                detail="Only Admin or Sales Manager can delete orders")
+                                detail="Not authorised to delete orders")
         order = await db.orders.find_one({"id": order_id}, {"_id": 0})
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         if order.get("deleted"):
             raise HTTPException(status_code=400, detail="Order already deleted")
-        if current_user['role'] == 'sales_manager':
+        # Scope checks
+        if current_user['role'] in ('telecaller', 'inhouse_telecaller'):
+            # Telecaller can only delete orders they created and only while still pending
+            if order.get("created_by") != current_user['id']:
+                raise HTTPException(status_code=403, detail="You can only delete orders you created")
+            if order.get("status") not in ("pending", ""):
+                raise HTTPException(status_code=403, detail="Order is already processed — only manager can delete now")
+        elif current_user['role'] == 'sales_manager':
             allowed_ids = [current_user['id']]
             async for tc in db.telecallers.find(
                 {"managed_by": current_user['id']}, {"_id": 0, "id": 1}

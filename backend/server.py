@@ -8223,6 +8223,12 @@ try:
 except Exception as _cp:
     logger.error(f"customer_photos registration failed: {_cp}")
 
+try:
+    from today_stats import register_today_stats
+    register_today_stats(app, db, api_router, get_current_user, logger)
+except Exception as _ts:
+    logger.error(f"today_stats registration failed: {_ts}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

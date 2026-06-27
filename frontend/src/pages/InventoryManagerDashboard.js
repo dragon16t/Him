@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import LabelPrintButton, { BulkLabelButton } from "../components/LabelPrintButton";
+import TodayStatsCards from "../components/TodayStatsCards";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +47,8 @@ export default function InventoryManagerDashboard() {
   const [shipForm, setShipForm] = useState({tracking_link:"",courier_name:"",tracking_number:""});
   const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [detailOrder, setDetailOrder] = useState(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   const fetchData = useCallback(async () => {
     try { const r = await axios.get(`${API}/inventory/orders`); setOrders(r.data.orders||[]); setStats(r.data.stats||{}); } catch {}
@@ -123,6 +126,7 @@ export default function InventoryManagerDashboard() {
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        <TodayStatsCards/>
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
           <div className="bg-white rounded-xl border border-[#E5E3DB] p-4 text-center"><Package className="w-5 h-5 mx-auto mb-1 text-[#3B5249]"/><p className="font-heading text-xl font-bold">{stats.total||0}</p><p className="text-[9px] text-[#59615D] uppercase">Total Orders</p></div>

@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupee, Loader2, X, ClipboardList, RefreshCw, Wallet, AlertTriangle, Trophy, Zap, Clock } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import CustomerPhotosPanel from "../components/CustomerPhotosPanel";
+import OrdersPanel from "../components/OrdersPanel";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
 import NotificationBell from "../components/NotificationBell";
 import DarkModeToggle from "../components/DarkModeToggle";
@@ -570,30 +571,13 @@ export default function TelecallerDashboard() {
 
         {/* ORDERS LIST */}
         {tab === "orders" && (
-          <div className="bg-white rounded-xl border border-[#E5E3DB] p-4 mb-4" data-testid="tc-orders-panel">
-            <h3 className="font-heading text-base font-medium mb-3">📦 My Order History ({orders.length})</h3>
-            {orders.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">No orders yet. Orders you create from converted leads will appear here.</p> :
-            <div className="overflow-x-auto"><table className="w-full text-xs">
-              <thead><tr className="border-b bg-[#F9F8F6]">{["Order #","Customer","Phone","Address","Items","Amount","Payment","Status","Date"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-              <tbody>{orders.map(o=>(
-                <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6]" data-testid={`tc-order-row-${o.id}`}>
-                  <td className="p-2 font-mono text-[10px]">{o.order_number || o.id}</td>
-                  <td className="p-2 font-medium">{o.customer_name}</td>
-                  <td className="p-2">{o.customer_phone}</td>
-                  <td className="p-2 text-[10px] max-w-[220px]"><span title={[o.customer_address,o.customer_city,o.customer_pincode].filter(Boolean).join(", ")}>{[o.customer_address,o.customer_city,o.customer_pincode].filter(Boolean).join(", ").slice(0,60)||"-"}</span></td>
-                  <td className="p-2 text-[10px] max-w-[180px] truncate">{(o.items||[]).map(it=>`${it.product_name} ×${it.quantity}`).join(", ") || "-"}</td>
-                  <td className="p-2 font-bold text-[#3B5249]">Rs.{o.total_amount || 0}</td>
-                  <td className="p-2"><Badge variant="outline" className="text-[8px] uppercase">{o.payment_type || "cod"}</Badge></td>
-                  <td className="p-2"><Badge className={`text-[9px] capitalize ${o.status==='delivered'?'bg-emerald-100 text-emerald-800':o.status==='confirmed'?'bg-blue-100 text-blue-800':o.status==='cancelled'?'bg-red-100 text-red-800':'bg-yellow-100 text-yellow-800'}`}>{(o.status||'').replace(/_/g,' ')}</Badge></td>
-                  <td className="p-2 text-[10px]">{(o.created_at||"").slice(0,10)}</td>
-                </tr>
-              ))}</tbody>
-            </table></div>}
+          <div className="mb-4" data-testid="tc-orders-panel">
+            <OrdersPanel role="telecaller" />
           </div>
         )}
 
         {/* LEADS LIST */}
-        {!["calls","tasks","instructions","commissions","leaderboard","orders"].includes(tab) && (
+        {!["calls","tasks","instructions","commissions","leaderboard","orders","photos"].includes(tab) && (
           <>
             {/* Filter bar — status chips + date + search */}
             <div className="bg-white rounded-xl border border-[#E5E3DB] p-3 mb-3 space-y-2" data-testid="leads-filter-bar">
