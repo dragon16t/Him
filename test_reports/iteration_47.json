@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 47 — Bulk Lead Distribution (Admin/SM) end-to-end. Backend: 10/10 pytest tests passing in /app/backend/tests/test_iteration_47_lead_distribute.py covering preview-distribute + bulk-distribute across all 3 modes (equal/round_robin/name_mapped), role gating (admin must send sm_id, telecaller=403, SM auto-scoped), telecaller subset, fuzzy name-mapping (incl. unmatched), load-aware equal balancing (TC-A had 5 leads, TC-B had 0, 6 new phones → B:5 A:1 as spec'd), round-robin rotation, dedupe (rerun same payload → 3 skipped), phone normalisation collapsing 3 variants of '9447558409', and full lead-doc shape (assigned_to, managed_by, status='new', source='manual_bulk', phone_number_norm 10-digit, bulk_batch). Frontend (Playwright): Admin tab admin-tab-distribute renders panel + ld-admin-sm-select; selecting Test SM populates ld-tc-tc-002 (Anjali) + ld-tc-tc-003 (Sneha) + ld-select-all; ld-mode-name_mapped detects 👤 Anjali (3) → 'Anjali → Anjali Menon' (count 3) + 👤 Sneha (2) → 'Sneha → Sneha Thomas' (count 2) via ld-name-{name} chips; ld-preview-summary shows 'Distribution preview · 5 leads, Anjali Menon: 3, Sneha Thomas: 2'; commit produces ld-commit-summary + ld-result-tc-tc-002/003 badges. TWO frontend bugs found (see below).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "LeadDistributionPanel.jsx — parseFlatPhones (top of file)",
+        "issue": "Phone parser is broken for newline-separated input — which is literally what the textarea placeholder asks for ('Paste phone numbers (one per line, +91 prefix optional)'). The regex `/(\\+?\\d[\\d\\s\\-]{6,}\\d)/g` greedily matches across newlines because the `\\s` class includes `\\n`, so a paste of '9876500001\\n9876500002\\n9876500003' is detected as ONE phone number, not three. Confirmed live: ld-count-badge shows '1 numbers detected' for 3 phones one-per-line, but '3 numbers detected' for the same phones comma-separated. Fix: replace `\\s` with a literal space inside the char-class, e.g. `/(\\+?\\d[\\d \\-]{6,}\\d)/g`, OR split the input by /[\\r\\n,;]+/ first then scan each token.",
+        "selector": "[data-testid='ld-textarea'] + [data-testid='ld-count-badge']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "SalesManagerDashboard.js line 289 — <LeadDistributionPanel telecallers={telecallers} />",
+        "issue": "SM dashboard does NOT pass `smId` prop, so LeadDistributionPanel.jsx line 166 `{!smId && ...}` falls through and renders the admin SM-picker (data-testid='ld-admin-sm-select') in the SM view. Spec explicitly requires 'NO admin SM picker (auto-scoped)' on the SM dashboard. Live DOM confirms 1 ld-admin-sm-select present after SM login. The backend still auto-scopes via current_user, so it's not exploitable, but UX is wrong and the picker is empty/cosmetic for non-admin. Fix: pass the SM's own id, e.g. `<LeadDistributionPanel smId={user?.id} telecallers={telecallers} />`.",
+        "selector": "[data-testid='ld-admin-sm-select'] (should not exist on SM dashboard)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_47_lead_distribute.py",
+    "/app/test_reports/pytest/iter47_results.xml"
+  ],
+  "action_items": [
+    "Fix parseFlatPhones regex in /app/frontend/src/components/LeadDistributionPanel.jsx — change `[\\d\\s\\-]` to `[\\d \\-]` (drop \\s) so newlines split phones. Without this fix, any SM/Admin pasting their daily list one-per-line will create exactly one giant lead.",
+    "Pass `smId={user?.id}` to LeadDistributionPanel from SalesManagerDashboard.js to hide the admin SM picker on the SM view."
+  ],
+  "critical_code_review_comments": [
+    "lead_distribution.py is clean — phone_norm correctly strips non-digits and trims leading '91' on >10-digit numbers; _match_tc_by_name has 3-tier fallback (exact-norm → contains → first-token) that correctly resolves 'anjali' → 'Anjali Menon'.",
+    "_today_load uses regex '^YYYY-MM-DD' on created_at (ISO-8601 string), which works because the field is stored as ISO string, not BSON date. If a future iteration converts created_at to datetime, this dedupe + load query will silently break — consider using $gte/$lt with proper date objects for resilience.",
+    "Equal-mode allocator updates a local mutable load dict per allocation — correct load-aware behaviour without DB round-trips per phone.",
+    "bulk-distribute dedupe checks for ANY existing lead today with same phone_number_norm regardless of assigned_to/managed_by. This means if another SM already has a lead with phone X today, this SM cannot also create one — that's stricter than 'never assigned twice to the same TC' interpretation and may surprise multi-team setups. Spec was 'never assigned twice' so this is acceptably conservative, but worth flagging.",
+    "AdminLeadDistributionWrapper in AdminCRMPanel.js fetches /api/sales-managers and renders panel — works, but no error/loading state shown if the call fails (user sees empty dropdown silently).",
+    "parseFlatPhones is the production bug — and parseNameMapped uses a different `phoneOf` regex `(\\+?\\d[\\d\\s\\-]{6,})` that ALSO would suffer the same newline-greedy issue, except parseNameMapped iterates line-by-line first so it's protected. parseFlatPhones is the only path that doesn't iterate per-line."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_47_lead_distribute.py (new — 10 pytest tests, all passing)"],
+  "success_rate": {"backend": "100% (10/10 passing)", "frontend": "85% — all spec'd data-testids present and wired correctly; 2 UI bugs (newline phone parser + missing smId prop on SM dashboard)"},
+  "test_credentials": {"admin": "admin@celestaglow.com / admin123", "sales_manager": "salesmanager@celestaglow.com / sm123", "telecaller_1": "telecaller1@celestaglow.com / tc123"},
+  "seed_data_creation": "Tests planted ~14 TEST_-tagged leads in the DB today (3+3 from dedupe test, 5 from imbalance fixture, 3-4 from admin preview/commit). All carry source='manual_bulk' under sm-8654ce → tc-002. They will be naturally cleaned up tomorrow (today-only dedupe).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 47 regression baseline: /app/backend/tests/test_iteration_47_lead_distribute.py uses admin path with TARGET_SM_ID='sm-8654ce' (Test SM has Anjali Menon tc-002 + Sneha Thomas tc-003) since seed SM sm-001 has 0 TCs (only asm-001 Ravi Kumar). Note: bulk-distribute dedupes against ANY existing today's lead with same phone_number_norm, so reruns within the same day will skip created leads — tests use time-based prefixes to avoid that, but if you bench-mark a test twice in a day, expect created=0 on the second run. The SM dashboard renders an extra ld-admin-sm-select due to missing smId prop — bug logged under frontend_issues#2. parseFlatPhones bug — paste-per-line currently collapses to 1 phone; comma-separated still works.",
+  "rca of the issue": "parseFlatPhones bug: the character-class `[\\d\\s\\-]` in the phone regex includes `\\s` which matches \\n. The `g`-flagged `.match()` therefore captures the longest run of digits-and-whitespace, swallowing every line of the textarea into one match. Stripping `\\s+\\-` from the captured string then concatenates all the phones into a single '987650000198765000029876500003' string. Reproduce: open /dashboard as admin → admin-tab-distribute → pick any SM → paste '9876500001\\n9876500002\\n9876500003' in ld-textarea → ld-count-badge says '1 numbers detected'. Mitigation: replace the char-class with `[\\d \\-]` (literal space only) or pre-split text by /\\n/ before matching."
+}

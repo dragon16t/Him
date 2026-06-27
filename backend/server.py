@@ -8414,6 +8414,13 @@ try:
 except Exception as _sp:
     logger.error(f"sm_performance registration failed: {_sp}")
 
+try:
+    from lead_distribution import register_lead_distribution
+    register_lead_distribution(api_router, db, get_current_user)
+    logger.info("lead_distribution routes registered")
+except Exception as _ld:
+    logger.error(f"lead_distribution registration failed: {_ld}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")
