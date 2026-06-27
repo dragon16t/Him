@@ -190,9 +190,11 @@ export default function TelecallerDashboard() {
   useEffect(() => { setLeadPage(1); }, [tab, statusFilter, dateFilter, searchQuery]);
 
   const filteredLeads = React.useMemo(() => leads.filter(l => {
-    // Hide leads routed to collab and recently-ordered leads from active views
+    // Hide leads routed to collab
     if (l.status === "routed_to_collab") return false;
-    if (isRecentlyOrdered(l)) return false;
+    // Hide recently-ordered leads ONLY from the active "Today" bucket.
+    // Repeat / Relation tabs MUST surface those customers (they are the whole point of those tabs).
+    if (tab === "today" && isRecentlyOrdered(l)) return false;
     // Apply status + date + search filters on top of the tab
     if (statusFilter !== "all" && l.status !== statusFilter) return false;
     if (dateFilter) {
@@ -228,7 +230,7 @@ export default function TelecallerDashboard() {
       return true;
     }
     if (tab === "today") {
-      // Exclude leads that already delivered in the last 30 days from "Today" — they belong in Repeat once due
+      // Apply recently-ordered guard once here (covered by the early-return above too, but keeps logic explicit)
       if (isRecentlyOrdered(l)) return false;
       return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     }
@@ -338,11 +340,20 @@ export default function TelecallerDashboard() {
       items: f.items.map(i => i.product_id === pid ? { ...i, quantity: q } : i)
     }));
   };
+  const setItemPrice = (pid, price) => {
+    const parsed = parseFloat(price);
+    const p = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    setOrderForm(f => ({
+      ...f,
+      items: f.items.map(i => i.product_id === pid ? { ...i, price: p } : i)
+    }));
+  };
   const addProduct = (p) => {
     setOrderForm(f => {
       const ex = f.items.find(i => i.product_id === p.id);
       if (ex) return f;
-      return { ...f, items: [...f.items, { product_id: p.id, name: p.name, price: p.price, quantity: 1 }] };
+      // Don't auto-fill price — telecaller must enter it manually per order.
+      return { ...f, items: [...f.items, { product_id: p.id, name: p.name, price: 0, quantity: 1 }] };
     });
   };
 
@@ -605,6 +616,35 @@ export default function TelecallerDashboard() {
               </div>
             </div>
             <div className="space-y-2" ref={leadListRef}>
+            {/* Monthly grouping summary for Repeat / Relation tabs */}
+            {(tab === "repeat" || tab === "relationship") && filteredLeads.length > 0 && (() => {
+              const dateField = tab === "repeat" ? "next_repeat_order_date" : "next_relationship_date";
+              const buckets = {};
+              filteredLeads.forEach(l => {
+                const d = l[dateField] || "";
+                const key = d ? d.slice(0, 7) : "no-date";  // YYYY-MM
+                buckets[key] = (buckets[key] || 0) + 1;
+              });
+              const sortedKeys = Object.keys(buckets).sort();
+              const MONTH_NAMES = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+              const fmt = (k) => k === "no-date" ? "No date" : (() => { const [y, m] = k.split("-"); return `${MONTH_NAMES[parseInt(m, 10)] || m} ${y}`; })();
+              return (
+                <div className="bg-[#F9F8F6] border border-[#E5E3DB] rounded-xl p-3 mb-3" data-testid={`${tab}-monthly-summary`}>
+                  <p className="text-[10px] uppercase tracking-wider text-[#7B6D5A] font-semibold mb-1.5">{tab === "repeat" ? "Repeat Orders" : "Relationship Calls"} · Monthly Breakdown</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {sortedKeys.map(k => {
+                      const isPast = k !== "no-date" && k < today.slice(0, 7);
+                      const isCurrent = k === today.slice(0, 7);
+                      return (
+                        <span key={k} className={`px-2.5 py-1 rounded-full text-[10px] font-medium ${isCurrent ? "bg-[#3B5249] text-white" : isPast ? "bg-orange-100 text-orange-700 border border-orange-300" : "bg-white border border-[#E5E3DB] text-[#3B5249]"}`} data-testid={`${tab}-bucket-${k}`}>
+                          {fmt(k)}: <b>{buckets[k]}</b>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             {filteredLeads.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No leads in this category</p>:
             filteredLeads.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE).map(lead => (
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
@@ -762,18 +802,20 @@ export default function TelecallerDashboard() {
           </div>
           <div><Label className="text-xs">Landmark (optional)</Label><Input value={orderForm.customer_landmark} onChange={e=>setOrderForm(f=>({...f,customer_landmark:e.target.value}))} className="rounded-xl" placeholder="Near XYZ school" data-testid="order-customer-landmark"/></div>
           <PickupLocationSelect value={orderForm.pickup_location} onChange={(v)=>setOrderForm(f=>({...f,pickup_location:v}))} testId="order-pickup-select" />
-          <div><Label className="text-xs">Products & Quantity</Label>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto border border-[#E5E3DB] rounded-xl p-2">{products.map(p=>{const item=orderForm.items.find(i=>i.product_id===p.id); return(
-              <div key={p.id} className="flex items-center justify-between text-xs gap-2">
-                <span className="flex-1 truncate">{p.name} <span className="text-[#59615D]">(Rs.{p.price})</span></span>
+          <div><Label className="text-xs">Products & Quantity <span className="text-[10px] text-[#A66E4E]">(enter price manually per order)</span></Label>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto border border-[#E5E3DB] rounded-xl p-2">{products.map(p=>{const item=orderForm.items.find(i=>i.product_id===p.id); return(
+              <div key={p.id} className="flex items-center justify-between text-xs gap-2 flex-wrap">
+                <span className="flex-1 truncate min-w-[100px]" title={p.name}>{p.name}</span>
                 {!item ? (
                   <Button size="sm" type="button" className="h-6 px-2 rounded-full bg-[#3B5249] text-white text-[10px]" onClick={()=>addProduct(p)} data-testid={`add-product-${p.id}`}><Plus className="w-3 h-3"/></Button>
                 ) : (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <Input type="number" min="0" step="0.01" value={item.price} onChange={e=>setItemPrice(p.id, e.target.value)} placeholder="Price" className="h-6 w-16 text-center text-[10px] rounded-md p-0" data-testid={`price-${p.id}`}/>
+                    <span className="text-[9px] text-[#59615D]">×</span>
                     <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB] text-xs" onClick={()=>updateItemQty(p.id,-1)} data-testid={`dec-${p.id}`}>−</button>
                     <Input type="number" value={item.quantity} onChange={e=>setItemQty(p.id,e.target.value)} className="h-6 w-12 text-center text-[10px] rounded-md p-0" data-testid={`qty-${p.id}`}/>
                     <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB] text-xs" onClick={()=>updateItemQty(p.id,1)} data-testid={`inc-${p.id}`}>+</button>
-                    <span className="text-[#3B5249] font-semibold ml-1 text-[10px] min-w-[55px] text-right">Rs.{p.price*item.quantity}</span>
+                    <span className="text-[#3B5249] font-semibold ml-1 text-[10px] min-w-[55px] text-right">Rs.{(item.price||0)*item.quantity}</span>
                   </div>
                 )}
               </div>
@@ -781,11 +823,11 @@ export default function TelecallerDashboard() {
             {orderForm.items.length>0 && (
               <div className="mt-2 bg-[#F9F8F6] rounded-lg p-2 flex justify-between items-center text-xs">
                 <span className="text-[#59615D]">{orderForm.items.length} item{orderForm.items.length!==1?'s':''}, {orderForm.items.reduce((s,i)=>s+i.quantity,0)} qty</span>
-                <span className="font-semibold text-[#3B5249]">Subtotal: Rs.{orderForm.items.reduce((s,i)=>s+i.price*i.quantity,0)}</span>
+                <span className="font-semibold text-[#3B5249]">Subtotal: Rs.{orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0)}</span>
               </div>
             )}
           </div>
-          <div><Label className="text-xs">Total Amount {orderForm.items.length>0 && <span className="text-[10px] text-[#59615D]">(auto from products)</span>}</Label><Input type="number" value={orderForm.items.reduce((s,i)=>s+i.price*i.quantity,0) || orderForm.total_amount} onChange={e=>setOrderForm(f=>({...f,total_amount:Number(e.target.value),items:[]}))} className="rounded-xl font-bold" data-testid="order-total"/></div>
+          <div><Label className="text-xs">Total Amount {orderForm.items.length>0 && <span className="text-[10px] text-[#59615D]">(auto from product prices × qty)</span>}</Label><Input type="number" value={orderForm.items.length>0 ? orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0) : orderForm.total_amount} onChange={e=>setOrderForm(f=>({...f,total_amount:Number(e.target.value), items: f.items.length>0?f.items:[]}))} className="rounded-xl font-bold" data-testid="order-total"/></div>
           <div><Label className="text-xs">Payment</Label><Select value={orderForm.payment_type} onValueChange={v=>setOrderForm(f=>({...f,payment_type:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="cod">COD</SelectItem><SelectItem value="upi">UPI</SelectItem><SelectItem value="online">Online</SelectItem></SelectContent></Select></div>
           <Button onClick={handleCreateOrder} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-order-btn">Create Order</Button>
         </div>

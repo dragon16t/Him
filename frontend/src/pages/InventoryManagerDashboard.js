@@ -52,6 +52,11 @@ export default function InventoryManagerDashboard() {
   const [detailOrder, setDetailOrder] = useState(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
+  // Inventory Manager — order edit + tag state
+  const [editOrder, setEditOrder] = useState(null);
+  const [editForm, setEditForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", payment_type: "cod" });
+  const [orderBadgeInput, setOrderBadgeInput] = useState("");
+  const ORDER_BADGE_PRESETS = ["DTDC","Delhivery","India Post","Bluedart","XpressBees","Ekart","Verified","Shipment Delayed","Hold","COD Reject Risk","Repeat Customer","Priority"];
 
   const fetchData = useCallback(async () => {
     try { const r = await axios.get(`${API}/inventory/orders`); setOrders(r.data.orders||[]); setStats(r.data.stats||{}); } catch {}
@@ -128,6 +133,64 @@ export default function InventoryManagerDashboard() {
     }
   };
   const openDetail = (o) => { setDetailOrder(o); setShowOrderDetail(true); };
+
+  // ---- Inventory Manager: Order edit ----
+  const openOrderEdit = (o) => {
+    setEditOrder(o);
+    setEditForm({
+      customer_name: o.customer_name || "",
+      customer_phone: o.customer_phone || "",
+      customer_address: o.customer_address || "",
+      customer_city: o.customer_city || "",
+      customer_pincode: o.customer_pincode || "",
+      customer_landmark: o.customer_landmark || "",
+      payment_type: o.payment_type || "cod",
+    });
+  };
+  const submitOrderEdit = async () => {
+    if (!editOrder) return;
+    if (!editForm.customer_address.trim()) return toast.error("Address required");
+    try {
+      await axios.put(`${API}/orders/${editOrder.id}`, editForm);
+      toast.success("Order updated");
+      setEditOrder(null);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  // ---- Inventory Manager: Order soft-delete ----
+  const softDeleteOrder = async (o) => {
+    const reason = window.prompt(`Move order ${o.id} (Rs.${o.total_amount || 0}) to trash?\n\nReason:`);
+    if (!reason) return;
+    try {
+      await axios.delete(`${API}/orders/${o.id}/soft-delete`, { data: { reason } });
+      toast.success("Order moved to trash. Revenue & commission reversed.");
+      setShowOrderDetail(false);
+      fetchData();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  // ---- Inventory Manager: Order badges ----
+  const addOrderBadge = async (label) => {
+    const b = (label || orderBadgeInput).trim();
+    if (!b || !detailOrder) return;
+    try {
+      const r = await axios.put(`${API}/orders/${detailOrder.id}/badges`, { add: b });
+      const updated = { ...detailOrder, badges: r.data.badges };
+      setDetailOrder(updated);
+      setOrders(os => os.map(o => o.id === detailOrder.id ? { ...o, badges: r.data.badges } : o));
+      setOrderBadgeInput("");
+      toast.success("Badge added");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const removeOrderBadge = async (label) => {
+    if (!detailOrder) return;
+    try {
+      const r = await axios.put(`${API}/orders/${detailOrder.id}/badges`, { remove: label });
+      const updated = { ...detailOrder, badges: r.data.badges };
+      setDetailOrder(updated);
+      setOrders(os => os.map(o => o.id === detailOrder.id ? { ...o, badges: r.data.badges } : o));
+      toast.success("Badge removed");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
 
   const logout = () => { localStorage.clear(); navigate("/login"); };
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
@@ -223,6 +286,7 @@ export default function InventoryManagerDashboard() {
                         <p className="text-[10px] text-[#59615D]">{o.customer_phone} | Rs.{o.total_amount}</p>
                         <p className="text-[10px] text-[#3B5249] truncate" title={o.customer_address}>📍 {o.customer_address || "No address"}</p>
                         {itemsSummary(o) && <p className="text-[10px] text-[#2C3531] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>🛍️ {itemsSummary(o)}</p>}
+                        {(o.badges||[]).length>0 && <div className="flex flex-wrap gap-1 mt-1">{(o.badges||[]).slice(0,3).map(b => <span key={b} className="text-[8px] px-1.5 py-0.5 rounded-full bg-[#3B5249]/10 text-[#3B5249] border border-[#3B5249]/30">{b}</span>)}{(o.badges||[]).length>3 && <span className="text-[8px] text-[#A66E4E]">+{(o.badges||[]).length-3}</span>}</div>}
                         <p className="text-[9px] text-[#A66E4E]">{o.created_at?.slice(0,10)} | {o.payment_type?.toUpperCase()}{o.created_by_name?` • by ${o.created_by_name}`:""}</p>
                         {o.tracking_link && <a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[9px] text-purple-700 underline block truncate">📦 {o.courier_name||"Track"}</a>}
                         <div className="flex gap-1 mt-2 flex-wrap" onClick={e=>e.stopPropagation()}>
@@ -253,7 +317,10 @@ export default function InventoryManagerDashboard() {
               <tbody>{paginated.map(o=>(
                 <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
-                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}</div></td></tr>
+                <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}
+                  <Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2" onClick={()=>openOrderEdit(o)} data-testid={`inv-row-edit-${o.id}`}>✏️</Button>
+                  <Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>softDeleteOrder(o)} data-testid={`inv-row-delete-${o.id}`}>🗑</Button>
+                </div>{(o.badges||[]).length>0 && <div className="flex flex-wrap gap-1 mt-1">{(o.badges||[]).slice(0,3).map(b => <span key={b} className="text-[8px] px-1.5 py-0.5 rounded-full bg-[#3B5249]/10 text-[#3B5249] border border-[#3B5249]/30">{b}</span>)}{(o.badges||[]).length>3 && <span className="text-[8px] text-[#A66E4E]">+{(o.badges||[]).length-3}</span>}</div>}</td></tr>
               ))}</tbody></table></div>
               {totalPages > 1 && (
                 <div className="flex items-center justify-center gap-2 mt-4" data-testid="inv-pagination">
@@ -394,7 +461,8 @@ export default function InventoryManagerDashboard() {
       </DialogContent></Dialog>
 
       {/* Order Detail Dialog */}
-      <Dialog open={showOrderDetail} onOpenChange={setShowOrderDetail}><DialogContent className="rounded-2xl max-w-lg" data-testid="order-detail-dialog"><DialogHeader><DialogTitle className="font-heading">Order Details</DialogTitle></DialogHeader>
+      <Dialog open={showOrderDetail} onOpenChange={setShowOrderDetail}><DialogContent className="rounded-2xl max-w-lg max-h-[90vh] overflow-y-auto" data-testid="order-detail-dialog" aria-describedby="order-detail-desc"><DialogHeader><DialogTitle className="font-heading">Order Details</DialogTitle></DialogHeader>
+        <p id="order-detail-desc" className="sr-only">Order details with edit, delete and tagging options.</p>
         {detailOrder && <div className="space-y-3 text-sm">
           <div className="grid grid-cols-2 gap-2 text-xs"><div><span className="text-[#59615D]">Order:</span> <b>{detailOrder.id}</b></div><div><span className="text-[#59615D]">Status:</span> <Badge className="text-[10px]">{detailOrder.status}</Badge></div></div>
           <div className="bg-[#F9F8F6] rounded-xl p-3">
@@ -403,11 +471,58 @@ export default function InventoryManagerDashboard() {
             <p className="text-xs text-[#3B5249] mt-1">📍 <b>Full Address:</b><br/>{detailOrder.customer_address}{detailOrder.customer_city?`, ${detailOrder.customer_city}`:""}{detailOrder.customer_pincode?` - ${detailOrder.customer_pincode}`:""}</p>
             {detailOrder.customer_landmark && <p className="text-[10px] text-[#A66E4E]">Landmark: {detailOrder.customer_landmark}</p>}
           </div>
-          <div className="text-xs"><b>Items:</b><ul className="list-disc ml-4 mt-1">{(detailOrder.items||[]).map((it,i)=>(<li key={`imd-${i}`}>{it.name} × {it.quantity} = Rs.{it.price*it.quantity}</li>))}</ul></div>
+          <div className="text-xs"><b>Items:</b><ul className="list-none ml-0 mt-1 space-y-1">{(detailOrder.items||[]).map((it,i)=>(<li key={`imd-${i}`} className="bg-[#F4F1EA] rounded-lg px-2 py-1 flex justify-between items-center"><span><b className="text-[#2C3531]">{it.name||it.product_name}</b> <span className="text-[#59615D]">× {it.quantity}</span></span>{(it.price>0)&&<span className="text-[#3B5249] font-semibold">Rs.{it.price*it.quantity}</span>}</li>))}</ul></div>
           <div className="grid grid-cols-2 gap-2 text-xs"><div>Total: <b>Rs.{detailOrder.total_amount}</b></div><div>Payment: <b>{detailOrder.payment_type?.toUpperCase()}</b></div></div>
           <div className="text-xs"><b>Created by:</b> {detailOrder.created_by_name||'-'} ({detailOrder.created_by_role}) on {detailOrder.created_at?.slice(0,16).replace('T',' ')}</div>
           {detailOrder.tracking_link && <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 text-xs"><b>📦 Tracking:</b> {detailOrder.courier_name||""} {detailOrder.tracking_number||""}<br/><a href={detailOrder.tracking_link} target="_blank" rel="noreferrer" className="text-purple-700 underline">{detailOrder.tracking_link}</a><br/>{detailOrder.shipped_by_name && <span className="text-[10px] text-[#59615D]">Shipped by: {detailOrder.shipped_by_name} on {detailOrder.shipped_at?.slice(0,16).replace('T',' ')}</span>}</div>}
           {detailOrder.delivered_at && <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-xs"><b>✅ Delivered</b> on {detailOrder.delivered_at?.slice(0,16).replace('T',' ')}{detailOrder.delivered_by_name?` by ${detailOrder.delivered_by_name}`:""}</div>}
+
+          {/* Order tags / badges */}
+          <div className="border-t pt-3 mt-2">
+            <Label className="text-xs flex items-center justify-between"><span>Order Tags</span><span className="text-[9px] text-[#A66E4E]">click to remove</span></Label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5 min-h-[28px] p-2 bg-[#F9F8F6] rounded-lg" data-testid="order-badge-list">
+              {(detailOrder.badges || []).length === 0 ? <span className="text-[10px] text-[#A66E4E] italic">No tags yet</span> :
+                (detailOrder.badges || []).map(b => (
+                  <button key={b} onClick={() => removeOrderBadge(b)} className="px-2 py-0.5 rounded-full text-[10px] bg-[#3B5249] text-white hover:bg-red-600 transition flex items-center gap-1" data-testid={`order-badge-chip-${b}`} title="Click to remove">
+                    {b} <span className="text-[12px] leading-none">×</span>
+                  </button>
+                ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {ORDER_BADGE_PRESETS.filter(p => !(detailOrder.badges || []).includes(p)).map(p => (
+                <button key={p} onClick={() => addOrderBadge(p)} className="px-2 py-0.5 rounded-full text-[10px] bg-white border border-[#E5E3DB] text-[#59615D] hover:bg-[#3B5249] hover:text-white transition" data-testid={`order-badge-preset-${p}`}>+ {p}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Input value={orderBadgeInput} onChange={e => setOrderBadgeInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addOrderBadge(); }} placeholder="Custom tag (e.g. RTO Risk)" className="rounded-xl text-xs h-8" data-testid="order-badge-input" />
+              <Button onClick={() => addOrderBadge()} className="rounded-full bg-[#3B5249] text-white text-xs h-8" data-testid="order-badge-add">Add</Button>
+            </div>
+          </div>
+
+          {/* Action row: Edit + Delete */}
+          <div className="border-t pt-3 mt-2 flex gap-2">
+            <Button variant="outline" onClick={() => openOrderEdit(detailOrder)} className="flex-1 rounded-full text-xs h-9" data-testid="inv-edit-order-btn">✏️ Edit Order</Button>
+            <Button variant="outline" onClick={() => softDeleteOrder(detailOrder)} className="flex-1 rounded-full text-xs h-9 border-red-300 text-red-700 hover:bg-red-50" data-testid="inv-delete-order-btn">🗑 Delete</Button>
+          </div>
+        </div>}
+      </DialogContent></Dialog>
+
+      {/* Edit Order Dialog */}
+      <Dialog open={!!editOrder} onOpenChange={o => !o && setEditOrder(null)}><DialogContent className="rounded-2xl max-w-md" data-testid="edit-order-dialog" aria-describedby="edit-order-desc"><DialogHeader><DialogTitle className="font-heading">Edit Order {editOrder?.id}</DialogTitle></DialogHeader>
+        <p id="edit-order-desc" className="sr-only">Edit shipping address and customer details.</p>
+        {editOrder && <div className="space-y-2 text-sm">
+          <div><Label className="text-xs">Customer Name</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_name} onChange={e => setEditForm(f => ({ ...f, customer_name: e.target.value }))} data-testid="edit-customer-name" /></div>
+          <div><Label className="text-xs">Phone</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_phone} onChange={e => setEditForm(f => ({ ...f, customer_phone: e.target.value }))} data-testid="edit-customer-phone" /></div>
+          <div><Label className="text-xs">Address *</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_address} onChange={e => setEditForm(f => ({ ...f, customer_address: e.target.value }))} data-testid="edit-customer-address" /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">City</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_city} onChange={e => setEditForm(f => ({ ...f, customer_city: e.target.value }))} /></div>
+            <div><Label className="text-xs">Pincode</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_pincode} onChange={e => setEditForm(f => ({ ...f, customer_pincode: e.target.value }))} /></div>
+          </div>
+          <div><Label className="text-xs">Landmark</Label><Input className="rounded-xl h-9 text-xs" value={editForm.customer_landmark} onChange={e => setEditForm(f => ({ ...f, customer_landmark: e.target.value }))} /></div>
+          <div><Label className="text-xs">Payment Type</Label>
+            <Select value={editForm.payment_type} onValueChange={v => setEditForm(f => ({ ...f, payment_type: v }))}><SelectTrigger className="rounded-xl h-9 text-xs"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="cod">COD</SelectItem><SelectItem value="prepaid">Prepaid</SelectItem><SelectItem value="upi">UPI</SelectItem><SelectItem value="free_influencer">Free / Influencer</SelectItem></SelectContent></Select>
+          </div>
+          <Button onClick={submitOrderEdit} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="edit-order-submit">Save Changes</Button>
         </div>}
       </DialogContent></Dialog>
 

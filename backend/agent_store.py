@@ -549,7 +549,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
     @router.get("/store/{slug}/meta")
     async def store_meta(slug: str):
         await _ensure_seed()
-        agent = await db.store_agents.find_one({"slug": slug, "active": True})
+        agent = await db.store_agents.find_one({"slug": slug, "active": {"$ne": False}})
         if not agent:
             raise HTTPException(404, "Agent storefront not found")
         s = await _get_settings()
@@ -568,7 +568,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
     @router.get("/store/{slug}/products")
     async def store_products(slug: str):
         await _ensure_seed()
-        agent = await db.store_agents.find_one({"slug": slug, "active": True})
+        agent = await db.store_agents.find_one({"slug": slug, "active": {"$ne": False}})
         if not agent:
             raise HTTPException(404, "Agent storefront not found")
         items = []
@@ -579,7 +579,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
 
     @router.get("/store/{slug}/product/{product_slug}")
     async def store_product_detail(slug: str, product_slug: str):
-        agent = await db.store_agents.find_one({"slug": slug, "active": True})
+        agent = await db.store_agents.find_one({"slug": slug, "active": {"$ne": False}})
         if not agent:
             raise HTTPException(404, "Agent storefront not found")
         p = await db.store_products.find_one({"slug": product_slug, "active": True})
@@ -589,7 +589,7 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
 
     @router.post("/store/{slug}/order")
     async def store_place_order(slug: str, data: dict):
-        agent = await db.store_agents.find_one({"slug": slug, "active": True})
+        agent = await db.store_agents.find_one({"slug": slug, "active": {"$ne": False}})
         if not agent:
             raise HTTPException(404, "Agent storefront not found")
         items_in = data.get("items") or []

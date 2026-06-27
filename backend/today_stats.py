@@ -25,9 +25,14 @@ def register_today_stats(app, db, api_router, get_current_user, logger):
         return list(ids)
 
     @api_router.get("/today-stats")
-    async def today_stats(current_user: dict = Depends(get_current_user)):
-        today = date.today().isoformat()
-        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    async def today_stats(date_str: str | None = None, current_user: dict = Depends(get_current_user)):
+        # Allow ?date=YYYY-MM-DD to fetch any specific day; default = today
+        try:
+            target = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else date.today()
+        except Exception:
+            target = date.today()
+        today = target.isoformat()
+        tomorrow = (target + timedelta(days=1)).isoformat()
         role = current_user["role"]
         uid = current_user["id"]
         scope_orders = {"deleted": {"$ne": True}, "created_at": {"$gte": today, "$lt": tomorrow}}
@@ -71,6 +76,7 @@ def register_today_stats(app, db, api_router, get_current_user, logger):
                 bucket["count"] = len(bucket["leads"])
         leaderboard = sorted(by_tc.values(), key=lambda x: x.get("count", 0), reverse=True)
         return {
+            "date": today,
             "orders_today_count": len(orders_today),
             "revenue_today": round(revenue_today, 2),
             "delivered_today": delivered_today,

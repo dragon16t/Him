@@ -1359,6 +1359,47 @@ async def edit_order(order_id: str, data: dict, current_user: dict = Depends(get
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     return {"message": "Order updated", "order": updated}
 
+@api_router.put("/orders/{order_id}/badges")
+async def update_order_badges(order_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Inventory Manager / Admin / SM can tag orders with workflow badges
+    (e.g. 'DTDC', 'Shipment Delayed', 'Custom Address', 'Verified'). Visible to all roles.
+    Body: {badges:[...]} OR {add:'string'} / {remove:'string'}."""
+    if current_user['role'] not in ('admin', 'inventory_manager', 'sales_manager', 'assistant_sales_manager', 'district_manager'):
+        raise HTTPException(status_code=403, detail="Not authorised to tag orders")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    current = list(order.get("badges") or [])
+    if "badges" in data and isinstance(data["badges"], list):
+        new_badges = []
+        for b in data["badges"]:
+            b = (str(b or "")).strip()
+            if b and b not in new_badges:
+                new_badges.append(b)
+        new_badges = new_badges[:10]
+    else:
+        new_badges = current[:]
+        add = (str(data.get("add") or "")).strip()
+        rem = (str(data.get("remove") or "")).strip()
+        if add and add not in new_badges:
+            new_badges.append(add)
+        if rem and rem in new_badges:
+            new_badges.remove(rem)
+        new_badges = new_badges[:10]
+    now = datetime.now(timezone.utc).isoformat()
+    update = {"badges": new_badges, "badges_updated_at": now,
+              "badges_updated_by_name": current_user.get('name', '')}
+    # Convenience: if a courier-name badge was supplied via 'courier_name' field, also update it
+    if data.get("courier_name"):
+        update["courier_name"] = str(data["courier_name"]).strip()
+    if data.get("tracking_link"):
+        update["tracking_link"] = str(data["tracking_link"]).strip()
+    if data.get("shipment_date"):
+        update["shipment_date"] = str(data["shipment_date"]).strip()
+    await db.orders.update_one({"id": order_id}, {"$set": update})
+    await log_audit("tag_order", "order", order_id, current_user["id"], current_user.get("name", ""), f"Updated order badges: {new_badges}")
+    return {"badges": new_badges, "message": "Order badges updated"}
+
 @api_router.put("/orders/{order_id}/approve")
 async def approve_order(order_id: str, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager', 'admin', 'sales_manager']:
@@ -8438,6 +8479,19 @@ async def startup():
     )
     # Backfill: rewrite any stale store_url that still references the old domain
     try:
+        # Ensure every existing agent has active flag explicitly set (legacy docs may be missing it)
+        await db.store_agents.update_many(
+            {"active": {"$exists": False}},
+            {"$set": {"active": True}}
+        )
+        # Also pre-compute store_url + agent_portal_url for any docs missing them
+        await db.store_agents.update_many(
+            {"$or": [{"store_url": {"$exists": False}}, {"store_url": None}, {"store_url": ""}]},
+            [{"$set": {
+                "store_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug"]},
+                "agent_portal_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug", "/agent-login"]}
+            }}]
+        )
         await db.store_agents.update_many(
             {"store_url": {"$regex": "celestaglow\\.com/store", "$not": {"$regex": "software\\."}}},
             [{"$set": {

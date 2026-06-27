@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 44 — Full E2E pass. Backend: 15/15 pytest tests passing covering agent storefront active!=False (meta+products both return 200 for newly-created agent), SM agent create returns + persists store_url/agent_portal_url, /api/today-stats?date_str=YYYY-MM-DD accepts arbitrary date and includes 'date' field, PUT /api/orders/{id}/badges supports add/remove/replace + custom + convenience fields (courier_name/shipment_date) with RBAC 403 for telecaller/agent, DELETE /orders/{id}/soft-delete now permits inventory_manager, PUT /orders/{id} editable by inventory_manager, GET /v2/orders includes items[].name/quantity. Frontend: Inventory Manager Pipeline cards show product summary 🛍️ + applied badges; order-detail dialog shows bold item names, full Order Tags section with all 11 preset chips + click-to-remove + custom tag input + Add button, Edit Order + Delete buttons present and functional (PUT /orders/{id} via Edit was exercised end-to-end and persisted). IM List view shows PRODUCTS column with 'Test SPF (1 qty)', inline ✏️ + 🗑 + Label buttons per row, and applied badges (Priority, CustomTag44) under actions. Telecaller Repeat/Relation tabs reachable but DB has zero leads in those buckets so monthly banner could not be visually exercised — code path verified by static review (TelecallerDashboard.js lines 612-640). TC Create-Order dialog manual-price code path verified by static review: addProduct sets price:0 with explicit no-autofill comment, render uses <Input type=number value={item.price}> with placeholder 'Price'. OrdersPanel.js item row format '• <b>Product</b> ×qty = Rs.subtotal' with price>0 guard verified live on TC Orders tab and IM List/Pipeline.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_44.py",
+    "/app/test_reports/pytest/iter44_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Seed a few leads with delivered orders so reviewers can visually exercise the Repeat/Relation monthly-breakdown banner — DB currently has 0 leads, so the chip count is 'Repeat (0/0)' / 'Relation (0/0)' on the preview and the banner has nothing to render.",
+    "(Production note carried from request) Storefront fix (active!=False) is on preview only — software.celestaglow.com still needs a redeploy for harshad-2 store URL to resolve."
+  ],
+  "critical_code_review_comments": [
+    "agent_store.py storefront endpoints correctly relaxed to {'active': {'$ne': False}} — legacy docs missing the active field resolve correctly (verified live with a freshly created agent slug).",
+    "PUT /api/orders/{id}/badges (server.py ~line 1362) correctly accepts {add}, {remove}, {badges:[...]}, and convenience fields {courier_name, shipment_date}; RBAC denies telecaller + agent. Clean implementation.",
+    "user_enhancements.py soft_delete_order now lists 'inventory_manager' in the allowed-roles tuple at line 112; verified IM can soft-delete an order.",
+    "today_stats.py accepts ?date_str query and returns the resolved date — clean.",
+    "TelecallerDashboard.addProduct (line 351) correctly sets price:0 with no auto-fill, and the rendered per-item Input has type=number/min=0/step=0.01 with placeholder 'Price' — meets spec.",
+    "OrdersPanel.js item row (line 210) uses bold <b className='font-medium'> wrapping product_name/name, and conditionally hides the 'Rs.subtotal' suffix when item.price === 0 — meets spec exactly.",
+    "InventoryManagerDashboard order-detail dialog renders 11 preset badge chips + a Custom-tag <Input> + Add button + click-to-remove on applied tags — visually verified.",
+    "server.py is still ~8600 lines (carry-over modularity debt — exceeds 700-line guideline). Same comment as iter 43."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_44.py (new — 15 pytest tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 tests passing)",
+    "frontend": "100% on the surfaces exercised — IM Pipeline cards (badges + product summary), IM order-detail dialog (Edit/Delete/Tags/preset chips/custom input), IM List view (inline Edit/Delete + badge previews + Products column), IM top date picker, TC Orders tab item row formatting, TC Repeat/Relation tab navigability. TC Repeat/Relation monthly banner could not be visually exercised because DB has no leads in those buckets — code path verified statically."
+  },
+  "test_credentials": {
+    "admin": "admin@celestaglow.com / admin123 (verified)",
+    "sales_manager": "salesmanager@celestaglow.com / sm123 (verified)",
+    "telecaller_1": "telecaller1@celestaglow.com / tc123 (verified)",
+    "inventory_manager": "inventory@celestaglow.com / inv123 (verified)",
+    "agent_1": "agent1@celestaglow.com / agent123 (verified - used for RBAC 403 on badges)"
+  },
+  "seed_data_creation": "Created TEST_-prefixed agent (TEST_Agent_Iter44 with unique email per run) and TEST_-prefixed orders (TEST_Iter44_Cust / TEST_Iter44_DelCust) to exercise badges/edit/soft-delete flows. Tests do not delete seeded data — TEST_ prefix makes them easy to identify and clean up later.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression baseline for iteration 44 is /app/backend/tests/test_iteration_44.py — 15 tests, all passing. Combined with iter 43 suite they cover all storefront/badge/order-soft-delete/today-stats/v2-orders/SM-agent paths. If DB gets wiped, call POST /api/admin/restore-seed body={password:'AMVPA2478F@123'} (admin Bearer) then sudo supervisorctl restart backend + sleep ~10s. Note that SM POST /sales-manager/agents response is shaped as {agent:{...}, initial_password} not flat — backend tests unwrap it. Order create POST /api/orders also wraps the order as {order:{...}}. TC Repeat/Relation tabs cannot be visually exercised on this preview without first seeding leads with prior orders.",
+  "rca of the issue": "N/A — feature acceptance iteration. No bugs found. All requested fixes/features land correctly."
+}

@@ -109,7 +109,7 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
     @api_router.delete("/orders/{order_id}/soft-delete")
     async def soft_delete_order(order_id: str, data: dict = None,
                                 current_user: dict = Depends(get_current_user)):
-        if current_user['role'] not in ('admin', 'sales_manager', 'telecaller', 'inhouse_telecaller'):
+        if current_user['role'] not in ('admin', 'sales_manager', 'telecaller', 'inhouse_telecaller', 'inventory_manager'):
             raise HTTPException(status_code=403,
                                 detail="Not authorised to delete orders")
         order = await db.orders.find_one({"id": order_id}, {"_id": 0})
