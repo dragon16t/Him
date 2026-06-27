@@ -69,13 +69,15 @@ function parseNameMapped(text) {
   return mapping;
 }
 
-// Parse a flat list — just pluck phone numbers ignoring everything else.
+// Parse a flat list — pluck phone numbers ignoring everything else.
+// Split by line/comma/semicolon first so each token is a single phone candidate.
 function parseFlatPhones(text) {
   const phones = [];
-  const re = /(\+?\d[\d\s\-]{6,}\d)/g;
-  const matches = (text || "").match(re) || [];
-  for (const m of matches) {
-    phones.push(m.replace(/[\s\-]/g, ""));
+  const tokens = (text || "").split(/[\r\n,;]+/);
+  const re = /(\+?\d[\d \-]{6,}\d)/;
+  for (const tok of tokens) {
+    const m = tok.match(re);
+    if (m) phones.push(m[1].replace(/[\s\-]/g, ""));
   }
   return phones;
 }

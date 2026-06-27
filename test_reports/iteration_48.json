@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 48 — Targeted regression of the 2 frontend fixes flagged in iteration_47.json. Backend smoke: POST /api/leads/preview-distribute as admin with sm_id=sm-8654ce, mode=equal, phones=['9876500011','9876500012','9876500013'] → 200, total=3, summary=Sneha Thomas:3. FIX#1 (parseFlatPhones newline regex): Admin → admin-tab-distribute → pick Test SM (sm-8654ce, 2 TC chips loaded: Anjali+Sneha) → mode=equal → fill ld-textarea with '9876500011\\n9876500012\\n9876500013' → ld-count-badge reads exactly '3 numbers detected' (was '1' in iter47). Preview → ld-preview-summary shows 'Distribution preview · 3 leads, Sneha Thomas: 3'. ✓ FIXED. FIX#2 (SM dashboard smId prop): Login as salesmanager@celestaglow.com → tab-distribute → lead-distribution-panel renders → query_selector('[data-testid=ld-admin-sm-select]') returns None (was present in iter47). ✓ FIXED. SM preview with 4 newline-separated phones also works (badge='4 numbers detected', preview shows 'Ravi Kumar: 4' since this SM's team auto-scopes via smId={user.id}). Both bugs from iteration 47 are resolved.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_47_lead_distribute.py",
+    "/app/test_reports/iteration_47.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "parseFlatPhones now correctly tokenises by /[\\r\\n,;]+/ before applying the phone regex /(\\+?\\d[\\d \\-]{6,}\\d)/ — newline-separated paste is now reliable.",
+    "SalesManagerDashboard.js:289 now passes smId={user?.id} so LeadDistributionPanel.jsx's `{!smId && ...}` block correctly hides the admin SM picker on the SM view.",
+    "Note: the SM account used in this run (salesmanager@celestaglow.com — 'Hubby Brahman') has 0 TCs and only 1 ASM (Ravi Kumar). The preview still works (Ravi Kumar: 4) — backend includes the ASM in the SM's auto-scoped allocation pool. UI shows 'No telecallers under this Sales Manager' but allocation still proceeds — minor cosmetic inconsistency, not a blocker. This is pre-existing seed behaviour (already flagged in iter47 context)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (1/1 smoke curl passed)", "frontend": "100% (both targeted fixes verified)"},
+  "test_credentials": {"admin": "admin@celestaglow.com / admin123", "sales_manager": "salesmanager@celestaglow.com / sm123"},
+  "seed_data_creation": "No new seed — verified preview-only paths (no commits). The 3 admin phones and 4 SM phones were not committed to DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 47 is now closed — both frontend bugs (parseFlatPhones newline parsing + SM dashboard missing smId prop) are confirmed fixed via live UI test against https://hr-central-82.preview.emergentagent.com. Reuse /app/backend/tests/test_iteration_47_lead_distribute.py for any future lead-distribution regression. Login button text is 'Sign In' (not 'Login') — heads-up for next playwright agent.",
+  "rca of the issue": "Both fixes verified in place. parseFlatPhones in /app/frontend/src/components/LeadDistributionPanel.jsx now splits the textarea by /[\\r\\n,;]+/ before phone-matching, so each line is scanned independently. SalesManagerDashboard.js line 289 now reads <LeadDistributionPanel smId={user?.id} telecallers={telecallers} /> so the admin SM-picker branch is skipped on the SM dashboard."
+}

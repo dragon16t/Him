@@ -286,7 +286,7 @@ export default function SalesManagerDashboard() {
             ))}
           </TabsList>
           <TabsContent value="tcperf" className="animate-fade-in"><TelecallerPerformanceCards /></TabsContent>
-          <TabsContent value="distribute" className="animate-fade-in"><LeadDistributionPanel telecallers={telecallers} /></TabsContent>
+          <TabsContent value="distribute" className="animate-fade-in"><LeadDistributionPanel smId={user?.id} telecallers={telecallers} /></TabsContent>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
           <TabsContent value="agentsales" className="animate-fade-in"><AgentSalesPanel /></TabsContent>
           <TabsContent value="leads" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] p-5">
