@@ -635,11 +635,11 @@ export default function SalesManagerDashboard() {
                   value={removePassword}
                   onChange={e=>setRemovePassword(e.target.value)}
                   className="rounded-xl"
-                  placeholder="Ask admin if you don't have this"
+                  placeholder="Type: remove"
                   data-testid="remove-tc-password"
                   autoFocus
                 />
-                <p className="text-[9px] text-[#7B6D5A] mt-1">2 wrong attempts trigger an automatic security alert to admin@celestaglow.com.</p>
+                <p className="text-[9px] text-[#7B6D5A] mt-1">Type the word <b>remove</b> (case-insensitive) to unlock the delete button.</p>
               </div>
               <div className="flex gap-2">
                 <Button

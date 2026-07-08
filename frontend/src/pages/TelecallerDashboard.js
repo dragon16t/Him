@@ -419,7 +419,7 @@ export default function TelecallerDashboard() {
   const handleCreateOrder = async () => {
     // Idempotency guard — reject re-entry while a POST is already in flight
     if (creatingOrder) return;
-    const computedTotal = orderForm.items.reduce((s,i)=>s+i.price*i.quantity, 0);
+    const computedTotal = orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity, 0);
     const finalTotal = computedTotal > 0 ? computedTotal : Number(orderForm.total_amount || 0);
     const cleanName = (orderForm.customer_name || "").trim();
     if (!cleanName || cleanName.toLowerCase() === "unknown") return toast.error("Please capture the customer's real name before creating the order");
@@ -430,7 +430,14 @@ export default function TelecallerDashboard() {
     if (!orderForm.customer_city) return toast.error("City is required");
     setCreatingOrder(true);
     try {
-      await axios.post(`${API}/orders`, { ...orderForm, customer_name: cleanName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
+      // Coerce item prices (stored as strings for input UX) into numbers for the API
+      const cleanItems = orderForm.items.map(i => ({
+        product_id: i.product_id,
+        name: i.name,
+        price: priceNum(i.price),
+        quantity: Number(i.quantity) || 1,
+      }));
+      await axios.post(`${API}/orders`, { ...orderForm, items: cleanItems, customer_name: cleanName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
       toast.success(`Order created! Total: Rs.${finalTotal}`);
       setShowOrder(false);
       fetchData();
@@ -454,21 +461,23 @@ export default function TelecallerDashboard() {
     }));
   };
   const setItemPrice = (pid, price) => {
-    const parsed = parseFloat(price);
-    const p = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    // Keep the raw string in state so partial inputs like "" / "5." / "0." work naturally.
+    // Numeric conversion happens only when calculating totals / submitting.
     setOrderForm(f => ({
       ...f,
-      items: f.items.map(i => i.product_id === pid ? { ...i, price: p } : i)
+      items: f.items.map(i => i.product_id === pid ? { ...i, price: price } : i)
     }));
   };
   const addProduct = (p) => {
     setOrderForm(f => {
       const ex = f.items.find(i => i.product_id === p.id);
       if (ex) return f;
-      // Don't auto-fill price — telecaller must enter it manually per order.
-      return { ...f, items: [...f.items, { product_id: p.id, name: p.name, price: 0, quantity: 1 }] };
+      // Empty string so the field is clearable — TC must enter it manually per order.
+      return { ...f, items: [...f.items, { product_id: p.id, name: p.name, price: "", quantity: 1 }] };
     });
   };
+  // Helper: coerce item.price (which is a string in state) into a safe number
+  const priceNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
   const markCalled = async (lid) => {
     try { await axios.put(`${API}/relationship-calls/${lid}/mark-called`, {remarks:"Called"}); toast.success("Marked"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
@@ -736,11 +745,10 @@ export default function TelecallerDashboard() {
               <div className="mb-3 rounded-xl border-2 border-red-400 bg-red-50 px-3 py-2 flex items-center justify-between gap-2" data-testid="call-lock-banner">
                 <div className="text-xs">
                   <p className="font-semibold text-red-800 uppercase tracking-wide">🔒 Log Call in progress</p>
-                  <p className="text-[10px] text-red-700 mt-0.5">Complete the call status for this lead before viewing others. This ensures every call is captured.</p>
+                  <p className="text-[10px] text-red-700 mt-0.5">You MUST update the call status for this lead before you can see the remaining numbers. There is no skip.</p>
                 </div>
                 <div className="flex gap-1.5 flex-shrink-0">
-                  <Button size="sm" className="rounded-full h-7 text-[10px] bg-red-600 hover:bg-red-700 text-white" onClick={()=>setShowCallLog(true)} data-testid="reopen-call-log">Reopen Log Call</Button>
-                  <Button size="sm" variant="outline" className="rounded-full h-7 text-[10px] border-red-300 text-red-600" onClick={async()=>{ const ok = await confirm({title:"Skip logging this call?",description:"You will lose the strict flow. Only do this if you tapped Log Call by mistake.",danger:true,okLabel:"Skip"}); if(!ok) return; setActiveCallLeadId(null); }} data-testid="unlock-skip-call">Skip &amp; Unlock</Button>
+                  <Button size="sm" className="rounded-full h-7 text-[10px] bg-red-600 hover:bg-red-700 text-white" onClick={()=>setShowCallLog(true)} data-testid="reopen-call-log">Update Call Status</Button>
                 </div>
               </div>
             )}
@@ -1014,7 +1022,7 @@ export default function TelecallerDashboard() {
                     <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB] text-xs" onClick={()=>updateItemQty(p.id,-1)} data-testid={`dec-${p.id}`}>−</button>
                     <Input type="number" value={item.quantity} onChange={e=>setItemQty(p.id,e.target.value)} className="h-6 w-12 text-center text-[10px] rounded-md p-0" data-testid={`qty-${p.id}`}/>
                     <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB] text-xs" onClick={()=>updateItemQty(p.id,1)} data-testid={`inc-${p.id}`}>+</button>
-                    <span className="text-[#3B5249] font-semibold ml-1 text-[10px] min-w-[55px] text-right">Rs.{(item.price||0)*item.quantity}</span>
+                    <span className="text-[#3B5249] font-semibold ml-1 text-[10px] min-w-[55px] text-right">Rs.{priceNum(item.price)*item.quantity}</span>
                   </div>
                 )}
               </div>
@@ -1022,11 +1030,26 @@ export default function TelecallerDashboard() {
             {orderForm.items.length>0 && (
               <div className="mt-2 bg-[#F9F8F6] rounded-lg p-2 flex justify-between items-center text-xs">
                 <span className="text-[#59615D]">{orderForm.items.length} item{orderForm.items.length!==1?'s':''}, {orderForm.items.reduce((s,i)=>s+i.quantity,0)} qty</span>
-                <span className="font-semibold text-[#3B5249]">Subtotal: Rs.{orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0)}</span>
+                <span className="font-semibold text-[#3B5249]">Subtotal: Rs.{orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0)}</span>
               </div>
             )}
           </div>
-          <div><Label className="text-xs">Total Amount {orderForm.items.length>0 && <span className="text-[10px] text-[#59615D]">(auto from product prices × qty)</span>}</Label><Input type="number" value={orderForm.items.length>0 ? orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0) : orderForm.total_amount} onChange={e=>setOrderForm(f=>({...f,total_amount:Number(e.target.value), items: f.items.length>0?f.items:[]}))} className="rounded-xl font-bold" data-testid="order-total"/></div>
+          <div>
+            <Label className="text-xs">
+              Total Amount
+              {orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) > 0 && <span className="text-[10px] text-[#59615D]"> (auto from product prices × qty)</span>}
+              {orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) === 0 && <span className="text-[10px] text-[#B75D69]"> — enter prices above OR type total here</span>}
+            </Label>
+            <Input
+              type="number"
+              value={orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) > 0
+                ? orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0)
+                : orderForm.total_amount}
+              onChange={e => setOrderForm(f => ({ ...f, total_amount: Number(e.target.value) || 0 }))}
+              className="rounded-xl font-bold"
+              data-testid="order-total"
+            />
+          </div>
           <div><Label className="text-xs">Payment</Label><Select value={orderForm.payment_type} onValueChange={v=>setOrderForm(f=>({...f,payment_type:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="cod">COD</SelectItem><SelectItem value="upi">UPI</SelectItem><SelectItem value="online">Online</SelectItem></SelectContent></Select></div>
           <Button onClick={handleCreateOrder} disabled={creatingOrder} className="w-full rounded-full bg-[#3B5249] text-white disabled:opacity-60" data-testid="submit-order-btn">{creatingOrder ? "Creating…" : "Create Order"}</Button>
         </div>

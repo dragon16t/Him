@@ -66,6 +66,29 @@ export default function AllTelecallersPerformancePanel() {
   };
   const collapseAll = () => setExpanded({});
 
+  // Flat leaderboard across ALL managers + unassigned — sorted by revenue desc, 0-order TCs to bottom
+  const flatTcs = (() => {
+    if (!data) return [];
+    const rows = [];
+    (data.managers || []).forEach(m => {
+      (m.telecallers || []).forEach(tc => rows.push({ ...tc, sm_name: m.sm_name, sm_id: m.sm_id }));
+    });
+    if (data.unassigned) {
+      (data.unassigned.telecallers || []).forEach(tc => rows.push({ ...tc, sm_name: "(Unassigned)", sm_id: "__unassigned__" }));
+    }
+    rows.sort((a, b) => {
+      // Zero-order TCs to the bottom regardless of other metrics
+      const aZero = a.orders === 0 ? 1 : 0;
+      const bZero = b.orders === 0 ? 1 : 0;
+      if (aZero !== bZero) return aZero - bZero;
+      // Otherwise revenue desc, then orders desc
+      if (b.revenue !== a.revenue) return b.revenue - a.revenue;
+      if (b.orders !== a.orders) return b.orders - a.orders;
+      return b.delivered - a.delivered;
+    });
+    return rows;
+  })();
+
   const grand = data?.grand_totals || {};
 
   return (
@@ -111,6 +134,42 @@ export default function AllTelecallersPerformancePanel() {
 
       {!loading && data && (
         <div className="space-y-3">
+          {/* FLAT master leaderboard — top-performing TC first, 0-order TCs pinned to bottom */}
+          {flatTcs.length > 0 && (
+            <div className="bg-white rounded-2xl border border-[#E5E3DB] overflow-hidden" data-testid="all-tcs-flat">
+              <div className="px-3 py-2 bg-[#F4EAE0] border-b border-[#E5E3DB] flex items-center justify-between">
+                <p className="font-heading text-sm text-[#2C3531]">🏆 Master Leaderboard — All Telecallers</p>
+                <span className="text-[10px] text-[#7B6D5A]">Sorted by revenue · 0-order TCs at bottom</span>
+              </div>
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table className="w-full text-xs" data-testid="all-tcs-flat-table">
+                  <thead className="bg-[#F9F8F6] sticky top-0">
+                    <tr>
+                      {["#","Telecaller","Manager","Orders","Revenue","Delivered","Return %","Del %"].map(h => (
+                        <th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D] whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {flatTcs.map((tc, i) => (
+                      <tr key={`${tc.sm_id}-${tc.telecaller_id}`} className={`border-b border-[#E5E3DB] hover:bg-[#F9F8F6] ${tc.orders === 0 ? "opacity-60" : ""}`} data-testid={`flat-tc-${tc.telecaller_id}`}>
+                        <td className="p-2 text-[#7B6D5A]">{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i+1}`}</td>
+                        <td className="p-2 font-medium">{tc.telecaller_name}{tc.role === "assistant_sales_manager" && <Badge variant="outline" className="ml-1 text-[8px]">Asst SM</Badge>}</td>
+                        <td className="p-2 text-[#A66E4E] text-[10px]">{tc.sm_name}</td>
+                        <td className="p-2"><b>{tc.orders}</b></td>
+                        <td className="p-2 text-[#3B5249] font-medium">{INR(tc.revenue)}</td>
+                        <td className="p-2 text-green-700">{tc.delivered}</td>
+                        <td className="p-2 text-red-700">{tc.rto_pct}%</td>
+                        <td className="p-2">{tc.delivery_pct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Per-SM grouped view (existing) */}
           {data.managers.map(m => (
             <ManagerSection key={m.sm_id} manager={m} expanded={!!expanded[m.sm_id]} onToggle={() => toggleSM(m.sm_id)} />
           ))}

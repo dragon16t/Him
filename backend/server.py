@@ -1243,7 +1243,20 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     await db.orders.insert_one(order)
     order.pop("_id", None)
     if order['lead_id']:
-        await db.leads.update_one({"id": order['lead_id']}, {"$set": {"status": "order_created", "updated_at": datetime.now(timezone.utc).isoformat()}})
+        # When an order is placed, the lead is DONE with its follow-up cycle — clear stale
+        # dates so the lead doesn't come back as "callback due" tomorrow. It naturally
+        # reappears in ~30 days via the repeat-order date (set below).
+        _today = datetime.now(timezone.utc).date()
+        _next_repeat = (_today + timedelta(days=30)).isoformat()
+        await db.leads.update_one({"id": order['lead_id']}, {"$set": {
+            "status": "order_created",
+            "last_order_date": _today.isoformat(),
+            "next_follow_up_date": "",
+            "next_follow_up_time": "",
+            "next_relationship_date": "",
+            "next_repeat_order_date": _next_repeat,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }})
     # Prepaid orders → credit revenue to BANK immediately on order creation
     # (customer has already paid online/UPI). COD is credited only after delivery sync.
     pt = (data.get("payment_type") or "cod").lower()
@@ -2248,8 +2261,10 @@ async def delete_telecaller_with_redistribution(tid: str, data: dict, current_us
         raise HTTPException(status_code=403, detail="Not your telecaller")
     if current_user['role'] == 'assistant_sales_manager' and sm_id != current_user.get('managed_by', ''):
         raise HTTPException(status_code=403, detail="Not in your team")
-    # Password gate — reuses the org-wide remove password so managers can't remove without HQ approval
-    await check_delete_password(data.get("password", ""), current_user)
+    # Password gate — dedicated per-TC-removal password "remove" (case-insensitive) so
+    # managers can remove without needing the org-wide sensitive-delete password.
+    if (data.get("password", "") or "").strip().lower() != "remove":
+        raise HTTPException(status_code=403, detail="Wrong remove password. Type 'remove' to confirm.")
 
     tc_name = tc.get("name") or "Unknown TC"
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -8066,6 +8081,13 @@ async def get_leaderboard(role: str, month: str = "", year: str = "",
     elif range_ == "30d":
         start_iso = (today_ - timedelta(days=29)).isoformat()
         end_iso_excl = (today_ + timedelta(days=1)).isoformat()
+    elif range_ == "custom" and month and year:
+        # Reused params — month=YYYY-MM-DD (from), year=YYYY-MM-DD (to) for backwards compatibility
+        try:
+            start_iso = _date.fromisoformat(month).isoformat()
+            end_iso_excl = (_date.fromisoformat(year) + timedelta(days=1)).isoformat()
+        except (TypeError, ValueError):
+            pass
     elif range_ == "month" and month and year:
         try:
             mm = int(month); yy = int(year)

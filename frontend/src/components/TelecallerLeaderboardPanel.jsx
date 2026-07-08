@@ -10,6 +10,8 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Trophy } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
@@ -19,6 +21,7 @@ const RANGES = [
   { v: "7d", l: "This Week" },
   { v: "30d", l: "Last 30 days" },
   { v: "all", l: "All Time" },
+  { v: "custom", l: "Custom" },
 ];
 const METRICS = [
   { v: "orders", l: "Orders" },
@@ -30,6 +33,8 @@ const INR = (n) => `Rs.${Number(n || 0).toLocaleString("en-IN", { maximumFractio
 
 export default function TelecallerLeaderboardPanel({ role = "telecaller", currentUserId, compact }) {
   const [range, setRange] = useState("7d");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [metric, setMetric] = useState("orders");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -38,12 +43,19 @@ export default function TelecallerLeaderboardPanel({ role = "telecaller", curren
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await axios.get(`${API}/leaderboard/${role}`, { params: { range, metric } });
+      const params = { range, metric };
+      // Backend re-uses month/year params for custom (from/to) — passed as ISO YYYY-MM-DD
+      if (range === "custom") {
+        if (!customFrom || !customTo) { setLoading(false); return; }
+        params.month = customFrom;
+        params.year = customTo;
+      }
+      const { data } = await axios.get(`${API}/leaderboard/${role}`, { params });
       setRows(data.leaderboard || []);
       setMeta({ from: data.from, to: data.to, range: data.range });
     } catch {}
     setLoading(false);
-  }, [role, range, metric]);
+  }, [role, range, metric, customFrom, customTo]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
   return (
@@ -58,6 +70,14 @@ export default function TelecallerLeaderboardPanel({ role = "telecaller", curren
                 data-testid={`lb-range-${r.v}`}>{r.l}</button>
             ))}
           </div>
+          {range === "custom" && (
+            <div className="flex items-center gap-1 ml-1" data-testid="lb-custom-range">
+              <Input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-7 rounded-full w-36 text-[10px]" data-testid="lb-from"/>
+              <span className="text-[10px] text-[#7B6D5A]">→</span>
+              <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-7 rounded-full w-36 text-[10px]" data-testid="lb-to"/>
+              <Button size="sm" className="h-7 px-3 rounded-full text-[10px] bg-[#3B5249] text-white" onClick={fetchData} data-testid="lb-apply">Apply</Button>
+            </div>
+          )}
           <div className="flex gap-1 ml-1" data-testid="lb-metric">
             {METRICS.map(m => (
               <button key={m.v} onClick={() => setMetric(m.v)}
