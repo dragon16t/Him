@@ -19,6 +19,7 @@ import NotificationBell from "../components/NotificationBell";
 import PostOfficePanel from "../components/PostOfficePanel";
 import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import StockAllocationPanel from "../components/StockAllocationPanel";
+import PendingCreditsPanel from "../components/PendingCreditsPanel";
 import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
@@ -291,6 +292,7 @@ export default function InventoryManagerDashboard() {
             <TabsTrigger value="post" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-post">📮 India Post</TabsTrigger>
             <TabsTrigger value="tcperf" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-tcperf">📊 TC Performance</TabsTrigger>
             <TabsTrigger value="allocation" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-allocation">👥 Stock Allocation</TabsTrigger>
+            <TabsTrigger value="credits" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-credits">💰 Pending Credits</TabsTrigger>
             <TabsTrigger value="mysheet" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-mysheet">My Sheet</TabsTrigger>
           </TabsList>
 
@@ -449,6 +451,7 @@ export default function InventoryManagerDashboard() {
             <TelecallerPerformanceCards smId={smFilter === "all" ? (salesManagers[0]?.id || "") : smFilter} title="Team Performance" />
           </TabsContent>
           <TabsContent value="allocation" className="animate-fade-in"><StockAllocationPanel /></TabsContent>
+          <TabsContent value="credits" className="animate-fade-in"><PendingCreditsPanel /></TabsContent>
         </Tabs>
       </div>
 

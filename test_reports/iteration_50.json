@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 50 tested: contact-events (log/list/summary/PDF), finance pending-credits (list/summary/approve/reject + ledger post + no-double-credit), customers/profile aggregation, stock-allocations/allocatable-employees, plus frontend IM Pending Credits panel, Admin Contact Activity, SM Contact Activity, Admin Leads → Customer Profile dialog, and the iter-49 Stock Allocation dropdown fix. 16/16 backend tests pass. All new frontend surfaces render with expected data-testids.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_50.py",
+    "/app/test_reports/pytest/iteration_50.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: seed a couple of leads for telecaller1 in default data so future tests can validate the 'lead-added-{lead_id}' badge and Call/WhatsApp auto-logging on TC dashboard (current test TC had 0 leads, so those two flows were verified only structurally in code, not via UI)."
+  ],
+  "critical_code_review_comments": [
+    "contact_events._scope_query includes 'sales_manager' twice (once in MANAGER_ROLES tuple, again in explicit elif) — harmless dead branch, but confusing. Consider removing the elif.",
+    "finance_gating.approve_credit uses id `fl-{cid}` for the ledger entry — this is idempotent (repeated approve attempts would collide) but the code guards with 'already {status}' 400, so safe. Good.",
+    "server.py deliver endpoints (line 1611, 3751, 6563) all correctly check existing_pending before inserting a new finance_pending_credits row, preventing duplicates on retries.",
+    "customer_profile endpoint uses regex `{n}$` to match orders by phone suffix — could over-match phones ending in same 10 digits with country-code variations; acceptable for now but consider a normalized field like phone_norm on orders."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_50.py (new)"
+  ],
+  "success_rate": {"backend": "100% (16/16 including approve/reject flow)", "frontend": "100% of testable surfaces (TC lead-added badge not verifiable due to zero assigned leads for test TC)"},
+  "test_credentials": "As per /app/memory/test_credentials.md — admin/sm/tc/inventory/finance all working.",
+  "seed_data_creation": "During pending-credit flow test, one shipped order (ORD-20260627-C5EF9C) was delivered → produced a pending_credit → approved to Bank Account (ledger entry fl-pc-... created). Approved count now 1 in IM UI.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New collections: contact_events, finance_pending_credits. IM 'Pending Credits' tab (inv-tab-credits) and 'Stock Allocation' tab both work; the iter-49 dropdown bug is FIXED — allocatable-employees returns 12+ entries (telecallers + agents + ASMs). Admin '📞 Contact Activity' + SM '📞 Contact Activity' render correctly. Clicking a row in Admin → Leads tab (lead-row-{id}) opens customer-profile-dialog with orders/delivered/total-spend/contacts stats and lead sub-list. To exercise the TC 'Added: DATE' badge (lead-added-{lead_id}) and the auto-log call/WA POST, seed at least one lead for telecaller1@celestaglow.com first.",
+  "rca of the issue": "N/A — no bugs uncovered this iteration."
+}

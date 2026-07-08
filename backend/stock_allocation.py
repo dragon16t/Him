@@ -38,6 +38,20 @@ def register_stock_allocation(api_router: APIRouter, db, get_current_user):
                 return doc
         return None
 
+    @api_router.get("/stock-allocations/allocatable-employees")
+    async def allocatable_employees(current_user: dict = Depends(get_current_user)):
+        """Returns the flat list of employees Inventory Manager can allocate stock to
+        (telecallers, agents, ASMs). Own endpoint so we don't have to open /api/telecallers to IM."""
+        await _require(current_user)
+        out = []
+        async for t in db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}):
+            out.append({"id": t["id"], "name": t.get("name") or "", "role": "telecaller", "phone": t.get("phone") or ""})
+        async for a in db.store_agents.find({"active": {"$ne": False}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}):
+            out.append({"id": a["id"], "name": a.get("name") or "", "role": "agent", "phone": a.get("phone") or ""})
+        async for a in db.assistant_sales_managers.find({}, {"_id": 0, "id": 1, "name": 1, "phone": 1}):
+            out.append({"id": a["id"], "name": a.get("name") or "", "role": "assistant_sales_manager", "phone": a.get("phone") or ""})
+        return {"employees": out}
+
     @api_router.get("/stock-allocations")
     async def list_allocations(current_user: dict = Depends(get_current_user)):
         await _require(current_user)

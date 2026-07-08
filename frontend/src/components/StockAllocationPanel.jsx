@@ -25,17 +25,14 @@ export default function StockAllocationPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [p, prods, tcs, agents] = await Promise.all([
+      const [p, prods, emps] = await Promise.all([
         axios.get(`${API}/stock-allocations/by-person`),
         axios.get(`${API}/products`),
-        axios.get(`${API}/telecallers`),
-        axios.get(`${API}/store/agents/all`).catch(() => ({ data: { agents: [] } })),
+        axios.get(`${API}/stock-allocations/allocatable-employees`).catch(() => ({ data: { employees: [] } })),
       ]);
       setPeople(p.data.people || []);
       setProducts(prods.data.products || []);
-      const tcList = (tcs.data?.telecallers || tcs.data || []).map(t => ({ id: t.id, name: t.name, role: "telecaller" }));
-      const agentList = (agents.data?.agents || []).map(a => ({ id: a.id, name: a.name, role: "agent" }));
-      setEmployees([...tcList, ...agentList]);
+      setEmployees(emps.data.employees || []);
     } catch (e) { /* silent */ }
   }, []);
   useEffect(() => { load(); }, [load]);

@@ -668,6 +668,7 @@ export default function TelecallerDashboard() {
               <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
                 <div className="flex justify-between items-start mb-1">
                   <div><p className="font-heading font-medium text-sm">{(lead.name && lead.name !== "Unknown") ? lead.name : lead.phone_number}</p><p className="text-xs text-[#59615D]">{lead.phone_number}{lead.source ? ` | ${lead.source}` : ""}</p>
+                  {lead.created_at && <p className="text-[9px] text-[#A66E4E] mt-0.5" data-testid={`lead-added-${lead.id}`}>Added: {new Date(lead.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
                     {lead.product_interest && lead.product_interest !== "general" && <p className="text-[10px] text-[#A66E4E]">Products: {lead.product_interest}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -743,11 +744,13 @@ export default function TelecallerDashboard() {
                   );
                 })()}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
-                  <WhatsAppCTA
-                    phone={lead.phone_number}
-                    message={`Hi ${lead.name && lead.name!=="Unknown" ? lead.name : ""}, this is from Celesta Glow. ${lead.status === "interested" ? "Just following up — would you like to place your order today?" : "Just checking in — how can we help?"}`}
-                  />
+                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <span onClick={() => { axios.post(`${API}/contact-events`, {type:"whatsapp", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name, message: "auto-track"}).catch(()=>{}); }}>
+                    <WhatsAppCTA
+                      phone={lead.phone_number}
+                      message={`Hi ${lead.name && lead.name!=="Unknown" ? lead.name : ""}, this is from Celesta Glow. ${lead.status === "interested" ? "Just following up — would you like to place your order today?" : "Just checking in — how can we help?"}`}
+                    />
+                  </span>
                   {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
                   <Button size="sm" variant="outline" className="rounded-full text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 h-7 w-7 p-0" onClick={async()=>{ const ok = await confirm({title:"Delete this lead?",description:"This lead will be permanently removed and won't reappear.",danger:true,okLabel:"Delete"}); if(!ok) return; try { await axios.delete(`${API}/leads/${lead.id}`); toast.success("Lead deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } }} data-testid={`del-lead-${lead.id}`} title="Delete lead"><X className="w-3 h-3"/></Button>
                 </div>

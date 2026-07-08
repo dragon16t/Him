@@ -23,6 +23,8 @@ import OrdersPanel from "../components/OrdersPanel";
 import PostOfficePanel from "../components/PostOfficePanel";
 import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import LeadDistributionPanel from "../components/LeadDistributionPanel";
+import ContactActivityPanel from "../components/ContactActivityPanel";
+import CustomerProfileDialog from "../components/CustomerProfileDialog";
 import DailyReportButton from "../components/DailyReportButton";
 import AdminEmployeesPanel from "../components/AdminEmployeesPanel";
 import AgentWithdrawPanel from "../components/AgentWithdrawPanel";
@@ -99,11 +101,40 @@ function AdminLeadDistributionWrapper() {
   return <LeadDistributionPanel salesManagers={sms} />;
 }
 
+// Admin wrapper for Contact Activity with SM picker
+function AdminContactActivityWrapper() {
+  const [sms, setSms] = useState([]);
+  const [smId, setSmId] = useState("");
+  useEffect(() => {
+    axios.get(`${API}/sales-managers`).then(r => {
+      const list = r.data.sales_managers || r.data || [];
+      setSms(list);
+      if (list.length && !smId) setSmId(list[0].id);
+    }).catch(() => {});
+  }, [smId]);
+  return (
+    <div className="space-y-3" data-testid="admin-contact-wrapper">
+      <div className="flex items-center gap-2 bg-white rounded-2xl border border-[#E5E3DB] p-3">
+        <Label className="text-xs">Sales Manager</Label>
+        <Select value={smId} onValueChange={setSmId}>
+          <SelectTrigger className="rounded-full h-8 text-xs w-64" data-testid="admin-contact-sm-select"><SelectValue placeholder="All Sales Managers"/></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all">All Sales Managers</SelectItem>
+            {sms.map(sm => <SelectItem key={sm.id} value={sm.id}>{sm.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <ContactActivityPanel smId={smId === "_all" ? "" : smId} />
+    </div>
+  );
+}
+
 export default function AdminCRMPanel() {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
+  const [profilePhone, setProfilePhone] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [leads, setLeads] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -535,7 +566,7 @@ export default function AdminCRMPanel() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"tcperf",l:"📊 TC Performance"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
+            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"tcperf",l:"📊 TC Performance"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -703,6 +734,7 @@ export default function AdminCRMPanel() {
           <TabsContent value="post"><PostOfficePanel role="admin" /></TabsContent>
           <TabsContent value="tcperf"><AdminTcPerfWrapper /></TabsContent>
           <TabsContent value="distribute"><AdminLeadDistributionWrapper /></TabsContent>
+          <TabsContent value="contactactivity"><AdminContactActivityWrapper /></TabsContent>
 
           {/* EMPLOYEES TAB — Employee 360° */}
           <TabsContent value="employees"><AdminEmployeesPanel /></TabsContent>
@@ -767,7 +799,7 @@ export default function AdminCRMPanel() {
               return (<>
                 <p className="px-4 pb-2 text-xs text-[#59615D]">{list.length} lead(s)</p>
                 <table className="w-full text-sm"><thead><tr className="border-b bg-[#F9F8F6]">{["Name","Phone","Telecaller / Agent","Source","Status","Interest","Last Order","Repeat","Relation","Created"].map(h=><th key={h} className="text-left p-3 text-[10px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
-                <tbody className="divide-y divide-[#E5E3DB]">{list.map(l=>(<tr key={l.id} data-testid={`lead-row-${l.id}`}><td className="p-3 font-medium">{l.name}</td><td className="p-3">{l.phone_number}</td><td className="p-3 text-xs"><b className="text-[#3B5249]">{l.assigned_to_name||"-"}</b></td><td className="p-3"><Badge variant="outline" className="text-[9px]">{l.source}</Badge></td><td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${l.status==="converted"||l.status==="delivered"?"bg-green-100 text-green-800":l.status==="interested"?"bg-blue-100 text-blue-800":"bg-gray-100 text-gray-800"}`}>{l.status?.replace(/_/g," ")}</Badge></td><td className="p-3">{l.product_interest}</td><td className="p-3 text-xs">{l.last_order_date||"-"}</td><td className="p-3 text-xs">{l.next_repeat_order_date||"-"}</td><td className="p-3 text-xs">{l.next_relationship_date||"-"}</td><td className="p-3 text-xs">{l.created_at?.slice(0,10)}</td></tr>))}</tbody></table>
+                <tbody className="divide-y divide-[#E5E3DB]">{list.map(l=>(<tr key={l.id} data-testid={`lead-row-${l.id}`} className="hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>setProfilePhone(l.phone_number)}><td className="p-3 font-medium underline decoration-dotted decoration-[#A66E4E]">{l.name}</td><td className="p-3 font-mono text-[11px]">{l.phone_number}</td><td className="p-3 text-xs"><b className="text-[#3B5249]">{l.assigned_to_name||"-"}</b></td><td className="p-3"><Badge variant="outline" className="text-[9px]">{l.source}</Badge></td><td className="p-3"><Badge className={`text-[9px] whitespace-nowrap ${l.status==="converted"||l.status==="delivered"?"bg-green-100 text-green-800":l.status==="interested"?"bg-blue-100 text-blue-800":"bg-gray-100 text-gray-800"}`}>{l.status?.replace(/_/g," ")}</Badge></td><td className="p-3">{l.product_interest}</td><td className="p-3 text-xs">{l.last_order_date||"-"}</td><td className="p-3 text-xs">{l.next_repeat_order_date||"-"}</td><td className="p-3 text-xs">{l.next_relationship_date||"-"}</td><td className="p-3 text-xs">{l.created_at?.slice(0,10)}</td></tr>))}</tbody></table>
               </>);
             })()}
           </div></TabsContent>
@@ -1476,6 +1508,7 @@ export default function AdminCRMPanel() {
           </div>}
         </DialogContent>
       </Dialog>
+      <CustomerProfileDialog phone={profilePhone} open={!!profilePhone} onOpenChange={o => !o && setProfilePhone(null)} />
     </div>
   );
 }

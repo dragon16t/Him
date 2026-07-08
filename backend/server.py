@@ -1392,6 +1392,47 @@ async def orders_by_phones(data: dict, current_user: dict = Depends(get_current_
         grouped.setdefault(cp, []).append(r)
     return {"orders_by_phone": grouped}
 
+@api_router.get("/customers/profile")
+async def customer_profile(phone: str, current_user: dict = Depends(get_current_user)):
+    """Full customer profile aggregating leads + orders + call events."""
+    if not phone:
+        raise HTTPException(400, "phone required")
+    from re import sub as _sub
+    n = _sub(r"\D", "", phone)
+    if len(n) > 10 and n.startswith("91"):
+        n = n[-10:]
+    if len(n) < 6:
+        raise HTTPException(400, "invalid phone")
+    leads = await db.leads.find({"phone_number_norm": n, "deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    orders = await db.orders.find({"deleted": {"$ne": True}, "customer_phone": {"$regex": f"{n}$"}}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    events = await db.contact_events.find({"phone_norm": n}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    profile = {}
+    for lead in leads:
+        if lead.get("name"): profile["name"] = lead["name"]; break
+    if "name" not in profile:
+        for o in orders:
+            if o.get("customer_name"): profile["name"] = o["customer_name"]; break
+    if orders:
+        first = orders[0]
+        profile["address"] = first.get("customer_address")
+        profile["city"] = first.get("customer_city")
+        profile["pincode"] = first.get("customer_pincode")
+    total_spend = sum(float(o.get("total_amount") or 0) for o in orders if o.get("status") == "delivered")
+    return {
+        "phone": phone, "phone_norm": n, "profile": profile,
+        "leads": leads, "orders": orders, "events": events,
+        "stats": {
+            "total_leads": len(leads),
+            "total_orders": len(orders),
+            "delivered_orders": sum(1 for o in orders if o.get("status") == "delivered"),
+            "returned_orders": sum(1 for o in orders if o.get("status") in ("returned", "rto")),
+            "total_spend": round(total_spend, 2),
+            "total_calls": sum(1 for e in events if e.get("type") == "call"),
+            "total_whatsapp": sum(1 for e in events if e.get("type") == "whatsapp"),
+            "last_contact_at": events[0].get("created_at") if events else "",
+        },
+    }
+
 @api_router.get("/orders/by-phone")
 async def orders_by_phone(phone: str, current_user: dict = Depends(get_current_user)):
     """Return existing (non-deleted) orders for a given phone number, across
@@ -1561,12 +1602,34 @@ async def deliver_order(order_id: str, current_user: dict = Depends(get_current_
             "next_repeat_order_date": (today + timedelta(days=35)).isoformat(),
             "updated_at": now
         }})
-    # Record revenue in finance ledger — credit to BANK (Delhivery settles COD payouts to seller's bank account).
-    # Skip if a credit was already recorded (e.g., prepaid was credited at order creation).
+    # 🔐 NEW POLICY: COD/UPI/Online credits are NO LONGER auto-posted to the ledger.
+    # Instead, a `finance_pending_credits` entry is written. The Inventory
+    # Manager (or Admin/Finance Manager) reviews it and clicks "Add to Account"
+    # from the Pending Credits panel to actually credit the bank/cash account.
+    # This gives IM full control over what money is treated as "cleared".
     existing_rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
-    if not existing_rev:
-        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} delivered - {order['customer_name']}", reference_id=order_id, method="bank", created_by=current_user['id'])
-    return {"message": "Order delivered - commission credited"}
+    existing_pending = await db.finance_pending_credits.find_one({"order_id": order_id, "status": {"$in": ["pending", "approved"]}})
+    if not existing_rev and not existing_pending:
+        pt = (order.get("payment_type") or "cod").lower()
+        pending_credit = {
+            "id": f"pc-{uuid.uuid4().hex[:10]}",
+            "order_id": order_id,
+            "customer_name": order.get("customer_name") or "",
+            "customer_phone": order.get("customer_phone") or "",
+            "amount": float(order.get("total_amount") or 0),
+            "payment_type": pt,
+            "default_account": "Cash Account" if pt == "cod" else "Bank Account",
+            "created_by_role": order.get("created_by_role") or "",
+            "created_by_name": order.get("created_by_name") or "",
+            "shipment_courier": order.get("courier_name") or "",
+            "awb_number": order.get("awb_number") or order.get("tracking_number") or "",
+            "delivered_at": now,
+            "delivered_by_name": current_user.get("name", ""),
+            "status": "pending",
+            "created_at": now,
+        }
+        await db.finance_pending_credits.insert_one(pending_credit)
+    return {"message": "Order delivered — pending credit awaits inventory-manager approval"}
 
 @api_router.put("/orders/{order_id}/reject")
 async def reject_order(order_id: str, data: dict, current_user: dict = Depends(get_current_user)):
@@ -3683,14 +3746,28 @@ async def ship_and_deliver(order_id: str, current_user: dict = Depends(get_curre
         await db.commissions.insert_one(comm)
         coll_map = {"telecaller": "telecallers", "agent": "agents", "district_manager": "managers", "sales_manager": "sales_managers"}
         if cr in coll_map: await db[coll_map[cr]].update_one({"id": order['created_by']}, {"$inc": {"commission_earned": amt}})
-    # Revenue in finance — credit to BANK (Delhivery settles COD/prepaid into bank account)
-    # Skip if a credit already exists (e.g., prepaid credited at creation).
-    pay_method = "bank"
+    # Revenue — pending-credit only (Inventory Manager approves via UI to credit ledger)
     existing_rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
-    if not existing_rev:
-        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {order_id} - {order['customer_name']}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
+    existing_pending = await db.finance_pending_credits.find_one({"order_id": order_id, "status": {"$in": ["pending", "approved"]}})
+    if not existing_rev and not existing_pending:
+        pt = (order.get("payment_type") or "cod").lower()
+        await db.finance_pending_credits.insert_one({
+            "id": f"pc-{uuid.uuid4().hex[:10]}",
+            "order_id": order_id,
+            "customer_name": order.get("customer_name") or "",
+            "customer_phone": order.get("customer_phone") or "",
+            "amount": float(order.get("total_amount") or 0),
+            "payment_type": pt,
+            "default_account": "Cash Account" if pt == "cod" else "Bank Account",
+            "created_by_role": order.get("created_by_role") or "",
+            "created_by_name": order.get("created_by_name") or "",
+            "delivered_at": now,
+            "delivered_by_name": current_user.get("name", ""),
+            "status": "pending",
+            "created_at": now,
+        })
     if settlement_amt > 0:
-        await record_transaction("debit", "settlement_charge", settlement_amt, f"Settlement for {order_id}", reference_id=order_id, method=pay_method, created_by=current_user['id'])
+        await record_transaction("debit", "settlement_charge", settlement_amt, f"Settlement for {order_id}", reference_id=order_id, method="bank", created_by=current_user['id'])
     # Update lead
     if order.get('lead_id'):
         today = date.today()
@@ -6480,13 +6557,29 @@ async def mark_order_delivered_inv(oid: str, background_tasks: BackgroundTasks, 
     if not order: raise HTTPException(status_code=404)
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": oid}, {"$set": {"status": "delivered", "delivered_at": now, "delivered_by": current_user['id'], "delivered_by_name": current_user.get('name',''), "updated_at": now}})
-    # Trigger commission chain
-    # Delivered payment → credit to BANK (Delhivery settles into seller's bank account).
-    # Skip if a credit already exists (prepaid).
-    pay_method = "bank"
+    # Trigger commission chain — but do NOT auto-credit the ledger.
+    # Instead, write a finance_pending_credit that Inventory Manager must approve.
     existing_rev = await db.finance_ledger.find_one({"reference_id": oid, "category": "order_revenue", "type": "credit"})
-    if not existing_rev:
-        await record_transaction("credit", "order_revenue", order['total_amount'], f"Order {oid} delivered", reference_id=oid, method=pay_method, created_by=current_user['id'])
+    existing_pending = await db.finance_pending_credits.find_one({"order_id": oid, "status": {"$in": ["pending", "approved"]}})
+    if not existing_rev and not existing_pending:
+        pt = (order.get("payment_type") or "cod").lower()
+        await db.finance_pending_credits.insert_one({
+            "id": f"pc-{uuid.uuid4().hex[:10]}",
+            "order_id": oid,
+            "customer_name": order.get("customer_name") or "",
+            "customer_phone": order.get("customer_phone") or "",
+            "amount": float(order.get("total_amount") or 0),
+            "payment_type": pt,
+            "default_account": "Cash Account" if pt == "cod" else "Bank Account",
+            "created_by_role": order.get("created_by_role") or "",
+            "created_by_name": order.get("created_by_name") or "",
+            "shipment_courier": order.get("courier_name") or "",
+            "awb_number": order.get("awb_number") or order.get("tracking_number") or "",
+            "delivered_at": now,
+            "delivered_by_name": current_user.get("name", ""),
+            "status": "pending",
+            "created_at": now,
+        })
     creator_id = order.get('created_by', '')
     creator_role = order.get('created_by_role', '') or None
     if not creator_role:
@@ -8481,6 +8574,20 @@ try:
     logger.info("stock_allocation routes registered")
 except Exception as _sa:
     logger.error(f"stock_allocation registration failed: {_sa}")
+
+try:
+    from contact_events import register_contact_events
+    register_contact_events(api_router, db, get_current_user)
+    logger.info("contact_events routes registered")
+except Exception as _ce:
+    logger.error(f"contact_events registration failed: {_ce}")
+
+try:
+    from finance_gating import register_finance_gating
+    register_finance_gating(api_router, db, get_current_user)
+    logger.info("finance_gating routes registered")
+except Exception as _fg:
+    logger.error(f"finance_gating registration failed: {_fg}")
 
 app.include_router(api_router)
 
