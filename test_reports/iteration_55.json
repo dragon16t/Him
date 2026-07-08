@@ -1,0 +1,19 @@
+{
+  "summary": "Verified TC removal fix — soft-deleted telecallers are now filtered out of GET /api/telecallers and GET /api/telecallers/all. Full end-to-end SM dashboard flow works: 🗑 → password → card disappears without reload.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_tc_removal.py", "/app/test_reports/pytest/tc_removal.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 9174 lines — should be split into modules (telecallers, leads, orders, users, etc.) for maintainability.",
+    "PUT /api/telecallers/{tid} does not allow updating managed_by, which limited testing setup (had to touch DB directly). Consider allowing admin to reassign a TC to a different SM via API."
+  ],
+  "updated_files": ["/app/backend/tests/test_tc_removal.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@celestaglow.com/admin123, salesmanager@celestaglow.com/sm123 (sm-001, Hubby Brahman)",
+  "seed_data_creation": "Created a UITEST_TC (id=tc-b2cad5) under sm-001 for UI test; it has been soft-deleted as part of the test flow. Also created TEST_TC_* via pytest and deleted them.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest: /app/backend/tests/test_tc_removal.py (3 tests, all pass). Verified: (1) GET /api/telecallers and /api/telecallers/all both exclude deleted:true. (2) DELETE requires body {password:'remove'}; wrong password returns 403. (3) UI flow on SalesManagerDashboard: card visible → click remove-tc-<id> → dialog opens → wrong pw shows error toast + card stays → correct pw 'remove' closes dialog + success toast 'Removed X. N leads redistributed…' + card vanishes from grid WITHOUT reload + still gone after reload. Login response uses 'token' (not 'access_token'). Note: POST /api/telecallers via admin does not persist managed_by field — had to set it via direct Mongo update for the UI test.",
+  "test_flow_result": "PASS on all 6 UI steps and 3 backend tests"
+}

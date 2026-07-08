@@ -2060,13 +2060,14 @@ async def get_all_telecallers(current_user: dict = Depends(get_current_user)):
     is_hos = bool(current_user.get('is_head_of_sales'))
     if current_user['role'] != 'admin' and not is_hos:
         raise HTTPException(status_code=403, detail="Admin or Head of Sales only")
-    tcs = await db.telecallers.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    tcs = await db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return {"telecallers": tcs}
 
 @api_router.get("/telecallers")
 async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['district_manager','admin','sales_manager','assistant_sales_manager','head_of_sales']: raise HTTPException(status_code=403)
-    q = {}
+    # Never return soft-deleted TCs — they should disappear from SM dashboards after removal.
+    q = {"deleted": {"$ne": True}}
     # Each SM sees ONLY their own team (TCs where managed_by = sm.id).
     # Head of Sales uses the 👑 Quick-Switch panel to log into other SMs' dashboards.
     if current_user['role'] == 'sales_manager':
