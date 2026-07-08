@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -60,10 +60,18 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
   const [isDefault, setIsDefault] = useState(true);
   const [tplSource, setTplSource] = useState("default");
   const [loading, setLoading] = useState(false);
+  // Auto-save state
+  const [autoSaveStatus, setAutoSaveStatus] = useState("idle"); // idle | pending | saving | saved | error
+  const debounceRef = useRef(null);
+  const initializedRef = useRef(false);
 
   const fullKey = activeRole ? `${activeRole}:${activeKey}` : activeKey;
 
   const loadTemplate = useCallback(async (letterKey, role) => {
+    // clear pending auto-save when switching template
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+    initializedRef.current = false;
+    setAutoSaveStatus("idle");
     const k = role ? `${role}:${letterKey}` : letterKey;
     try {
       const { data } = await axios.get(`${API}/hr/document-templates/${k}`);
@@ -78,6 +86,8 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
       setIsDefault(true);
       setTplSource("default");
     }
+    // small tick to mark the loaded state as the baseline (skip auto-save on first render)
+    setTimeout(() => { initializedRef.current = true; }, 50);
   }, []);
 
   const fetchAll = useCallback(async () => {
@@ -134,6 +144,36 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     setLoading(false);
   };
+
+  // Silent auto-save (no toast) — used by the 2s debounce
+  const autoSave = useCallback(async () => {
+    if (!form.body_html.trim()) { setAutoSaveStatus("idle"); return; }
+    setAutoSaveStatus("saving");
+    try {
+      await axios.put(`${API}/hr/document-templates/${fullKey}`, form);
+      setAutoSaveStatus("saved");
+      // refresh the sidebar override markers without disturbing focus
+      try { const { data } = await axios.get(`${API}/hr/document-templates`); setOverrides(data.templates || []); } catch {}
+      // also refresh the source badge so it flips from "default" → "role_override"/"global_override"
+      try {
+        const { data } = await axios.get(`${API}/hr/document-templates/${fullKey}`);
+        setIsDefault(!!data.is_default);
+        setTplSource(data.source || "default");
+      } catch {}
+    } catch {
+      setAutoSaveStatus("error");
+    }
+  }, [form, fullKey]);
+
+  // Debounced auto-save — fires 2s after last keystroke
+  useEffect(() => {
+    if (!open || tab !== "templates" || !initializedRef.current) return;
+    setAutoSaveStatus("pending");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { autoSave(); }, 2000);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.subject, form.body_html]);
 
   const reset = async () => {
     const msg = activeRole
@@ -253,12 +293,26 @@ export default function DocumentTemplatesEditor({ open, onOpenChange }) {
                   <Textarea value={form.body_html} onChange={e => setForm(f => ({ ...f, body_html: e.target.value }))} placeholder="<p>Dear {emp_name},</p><p>...</p>" className="rounded-xl font-mono text-xs min-h-[320px]" data-testid="tpl-body" />
                   <p className="text-[10px] text-[#59615D] mt-1">The system automatically wraps your HTML inside the company letterhead, signature block, and footer with employment terms when the letter is sent or downloaded.</p>
                 </div>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap items-center">
                   <Button onClick={save} disabled={loading} className="rounded-full bg-[#3B5249] text-white" data-testid="tpl-save">{loading ? "Saving..." : `Save${activeRole ? ` for ${ROLE_LABELS[activeRole]}` : " Global"}`}</Button>
                   {tplSource !== "default" && tplSource !== "inherited_global" && (
                     <Button variant="outline" onClick={reset} className="rounded-full border-orange-300 text-orange-600" data-testid="tpl-reset">Revert to {activeRole ? "Global / Default" : "Built-in Default"}</Button>
                   )}
                   <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-full">Close</Button>
+                  {/* AUTO-SAVE indicator — silent 2s debounced save */}
+                  <span className={`text-[10px] px-2 py-1 rounded-full border ml-auto ${
+                    autoSaveStatus === "saved" ? "bg-emerald-50 border-emerald-300 text-emerald-700" :
+                    autoSaveStatus === "saving" ? "bg-blue-50 border-blue-300 text-blue-700" :
+                    autoSaveStatus === "pending" ? "bg-amber-50 border-amber-300 text-amber-700" :
+                    autoSaveStatus === "error" ? "bg-red-50 border-red-300 text-red-700" :
+                    "bg-gray-50 border-gray-200 text-gray-500"
+                  }`} data-testid="tpl-autosave-status">
+                    {autoSaveStatus === "saved" ? "✓ Auto-saved" :
+                     autoSaveStatus === "saving" ? "Saving…" :
+                     autoSaveStatus === "pending" ? "Editing… (auto-saves in 2s)" :
+                     autoSaveStatus === "error" ? "⚠ Auto-save failed — click Save" :
+                     "Auto-save ready"}
+                  </span>
                 </div>
                 <div className="rounded-xl bg-[#F9F8F6] border border-[#E5E3DB] p-3">
                   <p className="text-[10px] uppercase tracking-wider font-semibold text-[#3B5249] mb-1">Available Placeholders</p>

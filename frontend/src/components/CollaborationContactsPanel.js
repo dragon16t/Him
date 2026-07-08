@@ -3,8 +3,11 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const API = "/api";
 
@@ -28,6 +31,11 @@ export default function CollaborationContactsPanel({ title = "Collaboration Cont
   const [filterRange, setFilterRange] = useState("all"); // all | today | 7d
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({ notes: "", status: "new" });
+  // Convert-to-Order flow — creates a real order tied to this collab contact.
+  const [converting, setConverting] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
+  const [orderSaving, setOrderSaving] = useState(false);
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);
@@ -54,6 +62,56 @@ export default function CollaborationContactsPanel({ title = "Collaboration Cont
   });
 
   const startEdit = (c) => { setEditing(c); setEditForm({ notes: c.notes || "", status: c.status || "new" }); };
+
+  const startConvert = async (c) => {
+    setConverting(c);
+    setOrderForm({
+      customer_name: c.name || "",
+      customer_phone: c.phone || "",
+      customer_address: "",
+      customer_city: "",
+      customer_pincode: "",
+      customer_landmark: "",
+      items: [],
+      total_amount: 0,
+      payment_type: "cod",
+    });
+    if (products.length === 0) {
+      try { const { data } = await axios.get(`${API}/products`); setProducts(data.products || []); } catch {}
+    }
+  };
+  const setItemPrice = (pid, price) => {
+    const p = parseFloat(price);
+    setOrderForm(f => ({ ...f, items: f.items.map(i => i.product_id === pid ? { ...i, price: (Number.isFinite(p) && p >= 0) ? p : 0 } : i) }));
+  };
+  const setItemQty = (pid, qty) => {
+    const q = parseInt(qty, 10);
+    setOrderForm(f => ({ ...f, items: f.items.map(i => i.product_id === pid ? { ...i, quantity: (Number.isFinite(q) && q > 0) ? q : 1 } : i) }));
+  };
+  const addProduct = (p) => {
+    setOrderForm(f => f.items.find(i => i.product_id === p.id) ? f : { ...f, items: [...f.items, { product_id: p.id, name: p.name, price: 0, quantity: 1 }] });
+  };
+  const removeProduct = (pid) => setOrderForm(f => ({ ...f, items: f.items.filter(i => i.product_id !== pid) }));
+  const saveConvert = async () => {
+    if (!converting) return;
+    const computedTotal = orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity, 0);
+    const finalTotal = computedTotal > 0 ? computedTotal : Number(orderForm.total_amount || 0);
+    if (!orderForm.customer_name.trim()) return toast.error("Customer name required");
+    if (finalTotal <= 0) return toast.error("Add at least one product or enter a manual amount");
+    if (!orderForm.customer_address || orderForm.customer_address.trim().length < 8) return toast.error("Full delivery address is required");
+    if (!/^\d{6}$/.test(orderForm.customer_pincode || "")) return toast.error("6-digit pincode is required");
+    if (!orderForm.customer_city) return toast.error("City is required");
+    setOrderSaving(true);
+    try {
+      await axios.post(`${API}/orders`, { ...orderForm, total_amount: finalTotal });
+      // Also mark this collab contact as onboarded (order was placed).
+      try { await axios.put(`${API}/collaboration-contacts/${converting.id}`, { status: "onboarded", notes: (converting.notes || "") + `\n[Order created ${new Date().toISOString().slice(0,10)} for Rs.${finalTotal}]` }); } catch {}
+      toast.success(`Order created — Rs.${finalTotal}`);
+      setConverting(null);
+      fetchContacts();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create order"); }
+    setOrderSaving(false);
+  };
   const save = async () => {
     if (!editing) return;
     try {
@@ -103,8 +161,9 @@ export default function CollaborationContactsPanel({ title = "Collaboration Cont
                  </div>
                  <div className="flex flex-col gap-1 items-end text-[10px] text-[#59615D]">
                    <span>{String(c.created_at || "").slice(0, 10)}</span>
-                   <div className="flex gap-1">
+                   <div className="flex gap-1 flex-wrap justify-end">
                      {c.phone && <a href={`tel:${c.phone}`}><Button size="sm" variant="outline" className="rounded-full h-7 text-[9px] px-2">📞 Call</Button></a>}
+                     <Button size="sm" className="rounded-full h-7 text-[9px] px-2 bg-[#6B8E6B] hover:bg-[#5A7D5A] text-white" onClick={()=>startConvert(c)} data-testid={`collab-convert-${c.id}`}>💼 Convert to Order</Button>
                      <Button size="sm" variant="outline" className="rounded-full h-7 text-[9px] px-2" onClick={()=>startEdit(c)} data-testid={`collab-edit-${c.id}`}>✎ Edit</Button>
                    </div>
                  </div>
@@ -144,6 +203,70 @@ export default function CollaborationContactsPanel({ title = "Collaboration Cont
             </div>
           </div>
         </div>
+      )}
+      {converting && (
+        <Dialog open={!!converting} onOpenChange={(o)=>{ if(!o) setConverting(null); }}>
+          <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto max-w-2xl" data-testid="collab-convert-dialog">
+            <DialogHeader>
+              <DialogTitle className="font-heading">Convert to Order — {converting.name || converting.phone}</DialogTitle>
+              <DialogDescription className="text-[11px] text-[#59615D]">Capture the shipping address and product line-up. This creates a real order (status: pending) tied to this contact.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">Customer Name *</Label><Input value={orderForm.customer_name} onChange={e=>setOrderForm(f=>({...f,customer_name:e.target.value}))} className="rounded-xl" data-testid="collab-order-name"/></div>
+                <div><Label className="text-xs">Phone *</Label><Input value={orderForm.customer_phone} onChange={e=>setOrderForm(f=>({...f,customer_phone:e.target.value}))} className="rounded-xl" data-testid="collab-order-phone"/></div>
+              </div>
+              <div><Label className="text-xs text-[#B75D69] font-semibold">Full Delivery Address *</Label><Textarea value={orderForm.customer_address} onChange={e=>setOrderForm(f=>({...f,customer_address:e.target.value}))} rows={3} className="rounded-xl" placeholder="House/Flat no, Street, Locality" data-testid="collab-order-address"/></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">City *</Label><Input value={orderForm.customer_city} onChange={e=>setOrderForm(f=>({...f,customer_city:e.target.value}))} className="rounded-xl" data-testid="collab-order-city"/></div>
+                <div><Label className="text-xs">Pincode *</Label><Input value={orderForm.customer_pincode} onChange={e=>setOrderForm(f=>({...f,customer_pincode:e.target.value}))} className="rounded-xl" placeholder="6-digit" data-testid="collab-order-pincode"/></div>
+              </div>
+              <div><Label className="text-xs">Landmark</Label><Input value={orderForm.customer_landmark} onChange={e=>setOrderForm(f=>({...f,customer_landmark:e.target.value}))} className="rounded-xl" data-testid="collab-order-landmark"/></div>
+              <div>
+                <Label className="text-xs">Products & Prices <span className="text-[9px] text-[#A66E4E]">(price per unit)</span></Label>
+                <div className="max-h-40 overflow-y-auto border border-[#E5E3DB] rounded-xl p-2 space-y-1">
+                  {products.length === 0 ? <p className="text-[10px] text-[#59615D]">Loading products…</p> :
+                  products.map(p => {
+                    const item = orderForm.items.find(i => i.product_id === p.id);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between text-xs gap-2 flex-wrap">
+                        <span className="flex-1 truncate min-w-[100px]" title={p.name}>{p.name}</span>
+                        {!item ? (
+                          <Button size="sm" type="button" className="h-6 px-2 rounded-full bg-[#3B5249] text-white text-[10px]" onClick={()=>addProduct(p)} data-testid={`collab-add-prod-${p.id}`}>+ Add</Button>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <Input type="number" min="0" value={item.price} onChange={e=>setItemPrice(p.id, e.target.value)} placeholder="Price" className="h-6 w-16 text-[10px] text-center rounded-md p-0" data-testid={`collab-price-${p.id}`}/>
+                            <span className="text-[9px] text-[#59615D]">×</span>
+                            <Input type="number" min="1" value={item.quantity} onChange={e=>setItemQty(p.id, e.target.value)} className="h-6 w-12 text-[10px] text-center rounded-md p-0" data-testid={`collab-qty-${p.id}`}/>
+                            <span className="text-[#3B5249] font-semibold ml-1 text-[10px] min-w-[55px] text-right">Rs.{(item.price||0)*item.quantity}</span>
+                            <button type="button" onClick={()=>removeProduct(p.id)} className="text-red-500 text-[10px] ml-1">✕</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">Total (auto)</Label><Input readOnly value={orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0)} className="rounded-xl font-bold bg-[#F9F8F6]" data-testid="collab-order-total"/></div>
+                <div><Label className="text-xs">Payment</Label>
+                  <Select value={orderForm.payment_type} onValueChange={v=>setOrderForm(f=>({...f,payment_type:v}))}>
+                    <SelectTrigger className="rounded-xl" data-testid="collab-order-payment"><SelectValue/></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cod">COD</SelectItem>
+                      <SelectItem value="upi">UPI</SelectItem>
+                      <SelectItem value="online">Online</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={saveConvert} disabled={orderSaving} className="flex-1 rounded-full bg-[#6B8E6B] hover:bg-[#5A7D5A] text-white" data-testid="collab-convert-save">{orderSaving ? "Creating…" : "Create Order"}</Button>
+                <Button variant="outline" onClick={()=>setConverting(null)} className="rounded-full">Cancel</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

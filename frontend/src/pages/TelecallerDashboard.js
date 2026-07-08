@@ -100,6 +100,9 @@ export default function TelecallerDashboard() {
   const [showOrder, setShowOrder] = useState(false);
   const [showFundRequest, setShowFundRequest] = useState(false);
   const [selectedLead, setSelectedLead] = useState(null);
+  // STRICT LOG-CALL LOCK — when set, only that lead is visible until call log is saved.
+  // Prevents telecallers from skipping data entry after tapping "Log Call".
+  const [activeCallLeadId, setActiveCallLeadId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
   const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "" });
@@ -192,16 +195,37 @@ export default function TelecallerDashboard() {
   };
 
   const leadPriority = (l) => {
-    if (l.status === "new" && (!l.call_logs || l.call_logs.length === 0)) return 0;
-    if (isPendingConversion(l)) return 1;
-    if (isFollowUpDueNow(l)) return 2;
+    // Priority order (per user request — 2026-02):
+    //  0  Interested (still needs conversion push)  — TOP
+    //  1  Follow-up due NOW
+    //  2  New / freshly added (never called yet)
+    //  3  Repeat order due
+    //  4  Relationship call due
+    //  5  Previous "No Response" (worth retrying)
+    //  6  Future follow-up (not yet due)
+    //  7  Busy / generic follow-up bucket
+    //  8  Not interested
+    //  Recently-ordered leads are filtered OUT of the "Today" bucket entirely (see isRecentlyOrdered).
+    if (l.status === "interested" || isPendingConversion(l)) return 0;
+    if (isFollowUpDueNow(l)) return 1;
+    if (l.status === "new" && (!l.call_logs || l.call_logs.length === 0)) return 2;
     if (l.next_repeat_order_date && l.next_repeat_order_date <= today) return 3;
     if (l.next_relationship_date && l.next_relationship_date <= today) return 4;
-    if (l.status === "interested") return 5;
+    if (l.status === "no_response") return 5;
     if (l.next_follow_up_date && l.next_follow_up_date > today) return 6;
-    if (l.status === "no_response" || l.status === "busy" || l.status === "follow_up") return 7;
+    if (l.status === "busy" || l.status === "follow_up") return 7;
     if (l.status === "not_interested") return 8;
-    return 5;
+    return 6;
+  };
+
+  // Priority label + color for the visible highlight on the card
+  const PRIORITY_META = {
+    0: { label: "INTERESTED", tone: "border-l-emerald-500 bg-emerald-50/30" },
+    1: { label: "FOLLOW-UP DUE", tone: "border-l-red-500 bg-red-50/40" },
+    2: { label: "NEW LEAD", tone: "border-l-blue-500 bg-blue-50/40" },
+    3: { label: "REPEAT DUE", tone: "border-l-orange-500 bg-orange-50/40" },
+    4: { label: "RELATION CALL", tone: "border-l-pink-500 bg-pink-50/40" },
+    5: { label: "PREV NO RESPONSE", tone: "border-l-amber-500 bg-amber-50/40" },
   };
 
   // Reset pagination whenever any filter input changes
@@ -314,6 +338,7 @@ export default function TelecallerDashboard() {
         toast.success("Call logged!");
       }
       setShowCallLog(false);
+      setActiveCallLeadId(null); // unlock the list — data captured, TC can move to next lead
       // Open Create Order dialog automatically when the call resulted in interest or an order
       if (isOrder && (callForm.status === "interested" || callForm.status === "ordered")) {
         const finalName = callForm.customer_name || (selectedLead.name && selectedLead.name !== "Unknown" ? selectedLead.name : "");
@@ -633,6 +658,18 @@ export default function TelecallerDashboard() {
                 </span>
               </div>
             </div>
+            {activeCallLeadId && (
+              <div className="mb-3 rounded-xl border-2 border-red-400 bg-red-50 px-3 py-2 flex items-center justify-between gap-2" data-testid="call-lock-banner">
+                <div className="text-xs">
+                  <p className="font-semibold text-red-800 uppercase tracking-wide">🔒 Log Call in progress</p>
+                  <p className="text-[10px] text-red-700 mt-0.5">Complete the call status for this lead before viewing others. This ensures every call is captured.</p>
+                </div>
+                <div className="flex gap-1.5 flex-shrink-0">
+                  <Button size="sm" className="rounded-full h-7 text-[10px] bg-red-600 hover:bg-red-700 text-white" onClick={()=>setShowCallLog(true)} data-testid="reopen-call-log">Reopen Log Call</Button>
+                  <Button size="sm" variant="outline" className="rounded-full h-7 text-[10px] border-red-300 text-red-600" onClick={async()=>{ const ok = await confirm({title:"Skip logging this call?",description:"You will lose the strict flow. Only do this if you tapped Log Call by mistake.",danger:true,okLabel:"Skip"}); if(!ok) return; setActiveCallLeadId(null); }} data-testid="unlock-skip-call">Skip &amp; Unlock</Button>
+                </div>
+              </div>
+            )}
             <div className="space-y-2" ref={leadListRef}>
             {/* Monthly grouping summary for Repeat / Relation tabs */}
             {(tab === "repeat" || tab === "relationship") && filteredLeads.length > 0 && (() => {
@@ -664,14 +701,27 @@ export default function TelecallerDashboard() {
               );
             })()}
             {filteredLeads.length===0?<p className="text-center py-8 text-[#59615D] text-sm">No leads in this category</p>:
-            filteredLeads.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE).map(lead => (
-              <div key={lead.id} className="bg-white rounded-xl border border-[#E5E3DB] p-3" data-testid={`lead-${lead.id}`}>
+            (() => {
+              // STRICT LOCK: when a Log Call is in-flight, show ONLY that lead until the call is saved.
+              const lockedList = activeCallLeadId ? filteredLeads.filter(l => l.id === activeCallLeadId) : filteredLeads;
+              // When searching or locked, bypass pagination so the TC sees the target lead instantly.
+              const bypassPagination = !!activeCallLeadId || !!searchQuery;
+              const pageList = bypassPagination ? lockedList : lockedList.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE);
+              return pageList.map(lead => {
+                const prio = leadPriority(lead);
+                const prioMeta = PRIORITY_META[prio];
+                const phoneKey = (lead.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
+                const alreadyOrdered = orderedLeadIds.has(lead.id) || (ordersByLead[lead.id] || ordersByLead[phoneKey] || 0) > 0 || !!otherTcOrderFor(lead);
+                return (
+              <div key={lead.id} className={`bg-white rounded-xl border border-[#E5E3DB] p-3 ${prioMeta ? `border-l-4 ${prioMeta.tone}` : ""}`} data-testid={`lead-${lead.id}`}>
                 <div className="flex justify-between items-start mb-1">
                   <div><p className="font-heading font-medium text-sm">{(lead.name && lead.name !== "Unknown") ? lead.name : lead.phone_number}</p><p className="text-xs text-[#59615D]">{lead.phone_number}{lead.source ? ` | ${lead.source}` : ""}</p>
                   {lead.created_at && <p className="text-[9px] text-[#A66E4E] mt-0.5" data-testid={`lead-added-${lead.id}`}>Added: {new Date(lead.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
                     {lead.product_interest && lead.product_interest !== "general" && <p className="text-[10px] text-[#A66E4E]">Products: {lead.product_interest}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1">
+                    {prioMeta && <Badge className="bg-[#3B5249] text-white text-[8px] font-semibold" data-testid={`prio-badge-${lead.id}`}>{prioMeta.label}</Badge>}
+                    {alreadyOrdered && <Badge className="bg-emerald-600 text-white text-[8px] font-semibold" data-testid={`already-ordered-${lead.id}`}>ALREADY ORDERED</Badge>}
                     <LeadScoreBadge leadId={lead.id} compact />
                     <StatusBadge status={lead.status} />
                     {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
@@ -744,7 +794,7 @@ export default function TelecallerDashboard() {
                   );
                 })()}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setActiveCallLeadId(lead.id);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
                   <span onClick={() => { axios.post(`${API}/contact-events`, {type:"whatsapp", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name, message: "auto-track"}).catch(()=>{}); }}>
                     <WhatsAppCTA
                       phone={lead.phone_number}
@@ -755,10 +805,12 @@ export default function TelecallerDashboard() {
                   <Button size="sm" variant="outline" className="rounded-full text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 h-7 w-7 p-0" onClick={async()=>{ const ok = await confirm({title:"Delete this lead?",description:"This lead will be permanently removed and won't reappear.",danger:true,okLabel:"Delete"}); if(!ok) return; try { await axios.delete(`${API}/leads/${lead.id}`); toast.success("Lead deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } }} data-testid={`del-lead-${lead.id}`} title="Delete lead"><X className="w-3 h-3"/></Button>
                 </div>
               </div>
-            ))}
+                );
+              });
+            })()}
           </div>
-          {/* Pagination — only show when more than one page */}
-          {filteredLeads.length > LEADS_PER_PAGE && (() => {
+          {/* Pagination — only show when more than one page AND not locked / searching */}
+          {!activeCallLeadId && !searchQuery && filteredLeads.length > LEADS_PER_PAGE && (() => {
             const totalPages = Math.ceil(filteredLeads.length / LEADS_PER_PAGE);
             // Build a compact page-number list (first, ..., neighbours, ..., last)
             const pageNums = [];

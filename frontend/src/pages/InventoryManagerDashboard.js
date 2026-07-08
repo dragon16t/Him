@@ -58,6 +58,9 @@ export default function InventoryManagerDashboard() {
   const [detailOrder, setDetailOrder] = useState(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
+  // Per-status pagination for Pipeline view (each column paginated independently)
+  const PIPELINE_COL_SIZE = 25;
+  const [pipelinePage, setPipelinePage] = useState({ pending: 1, confirmed: 1, shipped: 1, delivered: 1 });
   // Inventory Manager — order edit + tag state
   const [editOrder, setEditOrder] = useState(null);
   const [editForm, setEditForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", payment_type: "cod" });
@@ -262,9 +265,25 @@ export default function InventoryManagerDashboard() {
           <div className={`rounded-xl border p-4 text-center ${stats.not_shipped>0?'bg-red-50 border-red-200':'bg-[#F9F8F6] border-[#E5E3DB]'}`}><AlertTriangle className={`w-5 h-5 mx-auto mb-1 ${stats.not_shipped>0?'text-red-600':'text-[#59615D]'}`}/><p className={`font-heading text-xl font-bold ${stats.not_shipped>0?'text-red-700':''}`}>{stats.not_shipped||0}</p><p className="text-[9px] text-[#59615D] uppercase">Not Shipped</p></div>
         </div>
 
+        {/* Prominent Search + Total Counter */}
+        <div className="bg-white rounded-2xl border border-[#E5E3DB] p-3 mb-3 flex items-center gap-3 flex-wrap" data-testid="inv-search-bar">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="w-4 h-4 absolute left-3 top-3 text-[#59615D]"/>
+            <Input value={search} onChange={e=>{setSearch(e.target.value); setPage(1); setPipelinePage({pending:1,confirmed:1,shipped:1,delivered:1});}} placeholder="Search by name, phone, order ID, address, product, AWB, tracking #, badge…" className="rounded-full pl-9 h-10 text-sm" data-testid="inv-search-input"/>
+            {search && <button onClick={()=>setSearch("")} className="absolute right-3 top-3 text-[10px] text-[#B75D69] underline" data-testid="inv-search-clear">clear</button>}
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-[#59615D]">Total loaded:</span>
+            <b className="text-[#3B5249]">{orders.length}</b>
+            <span className="text-[#59615D]">·</span>
+            <span className="text-[#59615D]">Matching filters:</span>
+            <b className={filtered.length !== orders.length ? "text-[#B75D69]" : "text-[#3B5249]"}>{filtered.length}</b>
+            {debouncedSearch && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">Server-side search: "{debouncedSearch}"</span>}
+          </div>
+        </div>
+
         {/* Filters */}
         <div className="flex gap-2 mb-4 flex-wrap items-center">
-          <div className="relative flex-1 max-w-xs"><Search className="w-4 h-4 absolute left-3 top-2 text-[#59615D]"/><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search orders/address..." className="rounded-full pl-9 h-8 text-xs"/></div>
           <div className="flex gap-1">{["all",...statuses,"returned"].map(s=>(<button key={s} onClick={()=>setStatusFilter(s)} className={`px-2.5 py-1 rounded-full text-[9px] font-medium capitalize ${statusFilter===s?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{s}</button>))}</div>
           <div className="flex items-center gap-1 bg-white rounded-full px-2 py-0.5 border border-[#E5E3DB]">
             <span className="text-[9px] text-[#59615D] uppercase">Date</span>
@@ -305,10 +324,16 @@ export default function InventoryManagerDashboard() {
               {statuses.map(status => {
                 const items = filtered.filter(o => o.status === status);
                 const colors = {pending:"border-yellow-200 bg-yellow-50",confirmed:"border-blue-200 bg-blue-50",shipped:"border-purple-200 bg-purple-50",delivered:"border-green-200 bg-green-50"};
+                const colPage = pipelinePage[status] || 1;
+                const colTotalPages = Math.max(1, Math.ceil(items.length / PIPELINE_COL_SIZE));
+                const colSafePage = Math.min(colPage, colTotalPages);
+                const colStart = (colSafePage - 1) * PIPELINE_COL_SIZE;
+                const colEnd = colStart + PIPELINE_COL_SIZE;
+                const colVisible = items.slice(colStart, colEnd);
                 return (
                   <div key={status} className={`rounded-xl border-2 p-3 ${colors[status]}`}>
-                    <div className="flex justify-between items-center mb-3"><p className="text-xs font-bold uppercase">{status}</p><Badge variant="outline" className="text-[9px]">{items.length}</Badge></div>
-                    <div className="space-y-2 max-h-96 overflow-y-auto">{items.map(o=>(
+                    <div className="flex justify-between items-center mb-3"><p className="text-xs font-bold uppercase">{status}</p><Badge variant="outline" className="text-[9px]" data-testid={`pipeline-count-${status}`}>{items.length}</Badge></div>
+                    <div className="space-y-2 max-h-96 overflow-y-auto" data-testid={`pipeline-col-${status}`}>{colVisible.map(o=>(
                       <div key={o.id} className="bg-white rounded-lg p-3 shadow-sm cursor-pointer hover:ring-2 hover:ring-[#3B5249]" onClick={()=>openDetail(o)} data-testid={`inv-order-${o.id}`}>
                         <p className="font-medium text-xs">{o.customer_name}</p>
                         <p className="text-[10px] text-[#59615D]">{o.customer_phone} | Rs.{o.total_amount}</p>
@@ -326,6 +351,16 @@ export default function InventoryManagerDashboard() {
                         </div>
                       </div>
                     ))}</div>
+                    {colTotalPages > 1 && (
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/60 gap-1" data-testid={`pipeline-pg-${status}`}>
+                        <span className="text-[9px] text-[#59615D]">{colStart+1}–{Math.min(colEnd, items.length)} of {items.length}</span>
+                        <div className="flex gap-1">
+                          <button disabled={colSafePage===1} onClick={()=>setPipelinePage(p=>({...p, [status]: Math.max(1, colSafePage-1)}))} className="px-2 py-0.5 rounded-full text-[9px] bg-white border border-[#E5E3DB] disabled:opacity-40" data-testid={`pipeline-pg-prev-${status}`}>‹</button>
+                          <span className="text-[9px] px-1.5 py-0.5">{colSafePage}/{colTotalPages}</span>
+                          <button disabled={colSafePage===colTotalPages} onClick={()=>setPipelinePage(p=>({...p, [status]: Math.min(colTotalPages, colSafePage+1)}))} className="px-2 py-0.5 rounded-full text-[9px] bg-white border border-[#E5E3DB] disabled:opacity-40" data-testid={`pipeline-pg-next-${status}`}>›</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
