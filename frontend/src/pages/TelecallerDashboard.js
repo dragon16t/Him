@@ -822,19 +822,45 @@ export default function TelecallerDashboard() {
                   </div>
                 </div>
                 {lead.remarks && <p className="text-xs text-[#59615D] mb-2">📌 {lead.remarks}</p>}
+                {/* Redistribution banner — this lead used to belong to another TC */}
+                {lead.original_tc_name && (
+                  <div className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1" data-testid={`orig-tc-${lead.id}`}>
+                    <p className="text-[10px] text-amber-800">🔁 <b>Previously handled by {lead.original_tc_name}</b> — reassigned {(lead.redistributed_at || "").slice(0, 10)}.</p>
+                  </div>
+                )}
                 {(lead.call_logs || []).length > 0 && (() => {
-                  const recent = (lead.call_logs || []).slice(-3).reverse();
+                  const all = [...(lead.call_logs || [])].reverse(); // newest first
+                  const totalCalls = all.length;
+                  // Build compiled summary chips
+                  const uniqStatuses = [...new Set(all.map(c => c.status).filter(Boolean))];
+                  const problems = all.map(c => c.remarks || c.customer_remarks || "").filter(Boolean).slice(0, 5);
                   return (
                     <details className="mb-2 group" data-testid={`call-history-${lead.id}`}>
                       <summary className="text-[10px] text-[#3B5249] cursor-pointer hover:underline flex items-center gap-1">
-                        <PhoneCall className="w-3 h-3"/> Call history ({lead.call_logs.length}) — latest: {recent[0]?.remarks?.slice(0, 40) || recent[0]?.customer_remarks?.slice(0, 40) || "no remarks"}{(recent[0]?.remarks?.length > 40) ? "…" : ""}
+                        <PhoneCall className="w-3 h-3"/> Full call history ({totalCalls}) — latest: {all[0]?.remarks?.slice(0, 40) || all[0]?.customer_remarks?.slice(0, 40) || "no remarks"}{(all[0]?.remarks?.length > 40) ? "…" : ""}
                       </summary>
-                      <div className="mt-1.5 space-y-1 bg-[#F9F8F6] rounded-lg p-2 border border-[#E5E3DB]">
-                        {recent.map((cl, i) => (
-                          <div key={i} className="text-[10px] border-b border-[#F0EDE5] last:border-0 pb-1 last:pb-0" data-testid={`call-log-${lead.id}-${i}`}>
+                      <div className="mt-1.5 space-y-1.5 bg-[#F9F8F6] rounded-lg p-2 border border-[#E5E3DB]">
+                        {/* Compiled customer summary */}
+                        <div className="bg-white rounded-md p-2 border border-[#E5E3DB]" data-testid={`summary-${lead.id}`}>
+                          <p className="text-[9px] uppercase font-semibold text-[#7B6D5A] mb-1">🧾 Customer Summary</p>
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {uniqStatuses.map(s => <Badge key={s} variant="outline" className="text-[8px] capitalize">{(s || "").replace(/_/g," ")}</Badge>)}
+                            {lead.product_interest && lead.product_interest !== "general" && <Badge variant="outline" className="text-[8px] bg-[#F4EAE0]">🛍 {lead.product_interest}</Badge>}
+                            {(lead.city || lead.address) && <Badge variant="outline" className="text-[8px]">📍 {lead.city || (lead.address || "").slice(0, 25)}</Badge>}
+                            {lead.language && <Badge variant="outline" className="text-[8px]">🗣 {lead.language}</Badge>}
+                          </div>
+                          {problems.length > 0 && (
+                            <div className="text-[10px] text-[#3B5249] space-y-0.5">
+                              {problems.map((p, i) => <p key={i}>• {p}</p>)}
+                            </div>
+                          )}
+                        </div>
+                        {/* Full log */}
+                        {all.map((cl, i) => (
+                          <div key={i} className={`text-[10px] border-b border-[#F0EDE5] last:border-0 pb-1 last:pb-0 ${cl.system ? "bg-blue-50/60 rounded px-1" : ""}`} data-testid={`call-log-${lead.id}-${i}`}>
                             <div className="flex items-center justify-between gap-2 mb-0.5">
-                              <span className="text-[#A66E4E] font-medium">{cl.status || cl.outcome || "call"}</span>
-                              <span className="text-[9px] text-[#7B6D5A]">{(cl.timestamp || cl.date || cl.created_at || "").slice(0, 16).replace('T', ' ')}</span>
+                              <span className={`font-medium ${cl.system ? "text-blue-700" : "text-[#A66E4E]"}`}>{cl.system ? "SYSTEM" : (cl.status || cl.outcome || "call")}</span>
+                              <span className="text-[9px] text-[#7B6D5A]">{(cl.logged_at || cl.timestamp || cl.date || cl.created_at || "").slice(0, 16).replace('T', ' ')}{cl.logged_by_name && !cl.system ? ` · by ${cl.logged_by_name}` : ""}</span>
                             </div>
                             {cl.remarks && <p className="text-[#3B5249]"><b>Note:</b> {cl.remarks}</p>}
                             {cl.customer_remarks && cl.customer_remarks !== cl.remarks && <p className="text-[#59615D]"><b>Customer said:</b> {cl.customer_remarks}</p>}

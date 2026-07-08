@@ -2227,6 +2227,113 @@ async def update_telecaller(tid: str, data: dict, current_user: dict = Depends(g
     await db.telecallers.update_one({"id": tid}, {"$set": update})
     return {"message": "Telecaller updated", "fields": list(update.keys())}
 
+
+@api_router.delete("/telecallers/{tid}")
+async def delete_telecaller_with_redistribution(tid: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Remove a telecaller after password confirmation. Every active lead they own is
+    redistributed evenly among the remaining teammates under the same Sales Manager.
+    Each moved lead is stamped with `original_tc_id` / `original_tc_name` + a system
+    call-log entry so the history "this was <old TC>'s lead" is never lost.
+
+    Body: {password: "<remove password>"}
+    Access: sales_manager (own TCs) / assistant_sales_manager / admin.
+    """
+    if current_user['role'] not in ('admin', 'sales_manager', 'assistant_sales_manager'):
+        raise HTTPException(status_code=403, detail="Only Sales Manager / Admin can remove a telecaller")
+    tc = await db.telecallers.find_one({"id": tid}, {"_id": 0})
+    if not tc:
+        raise HTTPException(status_code=404, detail="Telecaller not found")
+    sm_id = tc.get("managed_by")
+    if current_user['role'] == 'sales_manager' and sm_id != current_user['id']:
+        raise HTTPException(status_code=403, detail="Not your telecaller")
+    if current_user['role'] == 'assistant_sales_manager' and sm_id != current_user.get('managed_by', ''):
+        raise HTTPException(status_code=403, detail="Not in your team")
+    # Password gate — reuses the org-wide remove password so managers can't remove without HQ approval
+    await check_delete_password(data.get("password", ""), current_user)
+
+    tc_name = tc.get("name") or "Unknown TC"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Load remaining active TCs under the same SM (excluding the one being removed)
+    remaining = await db.telecallers.find(
+        {"managed_by": sm_id, "id": {"$ne": tid}, "deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "name": 1}
+    ).to_list(500)
+
+    # Pull all leads owned by this TC (active only — skip already-deleted / routed_to_collab)
+    lead_query = {"assigned_to": tid, "deleted": {"$ne": True}, "status": {"$ne": "routed_to_collab"}}
+    leads_to_move = await db.leads.find(lead_query, {"_id": 0, "id": 1}).to_list(50000)
+
+    redistribution_map = {}  # new_tc_id -> [lead_ids]
+    if leads_to_move and remaining:
+        # Even split: leads[i] -> remaining[i % N]
+        for idx, lead in enumerate(leads_to_move):
+            new_tc = remaining[idx % len(remaining)]
+            redistribution_map.setdefault(new_tc["id"], []).append({"lead_id": lead["id"], "name": new_tc["name"]})
+        # Bulk update per receiving TC
+        for new_tc_id, entries in redistribution_map.items():
+            lead_ids = [e["lead_id"] for e in entries]
+            new_tc_name = entries[0]["name"]
+            await db.leads.update_many(
+                {"id": {"$in": lead_ids}},
+                {"$set": {
+                    "assigned_to": new_tc_id,
+                    "assigned_to_name": new_tc_name,
+                    "original_tc_id": tid,
+                    "original_tc_name": tc_name,
+                    "redistributed_at": now_iso,
+                    "redistributed_by": current_user['id'],
+                    "redistributed_by_name": current_user.get('name', ''),
+                    "updated_at": now_iso,
+                }, "$push": {"call_logs": {
+                    "logged_at": now_iso,
+                    "logged_by": current_user['id'],
+                    "logged_by_name": current_user.get('name', ''),
+                    "status": "reassigned",
+                    "remarks": f"[SYSTEM] Reassigned from {tc_name} to {new_tc_name} — TC removed.",
+                    "system": True,
+                }}}
+            )
+    elif leads_to_move and not remaining:
+        # No teammates — orphan the leads back to the SM (they become unassigned to a TC).
+        await db.leads.update_many(
+            {"id": {"$in": [l["id"] for l in leads_to_move]}},
+            {"$set": {
+                "assigned_to": sm_id or "",
+                "assigned_to_name": "(unassigned — TC removed)",
+                "original_tc_id": tid,
+                "original_tc_name": tc_name,
+                "redistributed_at": now_iso,
+                "updated_at": now_iso,
+            }, "$push": {"call_logs": {
+                "logged_at": now_iso, "logged_by": current_user['id'],
+                "status": "orphaned",
+                "remarks": f"[SYSTEM] {tc_name} removed. No teammates available — needs manual reassignment.",
+                "system": True,
+            }}}
+        )
+
+    # Soft-delete the TC (keeps the historical record for reports)
+    await db.telecallers.update_one({"id": tid}, {"$set": {
+        "deleted": True,
+        "deleted_at": now_iso,
+        "deleted_by": current_user['id'],
+        "deleted_by_name": current_user.get('name', ''),
+        "leads_redistributed_count": len(leads_to_move),
+    }})
+    await log_audit(
+        "delete_telecaller_redistribute", "telecaller", tid,
+        current_user['id'], current_user.get('name', ''),
+        f"Removed TC {tc_name} ({tid}). Redistributed {len(leads_to_move)} leads across {len(remaining)} teammates."
+    )
+    return {
+        "message": f"Removed {tc_name}. {len(leads_to_move)} lead(s) redistributed to {len(remaining)} teammate(s).",
+        "removed_tc_id": tid,
+        "removed_tc_name": tc_name,
+        "leads_moved": len(leads_to_move),
+        "distribution": {new_tc_id: len(entries) for new_tc_id, entries in redistribution_map.items()},
+    }
+
 @api_router.put("/agents/{aid}")
 async def update_agent(aid: str, data: dict, current_user: dict = Depends(get_current_user)):
     """DM (only their agent) / admin can edit agent profile fields (language, area, district, phone, name)."""

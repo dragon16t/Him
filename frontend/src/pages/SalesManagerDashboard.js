@@ -70,6 +70,10 @@ export default function SalesManagerDashboard() {
   const [loading, setLoading] = useState(true);
   const [showAddTC, setShowAddTC] = useState(false);
   const [editingTC, setEditingTC] = useState(null);
+  // Remove-TC state (with password + auto-redistribution)
+  const [removeTc, setRemoveTc] = useState(null);
+  const [removePassword, setRemovePassword] = useState("");
+  const [removeSubmitting, setRemoveSubmitting] = useState(false);
   const [tcEditForm, setTcEditForm] = useState({ name: "", phone: "", language: "", location: "" });
   // Per-telecaller call log viewer
   const [callViewerTC, setCallViewerTC] = useState(null);
@@ -444,7 +448,7 @@ export default function SalesManagerDashboard() {
                 })()}
               </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p>{cleanEmail(tc.email)&&<p className="text-xs text-[#59615D]">{cleanEmail(tc.email)}</p>}{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{telecallers.map(tc=>(<div key={tc.id} className="border border-[#E5E3DB] rounded-xl p-4" data-testid={`tc-${tc.id}`}><div className="flex justify-between items-start gap-2"><div className="flex-1 min-w-0"><p className="font-heading font-medium">{tc.name}</p>{cleanEmail(tc.email)&&<p className="text-xs text-[#59615D]">{cleanEmail(tc.email)}</p>}{tc.phone&&<p className="text-xs text-[#59615D]">{tc.phone}</p>}</div><div className="flex gap-1 flex-shrink-0"><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#3B5249] text-[#3B5249] hover:bg-[#3B5249] hover:text-white" onClick={()=>openCallViewer(tc)} data-testid={`view-calls-${tc.id}`} title="View call logs">📞</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#A66E4E] text-[#A66E4E] hover:bg-[#A66E4E] hover:text-white" onClick={()=>openEditTC(tc)} data-testid={`edit-tc-${tc.id}`}>✎</Button><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-red-400 text-red-500 hover:bg-red-500 hover:text-white" onClick={()=>{ setRemoveTc(tc); setRemovePassword(""); }} data-testid={`remove-tc-${tc.id}`} title="Remove TC (password required)">🗑</Button>{tc.phone&&<a href={`tel:${tc.phone}`} data-testid={`call-tc-${tc.id}`}><Button size="sm" variant="outline" className="rounded-full h-8 w-8 p-0 border-[#6B8E6B] text-[#6B8E6B] hover:bg-[#6B8E6B] hover:text-white"><PhoneCall className="w-3.5 h-3.5"/></Button></a>}</div></div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {tc.language && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-lang-${tc.id}`}>🗣 {tc.language}</Badge>}
                 {(tc.locality || tc.location || tc.city) && <Badge variant="outline" className="text-[10px] bg-[#F9F8F6]" data-testid={`tc-place-${tc.id}`}>📍 {tc.locality || tc.location || tc.city}</Badge>}
@@ -606,6 +610,60 @@ export default function SalesManagerDashboard() {
             <div><Label className="text-xs">Place / Locality</Label><Input value={tcEditForm.location} onChange={e=>setTcEditForm(f=>({...f,location:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl" data-testid="edit-tc-location"/></div>
             <Button onClick={handleEditTC} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-tc">Save Changes</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* REMOVE TELECALLER — password gate + auto-redistribute leads */}
+      <Dialog open={!!removeTc} onOpenChange={(o)=>{ if (!o) { setRemoveTc(null); setRemovePassword(""); } }}>
+        <DialogContent className="rounded-2xl max-w-md" data-testid="remove-tc-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-red-700">🗑 Remove Telecaller</DialogTitle>
+          </DialogHeader>
+          {removeTc && (
+            <div className="space-y-3">
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                <p className="text-sm font-medium text-red-800">You are about to remove <b>{removeTc.name}</b>.</p>
+                <p className="text-[11px] text-red-700 mt-1">
+                  Every active lead owned by this TC will be redistributed EVENLY among the rest of the team ({telecallers.filter(t=>t.id!==removeTc.id).length} teammate{telecallers.filter(t=>t.id!==removeTc.id).length===1?"":"s"}).
+                  Each moved lead keeps a system note like <i>"Reassigned from {removeTc.name}"</i> so history isn't lost.
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs">Remove password *</Label>
+                <Input
+                  type="password"
+                  value={removePassword}
+                  onChange={e=>setRemovePassword(e.target.value)}
+                  className="rounded-xl"
+                  placeholder="Ask admin if you don't have this"
+                  data-testid="remove-tc-password"
+                  autoFocus
+                />
+                <p className="text-[9px] text-[#7B6D5A] mt-1">2 wrong attempts trigger an automatic security alert to admin@celestaglow.com.</p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={async () => {
+                    if (!removePassword) return toast.error("Enter the remove password");
+                    setRemoveSubmitting(true);
+                    try {
+                      const r = await axios.delete(`${API}/telecallers/${removeTc.id}`, { data: { password: removePassword } });
+                      toast.success(r.data.message || "Removed");
+                      setRemoveTc(null); setRemovePassword("");
+                      fetchData();
+                    } catch (e) {
+                      toast.error(e.response?.data?.detail || "Failed to remove");
+                    }
+                    setRemoveSubmitting(false);
+                  }}
+                  disabled={removeSubmitting || !removePassword}
+                  className="flex-1 rounded-full bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                  data-testid="remove-tc-confirm"
+                >{removeSubmitting ? "Removing…" : "Yes, remove & redistribute"}</Button>
+                <Button variant="outline" onClick={() => { setRemoveTc(null); setRemovePassword(""); }} className="rounded-full" data-testid="remove-tc-cancel">Cancel</Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
