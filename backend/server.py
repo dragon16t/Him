@@ -1258,7 +1258,9 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
         # When an order is placed, the lead is DONE with its follow-up cycle — clear stale
         # dates so the lead doesn't come back as "callback due" tomorrow. It naturally
         # reappears in ~30 days via the repeat-order date (set below).
-        _today = datetime.now(timezone.utc).date()
+        # Use IST (Asia/Kolkata = UTC+5:30) so "today" matches the business calendar.
+        _ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        _today = _ist_now.date()
         _next_repeat = (_today + timedelta(days=30)).isoformat()
         await db.leads.update_one({"id": order['lead_id']}, {"$set": {
             "status": "order_created",

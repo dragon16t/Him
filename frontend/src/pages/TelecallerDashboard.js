@@ -115,7 +115,7 @@ export default function TelecallerDashboard() {
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
   const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "" });
-  const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
+  const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: "", payment_type: "cod" });
   const [fundForm, setFundForm] = useState({ amount: 0, reason: "", category: "travel" });
 
   const fetchData = useCallback(async () => {
@@ -161,8 +161,10 @@ export default function TelecallerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCallLeadId, leads]);
 
-  const today = new Date().toISOString().split("T")[0];
-  const nowIso = new Date().toISOString();
+  // "Today" is always calculated in IST (Asia/Kolkata) — matches business location so
+  // dates on the UI never drift by ±1 day for early-morning or late-night users.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
+  const nowIso = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).replace(" ", "T"); // YYYY-MM-DDTHH:mm:ss in IST
   // Hide leads routed to collab and recently-ordered leads from active views
   const orderedLeadIds = new Set((orders || []).map(o => o.lead_id).filter(Boolean));
   // Track how many delivered/confirmed orders each lead has placed → used for "REPEAT × N" badges
@@ -378,6 +380,10 @@ export default function TelecallerDashboard() {
   const handleCallLog = async () => {
     if (savingCallLog) return; // idempotency guard — don't submit twice
     if (!callForm.status) return toast.error("Select status");
+    // Interested customers MUST have a follow-up scheduled — otherwise they'll fall out of the queue
+    if (callForm.enquiry_type === "orders" && callForm.status === "interested" && !callForm.next_follow_up_date) {
+      return toast.error("Interested customer needs a follow-up date — please schedule the next call");
+    }
     const isOrder = callForm.enquiry_type === "orders";
     const payload = {
       status: callForm.status,
@@ -408,7 +414,7 @@ export default function TelecallerDashboard() {
       if (isOrder && (callForm.status === "interested" || callForm.status === "ordered")) {
         const finalName = callForm.customer_name || (selectedLead.name && selectedLead.name !== "Unknown" ? selectedLead.name : "");
         setSelectedLead({...selectedLead, status: callForm.status, name: finalName});
-        setOrderForm({ customer_name: finalName, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: 0, payment_type: "cod" });
+        setOrderForm({ customer_name: finalName, customer_phone: selectedLead.phone_number, customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: "", payment_type: "cod" });
         setShowOrder(true);
       }
       fetchData();
@@ -909,7 +915,7 @@ export default function TelecallerDashboard() {
                       message={`Hi ${lead.name && lead.name!=="Unknown" ? lead.name : ""}, this is from Celesta Glow. ${lead.status === "interested" ? "Just following up — would you like to place your order today?" : "Just checking in — how can we help?"}`}
                     />
                   </span>
-                  {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
+                  {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:"",payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
                   {/* Delete lead button intentionally removed for telecallers — every number must be preserved.
                       Only Sales Managers / Admin can delete leads (via the SM Leads panel). */}
                 </div>
@@ -972,16 +978,22 @@ export default function TelecallerDashboard() {
           )}
           <div>
             <Label className="text-xs font-medium">Enquiry Type *</Label>
-            <Select value={callForm.enquiry_type} onValueChange={v=>setCallForm(f=>({...f,enquiry_type:v}))}>
-              <SelectTrigger className="rounded-xl" data-testid="call-enquiry-type"><SelectValue/></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="orders">Enquiry for Orders</SelectItem>
-                <SelectItem value="business_collaboration">Business Collaboration</SelectItem>
-                <SelectItem value="influencer">Influencer</SelectItem>
-                <SelectItem value="sales_opportunity">Sales Opportunity</SelectItem>
-              </SelectContent>
-            </Select>
-            {callForm.enquiry_type !== "orders" && (
+            {selectedLead?.enquiry_type && selectedLead.enquiry_type !== "orders" && selectedLead.status === "routed_to_collab" ? (
+              <div className="rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800" data-testid="call-enquiry-locked">
+                🔒 Already routed to <b>{selectedLead.enquiry_type === "sales_opportunity" ? "Sales Collab" : "Social Media Collab"}</b> — you can only log a follow-up here, not change the routing.
+              </div>
+            ) : (
+              <Select value={callForm.enquiry_type} onValueChange={v=>setCallForm(f=>({...f,enquiry_type:v}))}>
+                <SelectTrigger className="rounded-xl" data-testid="call-enquiry-type"><SelectValue/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="orders">Enquiry for Orders</SelectItem>
+                  <SelectItem value="business_collaboration">Business Collaboration</SelectItem>
+                  <SelectItem value="influencer">Influencer</SelectItem>
+                  <SelectItem value="sales_opportunity">Sales Opportunity</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {callForm.enquiry_type !== "orders" && (!selectedLead?.enquiry_type || selectedLead.enquiry_type === "orders") && (
               <p className="text-[10px] text-[#A66E4E] mt-1">⤳ This contact will be moved to the {callForm.enquiry_type === "sales_opportunity" ? "Sales Manager's Sales Collab book" : "Social Media Manager's Collaborations book"} after you save. No follow-up will be scheduled on your side.</p>
             )}
           </div>
@@ -989,8 +1001,15 @@ export default function TelecallerDashboard() {
           <div><Label className="text-xs">Notes / Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did they say? Any context for the manager…"/>
             <div className="flex justify-end mt-1"><VoiceNoteButton compact label="Dictate notes" onTranscribed={(text)=>setCallForm(f=>({...f,customer_remarks:(f.customer_remarks?f.customer_remarks+" ":"")+text}))} /></div>
           </div>
-          {callForm.enquiry_type === "orders" && (
-            <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
+          {/* Follow-up date/time — only when it makes logical sense (skip terminal statuses) */}
+          {callForm.enquiry_type === "orders" && !["not_interested","rejected","cancelled","do_not_call","blocked","spam","ordered"].includes(callForm.status) && (
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Follow-up Date {callForm.status === "interested" && <span className="text-[9px] text-red-700">(required for interested)</span>}</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl" data-testid="call-fu-date"/></div>
+              <div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl" data-testid="call-fu-time"/></div>
+            </div>
+          )}
+          {callForm.enquiry_type === "orders" && ["not_interested","rejected","cancelled","do_not_call","blocked","spam"].includes(callForm.status) && (
+            <p className="text-[10px] text-[#7B6D5A] italic" data-testid="call-no-fu-note">💤 No follow-up needed — this lead drops off your queue after you save.</p>
           )}
           <Button onClick={handleCallLog} disabled={savingCallLog} className="w-full rounded-full bg-[#3B5249] text-white disabled:opacity-60" data-testid="submit-call-log">{savingCallLog ? "Saving…" : (callForm.enquiry_type === "orders" ? "Log Call" : "Route Contact")}</Button>
           {callForm.enquiry_type === "orders" && (callForm.status === "interested" || callForm.status === "ordered") && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging — please add delivery address</p>}
@@ -1036,16 +1055,17 @@ export default function TelecallerDashboard() {
           </div>
           <div>
             <Label className="text-xs">
-              Total Amount
+              Total Amount *
               {orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) > 0 && <span className="text-[10px] text-[#59615D]"> (auto from product prices × qty)</span>}
-              {orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) === 0 && <span className="text-[10px] text-[#B75D69]"> — enter prices above OR type total here</span>}
+              {(orderForm.items.length === 0 || orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) === 0) && <span className="text-[10px] text-[#B75D69]"> — enter manually</span>}
             </Label>
             <Input
               type="number"
               value={orderForm.items.length > 0 && orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0) > 0
                 ? orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity,0)
                 : orderForm.total_amount}
-              onChange={e => setOrderForm(f => ({ ...f, total_amount: Number(e.target.value) || 0 }))}
+              onChange={e => setOrderForm(f => ({ ...f, total_amount: e.target.value }))}
+              placeholder="Type amount"
               className="rounded-xl font-bold"
               data-testid="order-total"
             />
