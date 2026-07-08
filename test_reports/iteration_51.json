@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 51 — server-side order search on /api/v2/orders and /api/inventory/orders. Verified end-to-end via pytest (12/12) and Playwright for Admin, Sales Manager, and Inventory Manager. Debounce, page-reset, clear button, RBAC scoping, and regex-escape all confirmed. Regression smoke on pending-credits endpoint passes.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_51_order_search.py",
+    "/app/test_reports/pytest/iter51.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OrdersPanel.js: fetchOrders depends on `page`, but the useEffect that resets page-to-1 on debouncedQ change only fires when debouncedQ !== '' — clearing to empty won't reset page. Minor UX issue: if user searched on page 3, cleared, they stay on page 3. Consider `useEffect(()=>setPage(1),[debouncedQ])` unconditionally.",
+    "server.py get_inventory_orders sales_manager_id branch sets query['created_by'] BEFORE the q block; if q is provided the query is unaffected — good. But note it doesn't include assistant SM's own id in team scope where applicable (already there — verified).",
+    "upgrades.py — when both status filter AND q are combined, the query merges cleanly via $and only if $or already exists. Current logic ok, but the $and merge branch is untested by seed data (both filters mutually exclusive in existing seed). test_search_combined_with_status covers no-500 but doesn't assert exact results."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_51_order_search.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (3/3 roles verified)"},
+  "test_credentials": "used credentials from /app/memory/test_credentials.md and inventory@celestaglow.com / inv123",
+  "seed_data_creation": "Created 1 ZZUNIQUENAME_XYZ_* order + 6 filler orders under telecaller1 for the run. Data persists in DB (test doesn't clean up — negligible volume).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Order search feature is server-side across id/name/phone/address/city/pincode/awb/tracking/items.name/items.product_name/created_by_name/courier_name/badges (+ digits->phone). data-testids: orders-search, orders-search-clear. Debounce 400ms. Both /api/v2/orders and /api/inventory/orders accept ?q=. SM RBAC scoping still active — SM sees only own team's matches."
+}

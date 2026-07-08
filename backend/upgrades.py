@@ -136,6 +136,7 @@ async def get_orders_v2(
     to_date: Optional[str] = Query(None, alias="to"),
     created_by: Optional[str] = None,
     sales_manager_id: Optional[str] = None,
+    q: Optional[str] = None,
     skip: int = 0, limit: int = 50,
     current_user: dict = Depends(_auth)
 ):
@@ -172,6 +173,34 @@ async def get_orders_v2(
         else:
             query["payment_type"] = pt
     query.update(_date_range_query("created_at", from_date, to_date))
+    # Text search across id / customer name / phone / address / awb / product name
+    # Runs server-side so pagination doesn't hide matches.
+    if q:
+        import re as _re
+        s = q.strip()
+        if s:
+            rx = _re.escape(s)
+            digits = _re.sub(r"\D", "", s)
+            or_clauses = [
+                {"id": {"$regex": rx, "$options": "i"}},
+                {"customer_name": {"$regex": rx, "$options": "i"}},
+                {"customer_address": {"$regex": rx, "$options": "i"}},
+                {"customer_city": {"$regex": rx, "$options": "i"}},
+                {"customer_pincode": {"$regex": rx, "$options": "i"}},
+                {"awb_number": {"$regex": rx, "$options": "i"}},
+                {"tracking_number": {"$regex": rx, "$options": "i"}},
+                {"items.name": {"$regex": rx, "$options": "i"}},
+                {"items.product_name": {"$regex": rx, "$options": "i"}},
+                {"created_by_name": {"$regex": rx, "$options": "i"}},
+                {"courier_name": {"$regex": rx, "$options": "i"}},
+                {"badges": {"$regex": rx, "$options": "i"}},
+            ]
+            if digits and len(digits) >= 4:
+                or_clauses.append({"customer_phone": {"$regex": digits, "$options": "i"}})
+            if "$or" in query:
+                query["$and"] = [{"$or": query.pop("$or")}, {"$or": or_clauses}]
+            else:
+                query["$or"] = or_clauses
     limit = max(1, min(int(limit or 50), 500))
     skip = max(0, int(skip or 0))
     total = await db.orders.count_documents(query)

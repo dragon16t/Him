@@ -52,6 +52,12 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
   const [customerPhone, setCustomerPhone] = useState(null);
   const [salesManagers, setSalesManagers] = useState([]);
   const [smFilter, setSmFilter] = useState("all");
+  const [searchQ, setSearchQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchQ.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQ]);
   const canFilterBySm = role === "admin" || role === "inventory_manager";
 
   const fetchOrders = useCallback(async () => {
@@ -63,6 +69,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
       if (fromDate) params.from = fromDate;
       if (toDate) params.to = toDate;
       if (canFilterBySm && smFilter !== "all") params.sales_manager_id = smFilter;
+      if (debouncedQ) params.q = debouncedQ;
       const { data } = await axios.get(`${API}/v2/orders`, { params });
       setOrders(data.orders || []);
       setTotal(data.total || 0);
@@ -70,7 +77,9 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load orders");
     } finally { setLoading(false); }
-  }, [page, limit, status, paymentFilter, fromDate, toDate, smFilter, canFilterBySm]);
+  }, [page, limit, status, paymentFilter, fromDate, toDate, smFilter, debouncedQ, canFilterBySm]);
+  // Reset page to 1 whenever the search query changes so results aren't hidden by pagination
+  useEffect(() => { if (debouncedQ !== "") setPage(1); }, [debouncedQ]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => {
@@ -163,6 +172,16 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
             <span className="text-xs text-[#59615D]">→</span>
             <Input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setPage(1); }} className="rounded-xl h-8 text-xs w-36" data-testid="orders-to" />
           </div>
+          <Input
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+            placeholder="🔍 Search order ID / name / phone / AWB / product…"
+            className="rounded-full h-8 text-xs w-72"
+            data-testid="orders-search"
+          />
+          {searchQ && (
+            <button onClick={() => setSearchQ("")} className="text-[10px] underline text-[#3B5249]" data-testid="orders-search-clear">clear</button>
+          )}
           <Select value={status} onValueChange={v => { setStatus(v); setPage(1); }}>
             <SelectTrigger className="rounded-xl h-8 text-xs w-32" data-testid="orders-status"><SelectValue /></SelectTrigger>
             <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>

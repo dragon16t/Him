@@ -6512,7 +6512,7 @@ async def promote_tc_to_asm(data: dict, current_user: dict = Depends(get_current
 
 # ==================== INVENTORY MANAGER ====================
 @api_router.get("/inventory/orders")
-async def get_inventory_orders(status: Optional[str] = None, date_filter: Optional[str] = None, sales_manager_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_inventory_orders(status: Optional[str] = None, date_filter: Optional[str] = None, sales_manager_id: Optional[str] = None, q: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'inventory_manager']:
         raise HTTPException(status_code=403)
     query = {"deleted": {"$ne": True}}
@@ -6525,6 +6525,29 @@ async def get_inventory_orders(status: Optional[str] = None, date_filter: Option
         asms = await db.assistant_sales_managers.find({"managed_by": sales_manager_id}, {"_id": 0, "id": 1}).to_list(50)
         team_ids = [t["id"] for t in tcs] + [a["id"] for a in asms] + [sales_manager_id]
         query["created_by"] = {"$in": team_ids}
+    if q:
+        import re as _re
+        s = q.strip()
+        if s:
+            rx = _re.escape(s)
+            digits = _re.sub(r"\D", "", s)
+            or_clauses = [
+                {"id": {"$regex": rx, "$options": "i"}},
+                {"customer_name": {"$regex": rx, "$options": "i"}},
+                {"customer_address": {"$regex": rx, "$options": "i"}},
+                {"customer_city": {"$regex": rx, "$options": "i"}},
+                {"customer_pincode": {"$regex": rx, "$options": "i"}},
+                {"awb_number": {"$regex": rx, "$options": "i"}},
+                {"tracking_number": {"$regex": rx, "$options": "i"}},
+                {"items.name": {"$regex": rx, "$options": "i"}},
+                {"items.product_name": {"$regex": rx, "$options": "i"}},
+                {"created_by_name": {"$regex": rx, "$options": "i"}},
+                {"courier_name": {"$regex": rx, "$options": "i"}},
+                {"badges": {"$regex": rx, "$options": "i"}},
+            ]
+            if digits and len(digits) >= 4:
+                or_clauses.append({"customer_phone": {"$regex": digits, "$options": "i"}})
+            query["$or"] = or_clauses
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
     stats = {"total": len(orders), "pending": len([o for o in orders if o.get('status')=='pending']),
              "confirmed": len([o for o in orders if o.get('status')=='confirmed']),

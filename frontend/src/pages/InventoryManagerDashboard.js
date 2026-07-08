@@ -46,6 +46,8 @@ export default function InventoryManagerDashboard() {
   const [returnForm, setReturnForm] = useState({order_id:"",reason:"",type:"return",amount:0,notes:""});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => { const t = setTimeout(() => setDebouncedSearch(search.trim()), 400); return () => clearTimeout(t); }, [search]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD specific day
@@ -68,6 +70,7 @@ export default function InventoryManagerDashboard() {
     try {
       const params = {};
       if (smFilter !== "all") params.sales_manager_id = smFilter;
+      if (debouncedSearch) params.q = debouncedSearch;
       const r = await axios.get(`${API}/inventory/orders`, { params });
       setOrders(r.data.orders||[]); setStats(r.data.stats||{});
     } catch {}
@@ -85,7 +88,7 @@ export default function InventoryManagerDashboard() {
       setSalesManagers(sm.data.sales_managers || sm.data || []);
     } catch {}
     setLoading(false);
-  }, [smFilter]);
+  }, [smFilter, debouncedSearch]);
 
   const updateStock = async () => {
     if(!stockForm.pid) return toast.error("Select product");
