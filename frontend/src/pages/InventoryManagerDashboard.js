@@ -215,7 +215,9 @@ export default function InventoryManagerDashboard() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F8F6]"><Loader2 className="w-8 h-8 animate-spin text-[#3B5249]" /></div>;
 
   const filtered = orders.filter(o => {
-    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (statusFilter === "offline") { if (!o.is_offline) return false; }
+    else if (statusFilter === "online") { if (o.is_offline) return false; }
+    else if (statusFilter !== "all" && o.status !== statusFilter) return false;
     if (dateFilter) { if ((o.created_at||"").slice(0,10) !== dateFilter) return false; }
     else if (month !== "all") { const m = o.created_at?.slice(5,7)?.replace(/^0/,""); if (m !== month) return false; }
     if (search) {
@@ -284,7 +286,7 @@ export default function InventoryManagerDashboard() {
 
         {/* Filters */}
         <div className="flex gap-2 mb-4 flex-wrap items-center">
-          <div className="flex gap-1">{["all",...statuses,"returned"].map(s=>(<button key={s} onClick={()=>setStatusFilter(s)} className={`px-2.5 py-1 rounded-full text-[9px] font-medium capitalize ${statusFilter===s?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`}>{s}</button>))}</div>
+          <div className="flex gap-1">{["all",...statuses,"returned","offline","online"].map(s=>(<button key={s} onClick={()=>setStatusFilter(s)} className={`px-2.5 py-1 rounded-full text-[9px] font-medium capitalize ${statusFilter===s?"bg-[#3B5249] text-white":"bg-white border border-[#E5E3DB] text-[#59615D]"}`} data-testid={`inv-filter-${s}`}>{s === "offline" ? "🟣 Offline" : s === "online" ? "🌐 Online" : s}</button>))}</div>
           <div className="flex items-center gap-1 bg-white rounded-full px-2 py-0.5 border border-[#E5E3DB]">
             <span className="text-[9px] text-[#59615D] uppercase">Date</span>
             <Input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)} className="h-6 text-[10px] border-0 p-1 w-32" data-testid="inv-date-filter"/>
@@ -334,8 +336,8 @@ export default function InventoryManagerDashboard() {
                   <div key={status} className={`rounded-xl border-2 p-3 ${colors[status]}`}>
                     <div className="flex justify-between items-center mb-3"><p className="text-xs font-bold uppercase">{status}</p><Badge variant="outline" className="text-[9px]" data-testid={`pipeline-count-${status}`}>{items.length}</Badge></div>
                     <div className="space-y-2 max-h-96 overflow-y-auto" data-testid={`pipeline-col-${status}`}>{colVisible.map(o=>(
-                      <div key={o.id} className="bg-white rounded-lg p-3 shadow-sm cursor-pointer hover:ring-2 hover:ring-[#3B5249]" onClick={()=>openDetail(o)} data-testid={`inv-order-${o.id}`}>
-                        <p className="font-medium text-xs">{o.customer_name}</p>
+                      <div key={o.id} className={`bg-white rounded-lg p-3 shadow-sm cursor-pointer hover:ring-2 hover:ring-[#3B5249] ${o.is_offline ? "border-l-4 border-l-purple-500" : ""}`} onClick={()=>openDetail(o)} data-testid={`inv-order-${o.id}`}>
+                        <div className="flex items-start justify-between gap-1"><p className="font-medium text-xs">{o.customer_name}</p>{o.is_offline && <Badge className="bg-purple-600 text-white text-[8px]" data-testid={`inv-offline-pipe-${o.id}`}>OFFLINE</Badge>}</div>
                         <p className="text-[10px] text-[#59615D]">{o.customer_phone} | Rs.{o.total_amount}</p>
                         <p className="text-[10px] text-[#3B5249] truncate" title={o.customer_address}>📍 {o.customer_address || "No address"}</p>
                         {itemsSummary(o) && <p className="text-[10px] text-[#2C3531] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>🛍️ {itemsSummary(o)}</p>}
@@ -378,7 +380,7 @@ export default function InventoryManagerDashboard() {
               </div>
               <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Order","Customer","Phone","Address","Products","Amount","Type","Date","Created By","Status","Tracking","Actions"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
               <tbody>{paginated.map(o=>(
-                <tr key={o.id} className="border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer" onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
+                <tr key={o.id} className={`border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer ${o.is_offline ? "bg-purple-50/40" : ""}`} onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}{o.is_offline && <Badge className="ml-1 bg-purple-600 text-white text-[8px]" data-testid={`inv-offline-${o.id}`}>OFFLINE</Badge>}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
                 <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}
                   <Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2" onClick={()=>openOrderEdit(o)} data-testid={`inv-row-edit-${o.id}`}>✏️</Button>

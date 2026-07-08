@@ -32,6 +32,7 @@ import CollaborationContactsPanel from "../components/CollaborationContactsPanel
 import OrdersPanel from "../components/OrdersPanel";
 import DailyReportButton from "../components/DailyReportButton";
 import AgentSalesPanel from "../components/AgentSalesPanel";
+import StockAllocationPanel from "../components/StockAllocationPanel";
 
 const API = "/api";
 
@@ -282,12 +283,13 @@ export default function SalesManagerDashboard() {
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"telecallers",l:"Telecallers"},{v:"tcperf",l:"📊 TC Performance"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"agentsales",l:"🌟 Agent Sales"},{v:"leads",l:"📋 Leads"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"manualinvoice",l:"Manual Invoice"},{v:"customerphotos",l:"📸 Customer Photos"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"telecallers",l:"Telecallers"},{v:"tcperf",l:"📊 TC Performance"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"stock",l:"📦 Stock & Offline Sales"},{v:"agentsales",l:"🌟 Agent Sales"},{v:"leads",l:"📋 Leads"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"manualinvoice",l:"Manual Invoice"},{v:"customerphotos",l:"📸 Customer Photos"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
           <TabsContent value="tcperf" className="animate-fade-in"><TelecallerPerformanceCards /></TabsContent>
           <TabsContent value="distribute" className="animate-fade-in"><LeadDistributionPanel smId={user?.id} telecallers={telecallers} /></TabsContent>
+          <TabsContent value="stock" className="animate-fade-in"><StockAllocationPanel /></TabsContent>
           <TabsContent value="contactactivity" className="animate-fade-in"><ContactActivityPanel smId={user?.id} /></TabsContent>
           <TabsContent value="activity" className="animate-fade-in"><TeamActivityPanel /></TabsContent>
           <TabsContent value="agentsales" className="animate-fade-in"><AgentSalesPanel /></TabsContent>

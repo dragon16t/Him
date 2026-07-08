@@ -1,0 +1,40 @@
+{
+  "summary": "Full frontend flow validation of Stock Allocation + Offline Order feature across Sales Manager, District Manager and Inventory Manager dashboards. Backend already verified via curl by main agent. All 7 requested scenarios executed via Playwright. All PASS with one minor testid naming discrepancy documented below.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (all dashboards)", "issues": ["Benign 'ResizeObserver loop completed with undelivered notifications' error surfaces as an intrusive full-screen dev overlay after some interactions (SM allocation save). Not a functional bug but noisy — consider swallowing it with a global window.addEventListener('error', ...) or CRA's ignore list."]},
+      {"screen": "Alloc dialog", "issues": ["Radix warning: 'Missing Description or aria-describedby={undefined} for DialogContent' on the sell dialog — DialogDescription is present but Radix still complains; ensure a stable aria-describedby id. Non-blocking."]}
+    ]
+  },
+  "test_results": {
+    "1_sm_allocate_stock": "PASS — tab-stock visible for sales_manager, panel + alloc-add-btn render, dialog opens, employee dropdown includes all required roles (telecaller, agent, sales_manager, district_manager, assistant_sales_manager, inventory_manager), allocation with unit_price=299.5 saved with success toast.",
+    "2_manual_unit_price_fallback": "PASS — With blank unit_price the helper shows 'Product default: Rs.499.00 · Total value @ Qty 3: Rs.1497.00'. Saved allocation card shows '(product default)' badge (verified via alloc-grid inner text).",
+    "3_dm_tab_stock": "PASS — district_manager (manager1) sees tab-stock, click renders stock-allocation-panel.",
+    "4_im_sell_offline_order": "PASS — IM opens alloc panel via inv-tab-allocation (see note), clicked alloc-sell-{id}, dialog opened, filled qty=2, price=150, customer, phone, upi, notes; alloc-sell-total auto-computed; alloc-sell-submit created order with 'Offline order created' toast.",
+    "5_offline_badge_list_pipeline": "PASS — inv-offline-<orderId> badge visible on OFF-20260708-CA7500 row in List tab; inv-offline-pipe-<orderId> badge visible in Pipeline delivered column.",
+    "6_filter_chips": "PASS — inv-filter-offline shows only 1 offline row (with badge); inv-filter-online shows 9 rows with 0 offline badges; inv-filter-all resets.",
+    "7_stock_deduction": "IMPLICIT PASS — Offline order successfully created via UI (see #4), backend already curl-verified by main agent that product.stock is decremented + alloc.sold_qty is incremented. Not re-checked in DB from UI in this run."
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MINOR (docs/testid naming): The review request specified data-testid='tab-allocation' for IM's Stock Allocation tab, but the actual code uses data-testid='inv-tab-allocation'. Both work fine; either update the request docs or rename to 'tab-allocation' for consistency with SM/DM 'tab-stock'.",
+    "OPTIONAL: Suppress the ResizeObserver runtime error overlay (react-error-overlay noise) — not functional but poor UX during allocate save."
+  ],
+  "critical_code_review_comments": [
+    "stock_allocation.py: create_offline_order rejects effective_price <= 0 with 400 — good. However revenue transaction recording is wrapped in bare `except Exception: pass` — silent failure. Consider logging.",
+    "StockAllocationPanel.jsx (~325 lines) is within limits. Well-structured.",
+    "InventoryManagerDashboard.js: single very long line (line 383) for the table row — hurts readability & diffs, but not a bug.",
+    "The employee dropdown lists all managers including the current logged-in user (SM sees themselves) — probably intentional (they can hold their own stock), but consider a subtle 'You' tag."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "SM: salesmanager@celestaglow.com/sm123, DM: manager1@celestaglow.com/mgr123, IM: inventory@celestaglow.com/inv123 (from /app/memory/test_credentials.md + server.py seed).",
+  "seed_data_creation": "Created 3 test allocations via UI as sales_manager (qty=5 @299.5 for a telecaller; qty=3 blank-price fallback test with note 'FALLBACK-TEST-BLANK-PRICE'; plus IM created an offline order qty=2 @150 for Walk-in Test with phone 9998887777).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Stock allocation & offline order flow is fully working end-to-end for SM/DM/IM. The IM allocation tab testid is 'inv-tab-allocation' (not 'tab-allocation'). Offline order OFF-20260708-CA7500 exists in DB. Extra offline order was created during this test run — filter chips confirmed 1 offline row visible after filter.",
+  "rca of the issue": "N/A — no failures."
+}
