@@ -79,7 +79,7 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     } finally { setLoading(false); }
   }, [page, limit, status, paymentFilter, fromDate, toDate, smFilter, debouncedQ, canFilterBySm]);
   // Reset page to 1 whenever the search query changes so results aren't hidden by pagination
-  useEffect(() => { if (debouncedQ !== "") setPage(1); }, [debouncedQ]);
+  useEffect(() => { if (debouncedQ !== undefined) setPage(1); }, [debouncedQ]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => {
