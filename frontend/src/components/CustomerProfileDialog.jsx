@@ -46,6 +46,21 @@ export default function CustomerProfileDialog({ phone, open, onOpenChange }) {
                   <a href={wa()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] bg-emerald-50 border border-emerald-300 text-emerald-800" data-testid="cp-wa"><MessageSquare className="w-3 h-3"/>WhatsApp</a>
                 </div>
               </div>
+              {(() => {
+                // Show the most-recent TC + SM who is currently owning this customer
+                const src = (data.orders?.[0]) || (data.leads?.[0]);
+                if (!src) return null;
+                const tcName = src.created_by_name || src.assigned_to_name;
+                const smName = src.sales_manager_name;
+                if (!tcName && !smName) return null;
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]" data-testid="cp-owning-team">
+                    {tcName && <span className="px-2 py-1 rounded-full bg-white border border-[#E5E3DB]">👤 <b>Telecaller/Agent:</b> {tcName}</span>}
+                    {smName && <span className="px-2 py-1 rounded-full bg-white border border-[#E5E3DB]">🎯 <b>Sales Manager:</b> {smName}</span>}
+                    {data.leads && data.leads.length > 0 && <span className="px-2 py-1 rounded-full bg-white border border-[#E5E3DB]">📅 First seen: {(data.leads[data.leads.length - 1].created_at || "").slice(0, 10)}</span>}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Stats */}
@@ -59,15 +74,39 @@ export default function CustomerProfileDialog({ phone, open, onOpenChange }) {
             {/* Orders */}
             {(data.orders || []).length > 0 && (
               <div>
-                <p className="text-[11px] uppercase tracking-wider text-[#7B6D5A] mb-1.5"><Package className="w-3 h-3 inline mr-1"/>Orders</p>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                <p className="text-[11px] uppercase tracking-wider text-[#7B6D5A] mb-1.5"><Package className="w-3 h-3 inline mr-1"/>Purchase Orders ({data.orders.length})</p>
+                <div className="space-y-2 max-h-72 overflow-y-auto">
                   {data.orders.map(o => (
-                    <div key={o.id} className="bg-white border border-[#E5E3DB] rounded-xl p-2 flex items-center justify-between" data-testid={`cp-order-${o.id}`}>
-                      <div className="text-[11px]">
-                        <b>{o.id}</b> · {o.status} · by {o.created_by_name || "—"}
-                        <p className="text-[9px] text-[#7B6D5A]">{(o.created_at || "").slice(0, 10)} · {(o.items || []).map(i => i.name).slice(0, 2).join(", ")}</p>
+                    <div key={o.id} className="bg-white border border-[#E5E3DB] rounded-xl p-2.5" data-testid={`cp-order-${o.id}`}>
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div className="text-[11px] flex-1 min-w-0">
+                          <b className="text-[#3B5249]">{o.id}</b>
+                          <Badge variant="outline" className={`ml-1 text-[8px] ${o.status === "delivered" ? "border-green-400 text-green-800 bg-green-50" : o.status === "shipped" ? "border-purple-400 text-purple-800 bg-purple-50" : o.status === "returned" ? "border-red-400 text-red-800 bg-red-50" : "border-yellow-400 text-yellow-800 bg-yellow-50"}`}>{o.status}</Badge>
+                          {o.is_offline && <Badge className="ml-1 bg-purple-600 text-white text-[8px]">OFFLINE</Badge>}
+                          {o.payment_type && <Badge variant="outline" className="ml-1 text-[8px] uppercase">{o.payment_type}</Badge>}
+                        </div>
+                        <p className="text-sm font-bold text-[#3B5249] flex-shrink-0">₹{Number(o.total_amount||0).toLocaleString("en-IN")}</p>
                       </div>
-                      <p className="text-[11px] font-bold text-[#3B5249]">₹{o.total_amount}</p>
+                      <p className="text-[10px] text-[#7B6D5A]">
+                        📅 {(o.created_at || "").slice(0, 10)}
+                        {o.delivered_at && ` · Delivered ${o.delivered_at.slice(0,10)}`}
+                        {" · Qty: "}<b>{o.total_qty ?? (o.items || []).reduce((s,i)=>s+(i.quantity||0),0)}</b>
+                      </p>
+                      {(o.items || []).length > 0 && (
+                        <div className="mt-1.5 space-y-0.5">
+                          {o.items.map((it, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-[10px] bg-[#F9F8F6] rounded px-2 py-1">
+                              <span className="truncate flex-1">{it.name}</span>
+                              <span className="text-[#3B5249]">{it.quantity} × ₹{it.price} = <b>₹{(Number(it.quantity||0) * Number(it.price||0)).toLocaleString("en-IN")}</b></span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[9px] text-[#7B6D5A] mt-1">
+                        👤 <b>Telecaller/Agent:</b> {o.created_by_name || "—"}
+                        {o.sales_manager_name && <> · 🎯 <b>Sales Manager:</b> {o.sales_manager_name}</>}
+                      </p>
+                      {o.customer_address && !o.is_offline && <p className="text-[9px] text-[#7B6D5A] truncate">📍 {o.customer_address}{o.customer_city ? `, ${o.customer_city}` : ""}{o.customer_pincode ? ` - ${o.customer_pincode}` : ""}</p>}
                     </div>
                   ))}
                 </div>
@@ -77,15 +116,19 @@ export default function CustomerProfileDialog({ phone, open, onOpenChange }) {
             {/* Leads */}
             {(data.leads || []).length > 0 && (
               <div>
-                <p className="text-[11px] uppercase tracking-wider text-[#7B6D5A] mb-1.5"><ClipboardList className="w-3 h-3 inline mr-1"/>Leads</p>
+                <p className="text-[11px] uppercase tracking-wider text-[#7B6D5A] mb-1.5"><ClipboardList className="w-3 h-3 inline mr-1"/>Leads ({data.leads.length})</p>
                 <div className="space-y-1.5 max-h-32 overflow-y-auto">
                   {data.leads.map(l => (
-                    <div key={l.id} className="bg-white border border-[#E5E3DB] rounded-xl p-2 flex items-center justify-between" data-testid={`cp-lead-${l.id}`}>
-                      <div className="text-[11px]">
-                        {l.status} · assigned <b>{l.assigned_to_name || "—"}</b>
-                        {l.remarks && <p className="text-[9px] text-[#7B6D5A]">{l.remarks}</p>}
+                    <div key={l.id} className="bg-white border border-[#E5E3DB] rounded-xl p-2" data-testid={`cp-lead-${l.id}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] min-w-0 flex-1">
+                          <Badge variant="outline" className="text-[8px] mr-1">{l.status}</Badge>
+                          <span>Assigned to <b>{l.assigned_to_name || "—"}</b></span>
+                          {l.sales_manager_name && <span className="text-[9px] text-[#A66E4E]"> · SM: <b>{l.sales_manager_name}</b></span>}
+                          {l.remarks && <p className="text-[9px] text-[#7B6D5A] mt-0.5">"{l.remarks}"</p>}
+                        </div>
+                        <span className="text-[9px] text-[#A66E4E] flex-shrink-0">{(l.created_at || "").slice(0, 10)}</span>
                       </div>
-                      <span className="text-[9px] text-[#A66E4E]">{(l.created_at || "").slice(0, 10)}</span>
                     </div>
                   ))}
                 </div>

@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit2, ChevronLeft, ChevronRight, Trash2, RotateCw } from "lucide-react";
+import { Edit2, ChevronLeft, ChevronRight, Trash2, RotateCw, X } from "lucide-react";
 import OrderEditDialog from "./OrderEditDialog";
 import DelhiveryShipActions from "./DelhiveryShipActions";
 import LabelPrintButton, { BulkLabelButton } from "./LabelPrintButton";
 import GstInvoiceButton from "./GstInvoiceButton";
 import CsvExportButton from "./CsvExportButton";
 import CustomerHistoryModal from "./CustomerHistoryModal";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const API = "/api";
 
@@ -50,6 +52,10 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [customerPhone, setCustomerPhone] = useState(null);
+  // Reorder dialog — manual product selection based on the source order
+  const [reorderSrc, setReorderSrc] = useState(null);
+  const [reorderItems, setReorderItems] = useState([]); // [{product_id,name,price,quantity}]
+  const [reorderSaving, setReorderSaving] = useState(false);
   const [salesManagers, setSalesManagers] = useState([]);
   const [smFilter, setSmFilter] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -118,21 +124,60 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
     }
   };
 
-  const reorder = async (o) => {
-    if (!window.confirm(`Create a new pending order for ${o.customer_name} with the same items?`)) return;
+  const reorder = (o) => {
+    // Open the manual product picker pre-filled with the source order's items
+    setReorderSrc(o);
+    const existing = (o.items || []).map(i => ({
+      product_id: i.product_id || "",
+      name: i.name || "",
+      price: Number(i.price || 0),
+      quantity: Number(i.quantity || 1),
+    }));
+    setReorderItems(existing);
+  };
+
+  const addReorderProduct = (p) => {
+    setReorderItems(items => items.find(i => i.product_id === p.id)
+      ? items
+      : [...items, { product_id: p.id, name: p.name, price: Number(p.price || 0), quantity: 1 }]);
+  };
+  const removeReorderProduct = (pid) => setReorderItems(items => items.filter(i => i.product_id !== pid));
+  const setReorderQty = (pid, q) => {
+    const v = parseInt(q, 10);
+    setReorderItems(items => items.map(i => i.product_id === pid ? { ...i, quantity: Number.isFinite(v) && v > 0 ? v : 1 } : i));
+  };
+  const setReorderPrice = (pid, p) => {
+    const v = parseFloat(p);
+    setReorderItems(items => items.map(i => i.product_id === pid ? { ...i, price: Number.isFinite(v) && v >= 0 ? v : 0 } : i));
+  };
+
+  const submitReorder = async () => {
+    if (!reorderSrc) return;
+    const clean = reorderItems.filter(i => i.product_id && i.quantity > 0);
+    if (clean.length === 0) return toast.error("Add at least one product with quantity > 0");
+    const total = clean.reduce((s, i) => s + i.price * i.quantity, 0);
+    if (total <= 0) return toast.error("Total is 0 — enter a price for at least one item");
+    setReorderSaving(true);
     try {
-      const r = await axios.post(`${API}/orders/${o.id}/reorder`);
-      toast.success(`Re-order ${r.data.order.id} created`);
+      const r = await axios.post(`${API}/orders/${reorderSrc.id}/reorder`, {
+        items: clean,
+        total_amount: total,
+      });
+      toast.success(`Re-order ${r.data.order.id} created — Rs.${total.toFixed(2)}`);
+      setReorderSrc(null);
+      setReorderItems([]);
       fetchOrders();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Re-order failed");
     }
+    setReorderSaving(false);
   };
 
   const canReorder = (o) => {
+    // Show Re-order on every non-deleted card — TC / SM can always launch a fresh order
+    // for the same customer with a manual product picker. Backend enforces per-user rules.
     if (o.deleted) return false;
-    // Allow re-order on completed/lost orders so the customer can be re-engaged
-    return ["delivered","returned","cancelled","rejected","not_delivered"].includes(o.status);
+    return true;
   };
 
   const canDelete = (o) => {
@@ -302,6 +347,83 @@ export default function OrdersPanel({ role, showCreateButton, onCreateOrder }) {
         />
       )}
       {customerPhone && <CustomerHistoryModal phone={customerPhone} onClose={() => setCustomerPhone(null)} />}
+
+      {/* RE-ORDER Dialog — manual product picker */}
+      {reorderSrc && (
+        <Dialog open={!!reorderSrc} onOpenChange={(o) => { if (!o) { setReorderSrc(null); setReorderItems([]); } }}>
+          <DialogContent className="rounded-2xl max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="reorder-dialog">
+            <DialogHeader>
+              <DialogTitle className="font-heading">Re-order — {reorderSrc.customer_name}</DialogTitle>
+              <DialogDescription className="text-[11px] text-[#59615D]">
+                Pick products manually, tweak qty and price, then create a fresh <b>pending</b> order.
+                Customer details (name, phone, address) will be reused from order <b>{reorderSrc.id}</b>.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-[#F9F8F6] border border-[#E5E3DB] rounded-xl p-2 text-[11px]">
+                <p><b>{reorderSrc.customer_name}</b> · {reorderSrc.customer_phone}</p>
+                {reorderSrc.customer_address && <p className="text-[10px] text-[#7B6D5A] truncate">📍 {reorderSrc.customer_address}{reorderSrc.customer_city ? `, ${reorderSrc.customer_city}` : ""}{reorderSrc.customer_pincode ? ` - ${reorderSrc.customer_pincode}` : ""}</p>}
+                <p className="text-[9px] text-[#7B6D5A]">Source order: {reorderSrc.id} · {reorderSrc.status} · Rs.{reorderSrc.total_amount}</p>
+              </div>
+
+              {/* Currently-selected items */}
+              <div>
+                <Label className="text-xs">Selected products ({reorderItems.length})</Label>
+                {reorderItems.length === 0 ? (
+                  <p className="text-[10px] text-[#7B6D5A] italic mt-1">No products selected. Pick from the catalog below.</p>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {reorderItems.map(i => (
+                      <div key={i.product_id} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E3DB] p-2" data-testid={`ro-item-${i.product_id}`}>
+                        <span className="flex-1 min-w-0 truncate text-xs" title={i.name}>{i.name}</span>
+                        <span className="text-[10px] text-[#7B6D5A]">Price</span>
+                        <Input type="number" min={0} step="0.01" value={i.price} onChange={e => setReorderPrice(i.product_id, e.target.value)} className="h-7 w-20 text-xs text-center rounded-md" data-testid={`ro-price-${i.product_id}`}/>
+                        <span className="text-[10px] text-[#7B6D5A]">×</span>
+                        <Input type="number" min={1} value={i.quantity} onChange={e => setReorderQty(i.product_id, e.target.value)} className="h-7 w-16 text-xs text-center rounded-md" data-testid={`ro-qty-${i.product_id}`}/>
+                        <span className="text-[11px] font-semibold text-[#3B5249] min-w-[55px] text-right">Rs.{(i.price || 0) * i.quantity}</span>
+                        <button type="button" onClick={() => removeReorderProduct(i.product_id)} className="text-red-500 hover:text-red-700"><X className="w-3.5 h-3.5"/></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Catalog — add more products */}
+              <div>
+                <Label className="text-xs">Add from catalog ({products.length})</Label>
+                <div className="max-h-40 overflow-y-auto border border-[#E5E3DB] rounded-xl p-2 mt-1 space-y-0.5" data-testid="ro-catalog">
+                  {products.length === 0 ? <p className="text-[10px] text-[#7B6D5A]">Loading products…</p> :
+                  products.map(p => {
+                    const already = reorderItems.some(i => i.product_id === p.id);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between text-xs py-1 hover:bg-[#F9F8F6] px-1 rounded">
+                        <span className="flex-1 truncate">{p.name} <span className="text-[9px] text-[#7B6D5A]">· default Rs.{p.price}</span></span>
+                        {already ? (
+                          <span className="text-[9px] text-emerald-700 font-medium">✓ added</span>
+                        ) : (
+                          <Button size="sm" type="button" onClick={() => addReorderProduct(p)} className="h-6 px-2 text-[10px] rounded-full bg-[#3B5249] text-white" data-testid={`ro-add-${p.id}`}>+ Add</Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2 flex items-center justify-between">
+                <span className="text-[10px] text-emerald-700 uppercase font-semibold">Order Total</span>
+                <span className="text-xl font-heading text-emerald-800" data-testid="ro-total">Rs.{reorderItems.reduce((s,i) => s + (i.price||0) * i.quantity, 0).toLocaleString("en-IN")}</span>
+              </div>
+
+              <div className="flex gap-2">
+                <Button onClick={submitReorder} disabled={reorderSaving || reorderItems.length === 0} className="flex-1 rounded-full bg-[#3B5249] hover:bg-[#2C3531] text-white text-xs" data-testid="ro-submit">
+                  {reorderSaving ? "Creating…" : "Create Re-order"}
+                </Button>
+                <Button variant="outline" onClick={() => { setReorderSrc(null); setReorderItems([]); }} className="rounded-full text-xs">Cancel</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

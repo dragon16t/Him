@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks, WebSocket, WebSocketDisconnect, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Response, BackgroundTasks, WebSocket, WebSocketDisconnect, Body, Query
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, logging, uuid, json, bcrypt, jwt, requests, smtplib, asyncio, secrets
@@ -1406,6 +1406,35 @@ async def customer_profile(phone: str, current_user: dict = Depends(get_current_
     leads = await db.leads.find({"phone_number_norm": n, "deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(50)
     orders = await db.orders.find({"deleted": {"$ne": True}, "customer_phone": {"$regex": f"{n}$"}}, {"_id": 0}).sort("created_at", -1).to_list(50)
     events = await db.contact_events.find({"phone_norm": n}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # ── Enrich with Sales-Manager info per TC/agent that touched this customer ──
+    tc_ids = {t for t in [l.get("assigned_to") for l in leads] + [o.get("created_by") for o in orders] if t}
+    tc_docs = {}
+    for coll in ("telecallers", "store_agents", "assistant_sales_managers", "sales_managers"):
+        async for u in db[coll].find({"id": {"$in": list(tc_ids)}}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "managed_by": 1}):
+            tc_docs[u["id"]] = u
+    sm_ids = {u.get("managed_by") for u in tc_docs.values() if u.get("managed_by")}
+    sm_lookup = {}
+    if sm_ids:
+        async for sm in db.sales_managers.find({"id": {"$in": list(sm_ids)}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}):
+            sm_lookup[sm["id"]] = sm
+    def _sm_for(uid):
+        u = tc_docs.get(uid)
+        if not u: return None
+        sm = sm_lookup.get(u.get("managed_by"))
+        return {"sm_id": sm.get("id"), "sm_name": sm.get("name"), "sm_phone": sm.get("phone")} if sm else None
+    # Tag leads with sm info
+    for l in leads:
+        sm = _sm_for(l.get("assigned_to"))
+        if sm:
+            l["sales_manager_name"] = sm["sm_name"]
+            l["sales_manager_id"] = sm["sm_id"]
+    # Tag orders with sm info + qty
+    for o in orders:
+        sm = _sm_for(o.get("created_by"))
+        if sm:
+            o["sales_manager_name"] = sm["sm_name"]
+            o["sales_manager_id"] = sm["sm_id"]
+        o["total_qty"] = sum(int(i.get("quantity") or 0) for i in (o.get("items") or []))
     profile = {}
     for lead in leads:
         if lead.get("name"): profile["name"] = lead["name"]; break
@@ -7890,28 +7919,95 @@ async def get_targets(user_id: str = "", current_user: dict = Depends(get_curren
     return {"targets": await db.targets.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)}
 
 @api_router.get("/leaderboard/{role}")
-async def get_leaderboard(role: str, month: str = "", year: str = "", current_user: dict = Depends(get_current_user)):
+async def get_leaderboard(role: str, month: str = "", year: str = "",
+                          range_: str = Query("all", alias="range"),
+                          metric: str = Query("orders"),
+                          current_user: dict = Depends(get_current_user)):
+    """Leaderboard supporting week/month/custom date ranges.
+    Query params:
+        range = today | 7d | 30d | month | all   (default: all)
+        metric = orders | delivered | revenue    (sort key — default: orders)
+        month, year — only when range=month
+    Response rows include: id, name, orders (count in range), delivered, revenue,
+    delivered_revenue, commission — sorted by chosen metric.
+    """
     coll = ROLE_COLLECTIONS.get(role)
     if not coll: return {"leaderboard": []}
-    users = await db[coll].find({}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
+    users = await db[coll].find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
+
+    # Compute date window
+    from datetime import date as _date
+    today_ = datetime.now(timezone.utc).date()
+    start_iso = end_iso_excl = None
+    if range_ == "today":
+        start_iso = today_.isoformat()
+        end_iso_excl = (today_ + timedelta(days=1)).isoformat()
+    elif range_ == "7d":
+        start_iso = (today_ - timedelta(days=6)).isoformat()
+        end_iso_excl = (today_ + timedelta(days=1)).isoformat()
+    elif range_ == "30d":
+        start_iso = (today_ - timedelta(days=29)).isoformat()
+        end_iso_excl = (today_ + timedelta(days=1)).isoformat()
+    elif range_ == "month" and month and year:
+        try:
+            mm = int(month); yy = int(year)
+            start_iso = _date(yy, mm, 1).isoformat()
+            nm = _date(yy + (1 if mm == 12 else 0), 1 if mm == 12 else mm + 1, 1)
+            end_iso_excl = nm.isoformat()
+        except (TypeError, ValueError):
+            pass
+
+    user_ids = [u["id"] for u in users]
+    if not user_ids:
+        return {"leaderboard": [], "range": range_, "metric": metric,
+                "from": start_iso, "to": end_iso_excl}
+    order_q = {"created_by": {"$in": user_ids}, "deleted": {"$ne": True}}
+    if start_iso and end_iso_excl:
+        order_q["created_at"] = {"$gte": start_iso, "$lt": end_iso_excl}
+    # Legacy month/year fallback if range=all but explicit month passed
+    if range_ == "all" and month and year:
+        order_q["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
+    orders = await db.orders.find(order_q, {"_id": 0, "created_by": 1, "status": 1, "total_amount": 1}).to_list(50000)
+
+    # Bulk commissions
+    comm_q = {"user_id": {"$in": user_ids}}
+    if start_iso and end_iso_excl:
+        comm_q["created_at"] = {"$gte": start_iso, "$lt": end_iso_excl}
+    elif range_ == "all" and month and year:
+        comm_q["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
+    commissions = await db.commissions.find(comm_q, {"_id": 0, "user_id": 1, "commission_amount": 1}).to_list(20000)
+
+    # Aggregate in-memory (single pass — was O(N users × queries), now O(1) queries + O(orders))
+    agg = {uid: {"orders": 0, "delivered": 0, "revenue": 0.0, "delivered_revenue": 0.0, "commission": 0.0} for uid in user_ids}
+    for o in orders:
+        cb = o.get("created_by")
+        if cb not in agg: continue
+        a = agg[cb]; amt = float(o.get("total_amount") or 0)
+        a["orders"] += 1; a["revenue"] += amt
+        if (o.get("status") or "").lower() == "delivered":
+            a["delivered"] += 1; a["delivered_revenue"] += amt
+    for c in commissions:
+        uid = c.get("user_id")
+        if uid in agg:
+            agg[uid]["commission"] += float(c.get("commission_amount") or 0)
+
     rows = []
     for u in users:
-        oq = {"created_by": u['id'], "status": "delivered"}
-        if month and year:
-            oq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        orders = await db.orders.find(oq, {"_id": 0, "total_amount": 1}).to_list(5000)
-        revenue = round(sum(o.get('total_amount', 0) for o in orders), 2)
-        cq = {"user_id": u['id']}
-        if month and year:
-            cq["created_at"] = {"$regex": f"^{year}-{month.zfill(2)}"}
-        comm = await db.commissions.find(cq, {"_id": 0, "commission_amount": 1}).to_list(5000)
-        comm_total = round(sum(c.get('commission_amount', 0) for c in comm), 2)
-        rows.append({**u, "orders": len(orders), "revenue": revenue, "commission": comm_total})
-    rows.sort(key=lambda x: (x['revenue'], x['orders'], x['commission']), reverse=True)
-    # Rank for UI convenience
+        a = agg[u["id"]]
+        rows.append({
+            **u,
+            "orders": a["orders"],
+            "delivered": a["delivered"],
+            "revenue": round(a["revenue"], 2),
+            "delivered_revenue": round(a["delivered_revenue"], 2),
+            "commission": round(a["commission"], 2),
+        })
+    key = metric if metric in ("orders", "delivered", "revenue") else "orders"
+    rows.sort(key=lambda x: (x[key], x["orders"], x["revenue"]), reverse=True)
     for idx, r in enumerate(rows):
-        r['rank'] = idx + 1
-    return {"leaderboard": rows[:20]}
+        r["rank"] = idx + 1
+    return {"leaderboard": rows[:50], "range": range_, "metric": metric,
+            "from": start_iso, "to": end_iso_excl}
 
 # ----- HR: Generic add-employee (any role) -----
 @api_router.post("/hr/add-employee")

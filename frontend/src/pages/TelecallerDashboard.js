@@ -27,6 +27,7 @@ import MobileBottomNav from "../components/MobileBottomNav";
 import WhatsAppCTA from "../components/WhatsAppCTA";
 import StatusBadge from "../components/StatusBadge";
 import { PageLoader } from "../components/Skeletons";
+import TelecallerLeaderboardPanel from "../components/TelecallerLeaderboardPanel";
 
 const API = "/api";
 const MONTHS = [{v:"1",l:"Jan"},{v:"2",l:"Feb"},{v:"3",l:"Mar"},{v:"4",l:"Apr"},{v:"5",l:"May"},{v:"6",l:"Jun"},{v:"7",l:"Jul"},{v:"8",l:"Aug"},{v:"9",l:"Sep"},{v:"10",l:"Oct"},{v:"11",l:"Nov"},{v:"12",l:"Dec"}];
@@ -100,9 +101,21 @@ export default function TelecallerDashboard() {
   const [showOrder, setShowOrder] = useState(false);
   const [showFundRequest, setShowFundRequest] = useState(false);
   const [selectedLead, setSelectedLead] = useState(null);
-  // STRICT LOG-CALL LOCK — when set, only that lead is visible until call log is saved.
-  // Prevents telecallers from skipping data entry after tapping "Log Call".
-  const [activeCallLeadId, setActiveCallLeadId] = useState(null);
+  // STRICT LOG-CALL LOCK — persisted in localStorage so it survives page refresh.
+  // Only cleared by (a) submitting call log successfully, or (b) explicit "Skip & Unlock".
+  const LOCK_KEY = "tc_call_lock_lead_id";
+  const [activeCallLeadId, _setActiveCallLeadId] = useState(() => {
+    try { return localStorage.getItem(LOCK_KEY) || null; } catch { return null; }
+  });
+  const setActiveCallLeadId = (id) => {
+    _setActiveCallLeadId(id);
+    try {
+      if (id) localStorage.setItem(LOCK_KEY, id);
+      else localStorage.removeItem(LOCK_KEY);
+    } catch {}
+  };
+  // Guard against double-submit on the Create-Order button (slow network → duplicate orders)
+  const [creatingOrder, setCreatingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
   const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "" });
@@ -128,6 +141,29 @@ export default function TelecallerDashboard() {
     setLoading(false);
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // STRICT LOCK: on mount + when leads finish loading, if a lock is restored from localStorage,
+  // force the tab back to "today" and rehydrate `selectedLead` from the leads array so the
+  // banner's "Reopen Log Call" button works after a page refresh.
+  useEffect(() => {
+    if (!activeCallLeadId) return;
+    if (tab !== "today") setTab("today");
+    if (leads && leads.length) {
+      const lead = leads.find(l => l.id === activeCallLeadId);
+      if (lead && !selectedLead) {
+        setSelectedLead(lead);
+        setCallForm(f => f && f.status ? f : {
+          status: lead.status, customer_remarks: "", customer_name: lead.name && lead.name !== "Unknown" ? lead.name : "",
+          enquiry_type: "orders", next_follow_up_date: lead.next_follow_up_date || "",
+          next_follow_up_time: lead.next_follow_up_time || "",
+        });
+      } else if (!lead) {
+        // Stale lock — the lead was deleted / reassigned. Clear silently.
+        setActiveCallLeadId(null);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCallLeadId, leads]);
 
   const today = new Date().toISOString().split("T")[0];
   const nowIso = new Date().toISOString();
@@ -312,7 +348,9 @@ export default function TelecallerDashboard() {
     } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
   };
 
+  const [savingCallLog, setSavingCallLog] = useState(false);
   const handleCallLog = async () => {
+    if (savingCallLog) return; // idempotency guard — don't submit twice
     if (!callForm.status) return toast.error("Select status");
     const isOrder = callForm.enquiry_type === "orders";
     const payload = {
@@ -329,6 +367,7 @@ export default function TelecallerDashboard() {
         enquiry_type: callForm.enquiry_type,
       },
     };
+    setSavingCallLog(true);
     try {
       await axios.put(`${API}/leads/${selectedLead.id}`, payload);
       if (!isOrder) {
@@ -348,9 +387,12 @@ export default function TelecallerDashboard() {
       }
       fetchData();
     } catch(e) { toast.error(e.response?.data?.detail || "Failed"); }
+    finally { setSavingCallLog(false); }
   };
 
   const handleCreateOrder = async () => {
+    // Idempotency guard — reject re-entry while a POST is already in flight
+    if (creatingOrder) return;
     const computedTotal = orderForm.items.reduce((s,i)=>s+i.price*i.quantity, 0);
     const finalTotal = computedTotal > 0 ? computedTotal : Number(orderForm.total_amount || 0);
     const cleanName = (orderForm.customer_name || "").trim();
@@ -360,12 +402,14 @@ export default function TelecallerDashboard() {
     if (!orderForm.customer_address || orderForm.customer_address.trim().length < 8) return toast.error("Customer address is required (min 8 chars)");
     if (!orderForm.customer_pincode || !/^\d{6}$/.test(orderForm.customer_pincode)) return toast.error("6-digit pincode is required for shipping");
     if (!orderForm.customer_city) return toast.error("City is required");
+    setCreatingOrder(true);
     try {
       await axios.post(`${API}/orders`, { ...orderForm, customer_name: cleanName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
       toast.success(`Order created! Total: Rs.${finalTotal}`);
       setShowOrder(false);
       fetchData();
     } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    finally { setCreatingOrder(false); }
   };
 
   const updateItemQty = (pid, delta) => {
@@ -528,9 +572,22 @@ export default function TelecallerDashboard() {
               {v:"leaderboard", l:"Leaderboard"},
               {v:"instructions", l:"Guide"},
             ];
-            return tabs.map(t => (
-              <button key={t.v} onClick={()=>setTab(t.v)} className={`px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap ${tab===t.v?"bg-[#3B5249] text-white":"text-[#59615D] hover:bg-[#F9F8F6]"}`} data-testid={`tc-tab-${t.v}`}>{t.l}</button>
-            ));
+            return tabs.map(t => {
+              // STRICT LOCK: while a Log Call is in progress, only the "today" tab remains active.
+              const isLocked = !!activeCallLeadId && t.v !== "today";
+              return (
+                <button
+                  key={t.v}
+                  onClick={() => {
+                    if (isLocked) { toast.error("🔒 Complete this call log before switching tabs — or use Skip & Unlock in the banner."); return; }
+                    setTab(t.v);
+                  }}
+                  disabled={isLocked}
+                  className={`px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap ${isLocked ? "opacity-40 cursor-not-allowed" : ""} ${tab === t.v ? "bg-[#3B5249] text-white" : "text-[#59615D] hover:bg-[#F9F8F6]"}`}
+                  data-testid={`tc-tab-${t.v}`}
+                >{t.l}</button>
+              );
+            });
           })()}
         </div>
 
@@ -589,16 +646,7 @@ export default function TelecallerDashboard() {
 
         {/* LEADERBOARD */}
         {tab === "leaderboard" && (
-          <div className="bg-white rounded-xl border border-[#E5E3DB] p-4 mb-4" data-testid="tc-leaderboard">
-            <h3 className="font-heading text-base font-medium mb-3">🏆 Telecaller Leaderboard</h3>
-            {leaderboard.length === 0 ? <p className="text-center py-6 text-[#59615D] text-sm">Loading...</p> :
-              <div className="space-y-2">{leaderboard.map((u,i)=>(
-                <div key={u.id} className={`flex justify-between items-center rounded-lg p-3 ${u.id===user.id?'bg-[#F9F8F6] border-2 border-[#3B5249]':'border border-[#E5E3DB]'}`} data-testid={`leader-${i+1}`}>
-                  <div className="flex items-center gap-2"><span className="font-bold text-lg">{i===0?'🥇':i===1?'🥈':i===2?'🥉':`#${i+1}`}</span><div><p className="font-medium text-sm">{u.name}{u.id===user.id&&<Badge className="ml-1 text-[8px] bg-[#3B5249] text-white">YOU</Badge>}</p><p className="text-[10px] text-[#59615D]">{u.orders} orders | Rs.{u.commission} commission</p></div></div>
-                  <p className="font-heading text-lg font-bold text-[#3B5249]">Rs.{u.revenue}</p>
-                </div>
-              ))}</div>}
-          </div>
+          <TelecallerLeaderboardPanel role="telecaller" currentUserId={user.id} />
         )}
 
         {/* INSTRUCTIONS */}
@@ -890,7 +938,7 @@ export default function TelecallerDashboard() {
           {callForm.enquiry_type === "orders" && (
             <div className="grid grid-cols-2 gap-2"><div><Label className="text-xs">Follow-up Date</Label><Input type="date" value={callForm.next_follow_up_date} onChange={e=>setCallForm(f=>({...f,next_follow_up_date:e.target.value}))} className="rounded-xl"/></div><div><Label className="text-xs">Time</Label><Input type="time" value={callForm.next_follow_up_time} onChange={e=>setCallForm(f=>({...f,next_follow_up_time:e.target.value}))} className="rounded-xl"/></div></div>
           )}
-          <Button onClick={handleCallLog} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-call-log">{callForm.enquiry_type === "orders" ? "Log Call" : "Route Contact"}</Button>
+          <Button onClick={handleCallLog} disabled={savingCallLog} className="w-full rounded-full bg-[#3B5249] text-white disabled:opacity-60" data-testid="submit-call-log">{savingCallLog ? "Saving…" : (callForm.enquiry_type === "orders" ? "Log Call" : "Route Contact")}</Button>
           {callForm.enquiry_type === "orders" && (callForm.status === "interested" || callForm.status === "ordered") && <p className="text-[10px] text-[#6B8E6B] text-center">Create Order dialog will open after logging — please add delivery address</p>}
         </div>
       </DialogContent></Dialog>
@@ -934,7 +982,7 @@ export default function TelecallerDashboard() {
           </div>
           <div><Label className="text-xs">Total Amount {orderForm.items.length>0 && <span className="text-[10px] text-[#59615D]">(auto from product prices × qty)</span>}</Label><Input type="number" value={orderForm.items.length>0 ? orderForm.items.reduce((s,i)=>s+(i.price||0)*i.quantity,0) : orderForm.total_amount} onChange={e=>setOrderForm(f=>({...f,total_amount:Number(e.target.value), items: f.items.length>0?f.items:[]}))} className="rounded-xl font-bold" data-testid="order-total"/></div>
           <div><Label className="text-xs">Payment</Label><Select value={orderForm.payment_type} onValueChange={v=>setOrderForm(f=>({...f,payment_type:v}))}><SelectTrigger className="rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="cod">COD</SelectItem><SelectItem value="upi">UPI</SelectItem><SelectItem value="online">Online</SelectItem></SelectContent></Select></div>
-          <Button onClick={handleCreateOrder} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-order-btn">Create Order</Button>
+          <Button onClick={handleCreateOrder} disabled={creatingOrder} className="w-full rounded-full bg-[#3B5249] text-white disabled:opacity-60" data-testid="submit-order-btn">{creatingOrder ? "Creating…" : "Create Order"}</Button>
         </div>
       </DialogContent></Dialog>
 

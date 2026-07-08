@@ -170,6 +170,190 @@ def register_sm_performance(api_router: APIRouter, db, get_current_user):
         }
 
 
+    @api_router.get("/admin/all-tcs-performance")
+    async def all_tcs_performance(
+        range: str = Query("7d"),
+        from_: Optional[str] = Query(None, alias="from"),
+        to: Optional[str] = None,
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Admin/IM only — returns per-Sales-Manager team performance rollup PLUS every
+        telecaller across all SMs for the same date window. Structure:
+
+            {
+              range, from, to,
+              managers: [
+                { sm_id, sm_name, sm_phone, is_head_of_sales,
+                  team_size, telecallers: [<same shape as /sm/telecaller-performance>],
+                  totals: {orders, revenue, qty, delivered, returned, in_transit, pending, ...} },
+                ...
+              ],
+              unassigned: {  # TCs with no managed_by
+                telecallers: [...], totals: {...}, team_size: N
+              },
+              grand_totals: {...},
+            }
+        """
+        role = current_user["role"]
+        if role not in ("admin", "inventory_manager"):
+            raise HTTPException(403, "Admin/IM only")
+
+        # Date window (mirrors telecaller_performance)
+        today = datetime.now(timezone.utc).date()
+        if range == "today":
+            start = today; end = today
+        elif range == "30d":
+            start = today - timedelta(days=29); end = today
+        elif range == "custom" and from_ and to:
+            try:
+                start = datetime.strptime(from_, "%Y-%m-%d").date()
+                end = datetime.strptime(to, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(400, "Invalid from/to (YYYY-MM-DD)")
+        else:
+            start = today - timedelta(days=6); end = today
+            range = "7d"
+        start_iso = start.isoformat()
+        end_iso_excl = (end + timedelta(days=1)).isoformat()
+
+        # Load all SMs
+        sms = await db.sales_managers.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(500)
+        sm_lookup = {s["id"]: s for s in sms}
+
+        # Load ALL telecallers + assistant SMs in one shot
+        all_tcs = await db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(20000)
+        all_asms = await db.assistant_sales_managers.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(2000)
+        all_tcs_all = all_tcs + all_asms  # asms carry orders too
+
+        # Group TCs by their managed_by (SM)
+        by_sm = {}
+        unassigned = []
+        for t in all_tcs_all:
+            mb = t.get("managed_by")
+            if mb and mb in sm_lookup:
+                by_sm.setdefault(mb, []).append(t)
+            else:
+                unassigned.append(t)
+
+        # Pull ALL orders in window once, index by created_by
+        tc_ids = [t["id"] for t in all_tcs_all]
+        orders_by_tc = {}
+        if tc_ids:
+            cursor = db.orders.find({
+                "deleted": {"$ne": True},
+                "created_by": {"$in": tc_ids},
+                "created_at": {"$gte": start_iso, "$lt": end_iso_excl},
+            }, {"_id": 0})
+            async for o in cursor:
+                orders_by_tc.setdefault(o.get("created_by"), []).append(o)
+
+        def _aggregate(team_tcs):
+            agg = {}
+            for tc in team_tcs:
+                agg[tc["id"]] = {
+                    "telecaller_id": tc["id"],
+                    "telecaller_name": tc.get("name") or "—",
+                    "telecaller_phone": tc.get("phone") or "",
+                    "role": "assistant_sales_manager" if "asm" in tc["id"] else "telecaller",
+                    "orders": 0, "total_qty": 0, "revenue": 0.0,
+                    "delivered": 0, "delivered_revenue": 0.0,
+                    "returned": 0, "in_transit": 0,
+                    "pending": 0, "confirmed": 0, "shipped": 0, "cancelled": 0,
+                }
+            totals = {"orders": 0, "revenue": 0.0, "qty": 0,
+                      "delivered": 0, "returned": 0, "in_transit": 0,
+                      "pending": 0, "confirmed": 0, "shipped": 0,
+                      "delivered_revenue": 0.0}
+            for tc in team_tcs:
+                for o in orders_by_tc.get(tc["id"], []):
+                    a = agg[tc["id"]]
+                    amt = float(o.get("total_amount") or 0)
+                    qty = sum(int(it.get("quantity") or 0) for it in (o.get("items") or []))
+                    status = (o.get("status") or "").lower()
+                    a["orders"] += 1; a["total_qty"] += qty; a["revenue"] += amt
+                    totals["orders"] += 1; totals["revenue"] += amt; totals["qty"] += qty
+                    if status == "delivered":
+                        a["delivered"] += 1; a["delivered_revenue"] += amt
+                        totals["delivered"] += 1; totals["delivered_revenue"] += amt
+                    elif status in ("returned", "rto", "not_delivered"):
+                        a["returned"] += 1; totals["returned"] += 1
+                    elif status == "shipped":
+                        a["in_transit"] += 1; a["shipped"] += 1
+                        totals["in_transit"] += 1; totals["shipped"] += 1
+                    elif status == "pending":
+                        a["pending"] += 1; totals["pending"] += 1
+                    elif status == "confirmed":
+                        a["confirmed"] += 1; totals["confirmed"] += 1
+                    elif status == "cancelled":
+                        a["cancelled"] += 1
+            out = []
+            for tc_id, a in agg.items():
+                final = a["delivered"] + a["returned"]
+                a["delivery_pct"] = round((a["delivered"] / final) * 100, 1) if final else 0
+                a["rto_pct"] = round((a["returned"] / final) * 100, 1) if final else 0
+                a["revenue"] = round(a["revenue"], 2)
+                a["delivered_revenue"] = round(a["delivered_revenue"], 2)
+                out.append(a)
+            out.sort(key=lambda x: (x["revenue"], x["orders"]), reverse=True)
+            totals["revenue"] = round(totals["revenue"], 2)
+            totals["delivered_revenue"] = round(totals["delivered_revenue"], 2)
+            # roll-up percentages
+            final_total = totals["delivered"] + totals["returned"]
+            totals["delivery_pct"] = round((totals["delivered"] / final_total) * 100, 1) if final_total else 0
+            totals["rto_pct"] = round((totals["returned"] / final_total) * 100, 1) if final_total else 0
+            return out, totals
+
+        managers = []
+        grand = {"orders": 0, "revenue": 0.0, "qty": 0,
+                 "delivered": 0, "returned": 0, "in_transit": 0,
+                 "pending": 0, "confirmed": 0, "shipped": 0,
+                 "delivered_revenue": 0.0, "total_telecallers": 0}
+        for sm_id, sm in sm_lookup.items():
+            team_tcs = by_sm.get(sm_id, [])
+            tc_list, totals = _aggregate(team_tcs)
+            managers.append({
+                "sm_id": sm_id,
+                "sm_name": sm.get("name") or "—",
+                "sm_phone": sm.get("phone") or "",
+                "is_head_of_sales": bool(sm.get("is_head_of_sales")),
+                "team_size": len(team_tcs),
+                "telecallers": tc_list,
+                "totals": totals,
+            })
+            for k in ("orders", "revenue", "qty", "delivered", "returned",
+                      "in_transit", "pending", "confirmed", "shipped", "delivered_revenue"):
+                grand[k] += totals.get(k, 0)
+            grand["total_telecallers"] += len(team_tcs)
+        # Sort SMs by revenue desc — biggest first, Head of Sales pinned at top of ties
+        managers.sort(key=lambda m: (m["is_head_of_sales"], m["totals"]["revenue"], m["totals"]["orders"]), reverse=True)
+
+        # Unassigned bucket
+        unassigned_tcs, unassigned_totals = _aggregate(unassigned)
+        for k in ("orders", "revenue", "qty", "delivered", "returned",
+                  "in_transit", "pending", "confirmed", "shipped", "delivered_revenue"):
+            grand[k] += unassigned_totals.get(k, 0)
+        grand["total_telecallers"] += len(unassigned)
+
+        grand["revenue"] = round(grand["revenue"], 2)
+        grand["delivered_revenue"] = round(grand["delivered_revenue"], 2)
+        _final = grand["delivered"] + grand["returned"]
+        grand["delivery_pct"] = round((grand["delivered"] / _final) * 100, 1) if _final else 0
+        grand["rto_pct"] = round((grand["returned"] / _final) * 100, 1) if _final else 0
+
+        return {
+            "range": range,
+            "from": start_iso,
+            "to": end.isoformat(),
+            "managers": managers,
+            "unassigned": {
+                "team_size": len(unassigned),
+                "telecallers": unassigned_tcs,
+                "totals": unassigned_totals,
+            },
+            "grand_totals": grand,
+        }
+
+
     @api_router.get("/sm/telecaller-performance/pdf")
     async def telecaller_performance_pdf(
         range: str = Query("7d"),
