@@ -53,6 +53,10 @@ export default function InventoryManagerDashboard() {
   const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD specific day
   const [showShipDialog, setShowShipDialog] = useState(false);
   const [shipOrder, setShipOrder] = useState(null);
+  // Payment verification (UPI/prepaid/online/card/netbanking must be confirmed before ship)
+  const [verifyOrder, setVerifyOrder] = useState(null);
+  const [verifyForm, setVerifyForm] = useState({ reference: "", note: "" });
+  const [verifying, setVerifying] = useState(false);
   const [shipForm, setShipForm] = useState({tracking_link:"",courier_name:"",tracking_number:""});
   const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [detailOrder, setDetailOrder] = useState(null);
@@ -344,7 +348,16 @@ export default function InventoryManagerDashboard() {
                         {(o.badges||[]).length>0 && <div className="flex flex-wrap gap-1 mt-1">{(o.badges||[]).slice(0,3).map(b => <span key={b} className="text-[8px] px-1.5 py-0.5 rounded-full bg-[#3B5249]/10 text-[#3B5249] border border-[#3B5249]/30">{b}</span>)}{(o.badges||[]).length>3 && <span className="text-[8px] text-[#A66E4E]">+{(o.badges||[]).length-3}</span>}</div>}
                         <p className="text-[9px] text-[#A66E4E]">{o.created_at?.slice(0,10)} | {o.payment_type?.toUpperCase()}{o.created_by_name?` • by ${o.created_by_name}`:""}</p>
                         {o.tracking_link && <a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[9px] text-purple-700 underline block truncate">📦 {o.courier_name||"Track"}</a>}
+                        {/* UPI/prepaid payment verification indicator */}
+                        {o.payment_type && o.payment_type !== "cod" && (
+                          o.payment_verified
+                            ? <span className="text-[9px] text-emerald-700 font-semibold" data-testid={`pay-verified-${o.id}`}>✓ {o.payment_type.toUpperCase()} verified</span>
+                            : <span className="text-[9px] text-red-700 font-semibold" data-testid={`pay-unverified-${o.id}`}>⚠ {o.payment_type.toUpperCase()} awaits bank verification</span>
+                        )}
                         <div className="flex gap-1 mt-2 flex-wrap" onClick={e=>e.stopPropagation()}>
+                          {o.payment_type && o.payment_type !== "cod" && !o.payment_verified && (
+                            <Button size="sm" className="rounded-full text-[9px] h-6 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>{ setVerifyOrder(o); setVerifyForm({reference:"",note:""}); }} data-testid={`verify-pay-${o.id}`}>💰 Verify Payment</Button>
+                          )}
                           <DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact />
                           <LabelPrintButton orderId={o.id} compact label="Label" />
                           {status==="confirmed"&&!o.awb_number&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-6" onClick={()=>markShipped(o)} data-testid={`ship-${o.id}`}><Truck className="w-3 h-3 mr-1"/>Manual</Button>}
@@ -380,7 +393,7 @@ export default function InventoryManagerDashboard() {
               </div>
               <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b bg-[#F9F8F6]">{["Order","Customer","Phone","Address","Products","Amount","Type","Date","Created By","Status","Tracking","Actions"].map(h=><th key={h} className="p-2 text-left text-[9px] uppercase text-[#59615D]">{h}</th>)}</tr></thead>
               <tbody>{paginated.map(o=>(
-                <tr key={o.id} className={`border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer ${o.is_offline ? "bg-purple-50/40" : ""}`} onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}{o.is_offline && <Badge className="ml-1 bg-purple-600 text-white text-[8px]" data-testid={`inv-offline-${o.id}`}>OFFLINE</Badge>}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge></td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
+                <tr key={o.id} className={`border-b border-[#E5E3DB] hover:bg-[#F9F8F6] cursor-pointer ${o.is_offline ? "bg-purple-50/40" : ""}`} onClick={()=>openDetail(o)} data-testid={`inv-row-${o.id}`}><td className="p-2">{o.id}{o.is_offline && <Badge className="ml-1 bg-purple-600 text-white text-[8px]" data-testid={`inv-offline-${o.id}`}>OFFLINE</Badge>}</td><td className="p-2 font-medium">{o.customer_name}</td><td className="p-2">{o.customer_phone}</td><td className="p-2 max-w-[200px] truncate" title={o.customer_address}>{o.customer_address||"-"}</td><td className="p-2 max-w-[180px] truncate" title={(o.items||[]).map(it=>`${it.name} x${it.quantity}`).join(", ")}>{itemsSummary(o)||"-"}</td><td className="p-2">Rs.{o.total_amount}</td><td className="p-2"><Badge variant="outline" className="text-[8px]">{o.payment_type}</Badge>{o.payment_type && o.payment_type !== "cod" && (o.payment_verified ? <Badge className="ml-1 bg-emerald-100 text-emerald-800 text-[8px] border-emerald-300" data-testid={`pay-ok-${o.id}`}>✓ verified</Badge> : <Button size="sm" onClick={e=>{e.stopPropagation(); setVerifyOrder(o); setVerifyForm({reference:"",note:""});}} className="ml-1 h-5 px-1.5 rounded-full text-[8px] bg-red-100 text-red-800 border border-red-300 hover:bg-red-200" data-testid={`pay-verify-row-${o.id}`}>⚠ Verify</Button>)}</td><td className="p-2">{o.created_at?.slice(0,10)}</td><td className="p-2 text-[10px]">{o.created_by_name||"-"}</td><td className="p-2"><Badge className={`text-[8px] ${o.status==="delivered"?"bg-green-100 text-green-800":o.status==="shipped"?"bg-purple-100 text-purple-800":o.status==="confirmed"?"bg-blue-100 text-blue-800":"bg-yellow-100 text-yellow-800"}`}>{o.status}</Badge></td>
                 <td className="p-2 text-[10px]">{o.tracking_link?<a href={o.tracking_link} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-purple-700 underline">{o.courier_name||"Track"}</a>:"-"}</td>
                 <td className="p-2" onClick={e=>e.stopPropagation()}><div className="flex gap-1 items-center flex-wrap"><DelhiveryShipActions order={o} role="inventory_manager" onChange={fetchData} compact /><LabelPrintButton orderId={o.id} compact label="Label" />{o.status==="shipped"&&<Button size="sm" className="rounded-full text-[9px] bg-green-600 text-white h-5 px-2" onClick={()=>markDelivered(o.id)}>Deliver</Button>}{(o.status==="shipped"||o.status==="delivered")&&<Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2 border-red-300 text-red-700" onClick={()=>markReturned(o.id)}>Returned</Button>}
                   <Button size="sm" variant="outline" className="rounded-full text-[9px] h-5 px-2" onClick={()=>openOrderEdit(o)} data-testid={`inv-row-edit-${o.id}`}>✏️</Button>
@@ -636,6 +649,50 @@ export default function InventoryManagerDashboard() {
           </div>
         </div>}
       </DialogContent></Dialog>
+
+      {/* UPI/prepaid PAYMENT VERIFICATION dialog — required before shipping */}
+      <Dialog open={!!verifyOrder} onOpenChange={o => { if (!o) { setVerifyOrder(null); setVerifyForm({reference:"", note:""}); } }}>
+        <DialogContent className="rounded-2xl max-w-md" data-testid="verify-payment-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Verify Payment — Order {verifyOrder?.id}</DialogTitle>
+          </DialogHeader>
+          {verifyOrder && (
+            <div className="space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                <p className="text-sm">Customer paid via <b>{verifyOrder.payment_type?.toUpperCase()}</b></p>
+                <p className="text-2xl font-heading text-emerald-800 mt-1">Rs.{Number(verifyOrder.total_amount || 0).toLocaleString("en-IN")}</p>
+                <p className="text-[10px] text-emerald-700 mt-1">Only click Verify once you've confirmed this amount actually landed in the bank statement. This credits the bank ledger.</p>
+              </div>
+              <div>
+                <Label className="text-xs">Bank / UPI Reference # <span className="text-[9px] text-[#7B6D5A]">(optional but recommended)</span></Label>
+                <Input value={verifyForm.reference} onChange={e => setVerifyForm(f => ({ ...f, reference: e.target.value }))} placeholder="e.g. UPI txn ID" className="rounded-xl h-9 text-xs" data-testid="verify-ref"/>
+              </div>
+              <div>
+                <Label className="text-xs">Note <span className="text-[9px] text-[#7B6D5A]">(optional)</span></Label>
+                <Input value={verifyForm.note} onChange={e => setVerifyForm(f => ({ ...f, note: e.target.value }))} className="rounded-xl h-9 text-xs" data-testid="verify-note"/>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={async () => {
+                    setVerifying(true);
+                    try {
+                      const r = await axios.post(`${API}/inventory/orders/${verifyOrder.id}/verify-payment`, verifyForm);
+                      toast.success(r.data.message || "Payment verified");
+                      setVerifyOrder(null); setVerifyForm({reference:"",note:""});
+                      fetchData();
+                    } catch (e) { toast.error(e.response?.data?.detail || "Verify failed"); }
+                    setVerifying(false);
+                  }}
+                  disabled={verifying}
+                  className="flex-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+                  data-testid="verify-pay-confirm"
+                >{verifying ? "Verifying…" : "✓ Confirm — Credit to Bank"}</Button>
+                <Button variant="outline" onClick={() => setVerifyOrder(null)} className="rounded-full" data-testid="verify-pay-cancel">Cancel</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

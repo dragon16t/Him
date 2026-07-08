@@ -1242,6 +1242,18 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     }
     await db.orders.insert_one(order)
     order.pop("_id", None)
+    # ── Auto-deduct master stock for each product on the order (never below 0) ──
+    now_iso2 = datetime.now(timezone.utc).isoformat()
+    for it in (data.get("items") or []):
+        pid = it.get("product_id")
+        qty = int(it.get("quantity") or 0)
+        if not pid or qty <= 0:
+            continue
+        p = await db.products.find_one({"id": pid}, {"_id": 0, "stock": 1})
+        if not p:
+            continue
+        cur = int(p.get("stock") or 0)
+        await db.products.update_one({"id": pid}, {"$set": {"stock": max(0, cur - qty), "updated_at": now_iso2}})
     if order['lead_id']:
         # When an order is placed, the lead is DONE with its follow-up cycle — clear stale
         # dates so the lead doesn't come back as "callback due" tomorrow. It naturally
@@ -1257,18 +1269,16 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
             "next_repeat_order_date": _next_repeat,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }})
-    # Prepaid orders → credit revenue to BANK immediately on order creation
-    # (customer has already paid online/UPI). COD is credited only after delivery sync.
+    # Non-COD orders (UPI/prepaid/online/card/netbanking) — DO NOT auto-credit revenue.
+    # Inventory Manager must manually verify the payment landed in the bank first.
     pt = (data.get("payment_type") or "cod").lower()
     if pt in ("prepaid", "upi", "online", "card", "netbanking"):
-        try:
-            await record_transaction(
-                "credit", "order_revenue", order["total_amount"],
-                f"Order {order_id} prepaid ({pt}) - {order['customer_name']}",
-                reference_id=order_id, method="bank", created_by=creator_id or "system",
-            )
-        except Exception as _e:
-            logger.warning(f"prepaid revenue record failed for {order_id}: {_e}")
+        await db.orders.update_one({"id": order_id}, {"$set": {
+            "payment_verified": False,
+            "payment_status": "pending_verification",
+        }})
+        order["payment_verified"] = False
+        order["payment_status"] = "pending_verification"
     return {"order": order, "message": "Order created successfully"}
 
 @api_router.post("/orders/{order_id}/reorder")
@@ -6718,10 +6728,65 @@ async def get_inventory_orders(status: Optional[str] = None, date_filter: Option
              "not_shipped": len([o for o in orders if o.get('status')=='confirmed' and not o.get('shipped_at')])}
     return {"orders": orders, "stats": stats}
 
+@api_router.post("/inventory/orders/{oid}/verify-payment")
+async def verify_prepaid_payment(oid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    """Inventory Manager (or Admin) confirms a UPI/prepaid/online payment actually landed
+    in the bank. Only after this can the order be shipped. This is the human gate the
+    business wanted before crediting revenue — no more automatic bank credit on non-COD orders.
+
+    Body (all optional):
+        note        — free-text confirmation note
+        reference   — bank/UPI reference number for audit
+    """
+    if current_user['role'] not in ('admin', 'inventory_manager'):
+        raise HTTPException(status_code=403)
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    pt = (order.get("payment_type") or "cod").lower()
+    if pt == "cod":
+        raise HTTPException(status_code=400, detail="COD orders don't require prepaid verification.")
+    if order.get("payment_verified"):
+        raise HTTPException(status_code=400, detail="Payment already verified.")
+    data = data or {}
+    now = datetime.now(timezone.utc).isoformat()
+    amt = float(order.get("total_amount") or 0)
+    # Record the actual credit to the bank
+    try:
+        await record_transaction(
+            "credit", "order_revenue", amt,
+            f"Order {oid} {pt.upper()} verified{(' — Ref: ' + data.get('reference','')) if data.get('reference') else ''} — {order.get('customer_name') or ''}",
+            reference_id=oid, method="bank", created_by=current_user['id'] or "system",
+        )
+    except Exception as _e:
+        logger.warning(f"prepaid revenue record failed for {oid}: {_e}")
+        raise HTTPException(status_code=500, detail="Ledger write failed")
+    # Mark verified
+    await db.orders.update_one({"id": oid}, {"$set": {
+        "payment_verified": True,
+        "payment_status": "verified",
+        "payment_verified_by": current_user['id'],
+        "payment_verified_by_name": current_user.get('name', ''),
+        "payment_verified_at": now,
+        "payment_reference": data.get("reference", ""),
+        "payment_verification_note": data.get("note", ""),
+        "updated_at": now,
+    }})
+    return {"message": f"Payment of Rs.{amt:.2f} verified & credited to bank",
+            "order_id": oid, "amount": amt}
+
+
 @api_router.put("/inventory/orders/{oid}/ship")
 async def mark_order_shipped(oid: str, data: dict = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'inventory_manager']:
         raise HTTPException(status_code=403)
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    # HARD GATE: prepaid orders cannot ship until payment_verified is true
+    pt = (order.get("payment_type") or "cod").lower()
+    if pt != "cod" and not order.get("payment_verified"):
+        raise HTTPException(status_code=400, detail=f"⚠ Verify {pt.upper()} payment before shipping. Confirm the amount landed in the bank.")
     data = data or {}
     tracking_link = (data.get("tracking_link") or "").strip()
     if not tracking_link:
