@@ -231,6 +231,11 @@ export default function TelecallerDashboard() {
   };
 
   const leadPriority = (l) => {
+    // Terminal / dead statuses go to the ABSOLUTE BOTTOM — even if a stale follow-up
+    // date is still on the record. TCs shouldn't keep chasing "not interested" leads.
+    const dead = ["not_interested", "rejected", "cancelled", "do_not_call", "blocked", "spam"];
+    if (dead.includes(l.status)) return 99;
+
     // Priority order (per user request — 2026-02):
     //  0  Interested (still needs conversion push)  — TOP
     //  1  Follow-up due NOW
@@ -240,8 +245,7 @@ export default function TelecallerDashboard() {
     //  5  Previous "No Response" (worth retrying)
     //  6  Future follow-up (not yet due)
     //  7  Busy / generic follow-up bucket
-    //  8  Not interested
-    //  Recently-ordered leads are filtered OUT of the "Today" bucket entirely (see isRecentlyOrdered).
+    //  99 Dead (not_interested / rejected / cancelled / do_not_call)
     if (l.status === "interested" || isPendingConversion(l)) return 0;
     if (isFollowUpDueNow(l)) return 1;
     if (l.status === "new" && (!l.call_logs || l.call_logs.length === 0)) return 2;
@@ -250,7 +254,6 @@ export default function TelecallerDashboard() {
     if (l.status === "no_response") return 5;
     if (l.next_follow_up_date && l.next_follow_up_date > today) return 6;
     if (l.status === "busy" || l.status === "follow_up") return 7;
-    if (l.status === "not_interested") return 8;
     return 6;
   };
 
@@ -262,6 +265,7 @@ export default function TelecallerDashboard() {
     3: { label: "REPEAT DUE", tone: "border-l-orange-500 bg-orange-50/40" },
     4: { label: "RELATION CALL", tone: "border-l-pink-500 bg-pink-50/40" },
     5: { label: "PREV NO RESPONSE", tone: "border-l-amber-500 bg-amber-50/40" },
+    99: { label: "DEAD", tone: "border-l-gray-400 bg-gray-50/40 opacity-60" },
   };
 
   // Reset pagination whenever any filter input changes
@@ -310,6 +314,8 @@ export default function TelecallerDashboard() {
     if (tab === "today") {
       // Apply recently-ordered guard once here (covered by the early-return above too, but keeps logic explicit)
       if (isRecentlyOrdered(l)) return false;
+      // Dead statuses NEVER appear in Today, even if stale follow-up dates linger on the record.
+      if (["not_interested","rejected","cancelled","do_not_call","blocked","spam"].includes(l.status)) return false;
       return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     }
     if (tab === "repeat") return !!l.next_repeat_order_date;  // show DUE + UPCOMING; sorted asc by date below

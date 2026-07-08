@@ -1074,6 +1074,15 @@ async def update_lead(lead_id: str, data: dict, current_user: dict = Depends(get
     if data.get("status") in ["ordered", "delivered", "not_interested"]:
         update_data["callback_by"] = ""
         update_data["callback_done"] = True
+    # ── Auto-clear stale follow-up dates when the lead reaches a terminal status ──
+    # Prevents "not interested" leads from being wrongly prioritized as "follow-up due" days later.
+    if data.get("status") in ["not_interested", "rejected", "cancelled", "do_not_call", "blocked", "spam"]:
+        # Only wipe follow-up dates that weren't explicitly set on THIS request
+        # (a TC might legitimately want to leave a note-only status change without touching dates).
+        if "next_follow_up_date" not in data: update_data["next_follow_up_date"] = ""
+        if "next_follow_up_time" not in data: update_data["next_follow_up_time"] = ""
+        if "next_repeat_order_date" not in data: update_data["next_repeat_order_date"] = ""
+        if "next_relationship_date" not in data: update_data["next_relationship_date"] = ""
     if "call_log" in data:
         cl = data["call_log"]
         cl["logged_at"] = datetime.now(timezone.utc).isoformat()
