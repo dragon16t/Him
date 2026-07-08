@@ -176,7 +176,61 @@ def register_contact_events(api_router: APIRouter, db, get_current_user):
             b["customers_contacted"] = len(b["customers_contacted"])
             b["total"] = b["calls"] + b["whatsapp"]
             tc_list.append(b)
-        tc_list.sort(key=lambda x: x["total"], reverse=True)
+
+        # ── ENRICH: for each TC in scope, fetch total allocated leads + pending + called-today ──
+        # This turns the panel into a full accountability card: "of the N numbers I gave you,
+        # you've dialed X today and Y have never been touched."
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        # Union of TCs from events + all TCs under the scoped SM (so even TCs with 0 events show up)
+        tc_ids = {b["tc_id"] for b in tc_list}
+        tc_names = {b["tc_id"]: b["tc_name"] for b in tc_list}
+        if q.get("sm_id"):
+            async for tc in db.telecallers.find({"managed_by": q["sm_id"], "deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1}):
+                tc_ids.add(tc["id"])
+                tc_names.setdefault(tc["id"], tc.get("name") or "—")
+        # Ensure every TC has a row (even if no events)
+        existing = {b["tc_id"] for b in tc_list}
+        for tc_id in tc_ids - existing:
+            tc_list.append({"tc_id": tc_id, "tc_name": tc_names[tc_id], "calls": 0,
+                            "whatsapp": 0, "total": 0, "customers_contacted": 0})
+        # Bulk lead fetch (assigned to any TC in scope)
+        leads_by_tc = {tc_id: {"assigned": 0, "pending": 0, "called_today": set(),
+                                "interested": 0, "ordered": 0}
+                        for tc_id in tc_ids}
+        if tc_ids:
+            async for l in db.leads.find(
+                {"assigned_to": {"$in": list(tc_ids)}, "deleted": {"$ne": True},
+                 "status": {"$ne": "routed_to_collab"}},
+                {"_id": 0, "id": 1, "assigned_to": 1, "call_logs": 1, "status": 1},
+            ):
+                stats = leads_by_tc.get(l["assigned_to"])
+                if not stats: continue
+                stats["assigned"] += 1
+                cls = l.get("call_logs") or []
+                if not cls:
+                    stats["pending"] += 1  # never dialed
+                for cl in cls:
+                    stamp = (cl.get("logged_at") or cl.get("timestamp") or "")[:10]
+                    if stamp == today_str:
+                        stats["called_today"].add(l["id"])
+                if l.get("status") == "interested":
+                    stats["interested"] += 1
+                elif l.get("status") in ("ordered", "delivered"):
+                    stats["ordered"] += 1
+        for row in tc_list:
+            s = leads_by_tc.get(row["tc_id"], {"assigned": 0, "pending": 0,
+                                                "called_today": set(),
+                                                "interested": 0, "ordered": 0})
+            row["assigned_leads"] = s["assigned"]
+            row["pending_leads"] = s["pending"]
+            row["called_today"] = len(s["called_today"])
+            row["interested_leads"] = s["interested"]
+            row["ordered_leads"] = s["ordered"]
+            row["coverage_pct"] = round((row["called_today"] / row["assigned_leads"]) * 100, 1) if row["assigned_leads"] else 0.0
+
+        # Sort by total events (most active first) — but push zero-event TCs to top when we're
+        # scoped to an SM: managers want to see "who hasn't called anyone" first.
+        tc_list.sort(key=lambda x: (x["total"] == 0 and x["assigned_leads"] > 0, -x["total"]))
         cust_list = list(by_customer.values())
         cust_list.sort(key=lambda x: x["calls"] + x["whatsapp"], reverse=True)
         return {"telecallers": tc_list, "customers": cust_list[:200], "total_events": len(events)}

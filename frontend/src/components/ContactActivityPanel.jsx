@@ -68,19 +68,57 @@ export default function ContactActivityPanel({ smId }) {
         <div className="text-center py-6 bg-white border border-[#E5E3DB] rounded-2xl text-[#7B6D5A] text-sm" data-testid="ca-empty">No contact activity in this period.</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2" data-testid="ca-tc-grid">
-          {summary.telecallers.map(t => (
-            <div key={t.tc_id} className="bg-white border border-[#E5E3DB] rounded-2xl p-3" data-testid={`ca-tc-${t.tc_id}`}>
-              <div className="flex items-center justify-between mb-2">
-                <p className="font-medium text-sm text-[#2C3531]">{t.tc_name}</p>
-                <Badge className="bg-[#3B5249] text-white text-[10px]">{t.total} events</Badge>
+          {summary.telecallers.map(t => {
+            const cov = t.coverage_pct ?? 0;
+            const covTone = cov >= 70 ? "bg-emerald-50 border-emerald-300 text-emerald-800" : cov >= 40 ? "bg-amber-50 border-amber-300 text-amber-800" : "bg-red-50 border-red-300 text-red-800";
+            return (
+              <div key={t.tc_id} className={`bg-white border rounded-2xl p-3 ${t.assigned_leads > 0 && t.calls === 0 && t.whatsapp === 0 ? "border-red-300" : "border-[#E5E3DB]"}`} data-testid={`ca-tc-${t.tc_id}`}>
+                <div className="flex items-center justify-between mb-2 gap-1">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm text-[#2C3531] truncate">{t.tc_name}</p>
+                    <p className="text-[9px] text-[#7B6D5A]">Numbers allocated: <b className="text-[#3B5249]">{t.assigned_leads ?? 0}</b></p>
+                  </div>
+                  <Badge className="bg-[#3B5249] text-white text-[10px] flex-shrink-0">{t.total} events</Badge>
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-center mb-2">
+                  <div className="bg-blue-50 rounded-lg py-1.5"><Phone className="w-3 h-3 mx-auto text-blue-700"/><div className="text-[13px] font-bold text-blue-800">{t.calls}</div><div className="text-[8px] uppercase text-blue-600">Calls</div></div>
+                  <div className="bg-emerald-50 rounded-lg py-1.5"><MessageSquare className="w-3 h-3 mx-auto text-emerald-700"/><div className="text-[13px] font-bold text-emerald-800">{t.whatsapp}</div><div className="text-[8px] uppercase text-emerald-600">WhatsApp</div></div>
+                  <div className="bg-[#F4EAE0] rounded-lg py-1.5"><Users className="w-3 h-3 mx-auto text-[#A66E4E]"/><div className="text-[13px] font-bold text-[#A66E4E]">{t.customers_contacted}</div><div className="text-[8px] uppercase text-[#A66E4E]">Uniq Cust</div></div>
+                </div>
+                {/* Rich per-TC allocation stats */}
+                <div className="grid grid-cols-4 gap-1 text-center">
+                  <div className="rounded-md p-1 bg-[#F9F8F6]">
+                    <div className="text-[11px] font-bold text-emerald-700">{t.called_today ?? 0}</div>
+                    <div className="text-[8px] uppercase text-[#59615D]">Called today</div>
+                  </div>
+                  <div className="rounded-md p-1 bg-[#F9F8F6]">
+                    <div className="text-[11px] font-bold text-red-600">{t.pending_leads ?? 0}</div>
+                    <div className="text-[8px] uppercase text-[#59615D]">Never dialed</div>
+                  </div>
+                  <div className="rounded-md p-1 bg-[#F9F8F6]">
+                    <div className="text-[11px] font-bold text-yellow-700">{t.interested_leads ?? 0}</div>
+                    <div className="text-[8px] uppercase text-[#59615D]">Interested</div>
+                  </div>
+                  <div className="rounded-md p-1 bg-[#F9F8F6]">
+                    <div className="text-[11px] font-bold text-purple-700">{t.ordered_leads ?? 0}</div>
+                    <div className="text-[8px] uppercase text-[#59615D]">Ordered</div>
+                  </div>
+                </div>
+                {/* Coverage bar */}
+                {t.assigned_leads > 0 && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-[9px] mb-0.5">
+                      <span className="text-[#7B6D5A]">Coverage today</span>
+                      <span className={`px-1.5 py-0.5 rounded-full border ${covTone} text-[9px] font-semibold`} data-testid={`ca-cov-${t.tc_id}`}>{cov}%</span>
+                    </div>
+                    <div className="bg-[#F4EAE0] rounded-full h-1.5 overflow-hidden">
+                      <div className={`h-full ${cov >= 70 ? "bg-emerald-500" : cov >= 40 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${Math.min(100, cov)}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-1 text-center">
-                <div className="bg-blue-50 rounded-lg py-1.5"><Phone className="w-3 h-3 mx-auto text-blue-700"/><div className="text-[13px] font-bold text-blue-800">{t.calls}</div><div className="text-[8px] uppercase text-blue-600">Calls</div></div>
-                <div className="bg-emerald-50 rounded-lg py-1.5"><MessageSquare className="w-3 h-3 mx-auto text-emerald-700"/><div className="text-[13px] font-bold text-emerald-800">{t.whatsapp}</div><div className="text-[8px] uppercase text-emerald-600">WhatsApp</div></div>
-                <div className="bg-[#F4EAE0] rounded-lg py-1.5"><Users className="w-3 h-3 mx-auto text-[#A66E4E]"/><div className="text-[13px] font-bold text-[#A66E4E]">{t.customers_contacted}</div><div className="text-[8px] uppercase text-[#A66E4E]">Customers</div></div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

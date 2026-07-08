@@ -440,3 +440,102 @@ def register_sm_performance(api_router: APIRouter, db, get_current_user):
         filename = f"tc_performance_{sm_name.replace(' ', '_')}_{payload['from']}_{payload['to']}.pdf"
         return StreamingResponse(buf, media_type="application/pdf",
                                   headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+    @api_router.get("/sm/tc-call-coverage")
+    async def tc_call_coverage(
+        sm_id: Optional[str] = None,
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Per-TC call-coverage rollup for a Sales Manager (or admin/IM for any SM).
+
+        For each telecaller under the manager returns:
+          - assigned_leads        : count of active (non-deleted, non-collab) leads assigned to them
+          - called_today          : distinct leads on which they logged at least one call today
+          - coverage_pct          : called_today / assigned_leads * 100 (0 if no leads assigned)
+          - untouched_72h         : leads assigned >72h ago with ZERO call_logs so far — the "aging" bucket
+          - last_call_at          : ISO-string of the most recent call log across ALL their leads
+        + team_totals summary.
+        """
+        role = current_user["role"]
+        if role == "sales_manager":
+            sm_id = current_user["id"]
+        elif role == "assistant_sales_manager":
+            sm_id = current_user.get("managed_by") or sm_id
+        elif role not in ("admin", "inventory_manager"):
+            raise HTTPException(403, "Admin / IM / Sales Manager only")
+        if not sm_id:
+            raise HTTPException(400, "sm_id required")
+
+        sm = await db.sales_managers.find_one({"id": sm_id}, {"_id": 0}) or {}
+        tcs = await db.telecallers.find({"managed_by": sm_id, "deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(5000)
+        tc_ids = [t["id"] for t in tcs]
+
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        cutoff_72h = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+
+        # Pull all active leads for this team in one query
+        leads = await db.leads.find(
+            {"assigned_to": {"$in": tc_ids}, "deleted": {"$ne": True}, "status": {"$ne": "routed_to_collab"}},
+            {"_id": 0, "id": 1, "assigned_to": 1, "call_logs": 1, "created_at": 1, "status": 1},
+        ).to_list(50000) if tc_ids else []
+
+        # Group per TC
+        buckets = {t["id"]: {"assigned": [], "called_today_ids": set(), "untouched_72h": 0, "last_call_at": None} for t in tcs}
+        # Track terminal counts too for context
+        for l in leads:
+            tc_id = l["assigned_to"]
+            b = buckets.get(tc_id)
+            if not b:
+                continue
+            b["assigned"].append(l)
+            call_logs = l.get("call_logs") or []
+            has_any_call = bool(call_logs)
+            # Called today?
+            for cl in call_logs:
+                stamp = (cl.get("logged_at") or cl.get("timestamp") or "")
+                if stamp[:10] == today_str:
+                    b["called_today_ids"].add(l["id"])
+                if stamp and (b["last_call_at"] is None or stamp > b["last_call_at"]):
+                    b["last_call_at"] = stamp
+            # Untouched > 72h?
+            created = l.get("created_at") or ""
+            if not has_any_call and created and created < cutoff_72h:
+                b["untouched_72h"] += 1
+
+        rows = []
+        for t in tcs:
+            b = buckets[t["id"]]
+            total = len(b["assigned"])
+            called_today = len(b["called_today_ids"])
+            coverage = round((called_today / total) * 100, 1) if total else 0.0
+            rows.append({
+                "tc_id": t["id"],
+                "tc_name": t.get("name") or "—",
+                "tc_phone": t.get("phone") or "",
+                "assigned_leads": total,
+                "called_today": called_today,
+                "coverage_pct": coverage,
+                "untouched_72h": b["untouched_72h"],
+                "last_call_at": b["last_call_at"] or "",
+            })
+        # Sort by coverage_pct ASC (lowest coverage TCs surface first — they need attention)
+        rows.sort(key=lambda r: (r["coverage_pct"], -r["assigned_leads"]))
+
+        team_totals = {
+            "team_size": len(tcs),
+            "assigned_leads": sum(r["assigned_leads"] for r in rows),
+            "called_today": sum(r["called_today"] for r in rows),
+            "untouched_72h": sum(r["untouched_72h"] for r in rows),
+        }
+        team_totals["coverage_pct"] = round(
+            (team_totals["called_today"] / team_totals["assigned_leads"]) * 100, 1
+        ) if team_totals["assigned_leads"] else 0.0
+
+        return {
+            "sm_id": sm_id,
+            "sm_name": sm.get("name") or "—",
+            "date": today_str,
+            "team_totals": team_totals,
+            "telecallers": rows,
+        }
