@@ -810,7 +810,7 @@ async def change_password(data: dict, current_user: dict = Depends(get_current_u
 @api_router.get("/leads")
 async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = None,
                    created_by: Optional[str] = None,
-                   limit: int = 500, skip: int = 0,
+                   limit: int = 5000, skip: int = 0,
                    month: Optional[str] = None, year: Optional[str] = None, day: Optional[str] = None,
                    current_user: dict = Depends(get_current_user)):
     query = {}
@@ -981,10 +981,11 @@ async def delete_lead(lead_id: str, current_user: dict = Depends(get_current_use
     if not lead: raise HTTPException(status_code=404, detail="Lead not found")
     role = current_user.get('role')
     uid = current_user.get('id')
+    # POLICY: Telecallers must NEVER be able to delete leads — every number must be
+    # preserved on the dashboard. Only SM / Admin / Head of Sales / Assistant SM can prune.
     if role == 'telecaller':
-        if lead.get('assigned_to') != uid and lead.get('created_by') != uid:
-            raise HTTPException(status_code=403, detail="Not your lead")
-    elif role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
+        raise HTTPException(status_code=403, detail="Telecallers cannot delete leads — ask your Sales Manager.")
+    if role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
         raise HTTPException(status_code=403, detail="Not allowed")
     # Soft delete so it doesn't reappear in any list
     await db.leads.update_one({"id": lead_id}, {"$set": {
@@ -999,9 +1000,10 @@ async def bulk_delete_leads(data: dict, current_user: dict = Depends(get_current
     role = current_user.get('role')
     uid = current_user.get('id')
     q = {"id": {"$in": lead_ids}}
+    # POLICY: Telecallers cannot bulk-delete either — full lead history is sacred.
     if role == 'telecaller':
-        q["$or"] = [{"assigned_to": uid}, {"created_by": uid}]
-    elif role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
+        raise HTTPException(status_code=403, detail="Telecallers cannot delete leads — ask your Sales Manager.")
+    if role not in ('admin','sales_manager','assistant_sales_manager','head_of_sales'):
         raise HTTPException(status_code=403, detail="Not allowed")
     res = await db.leads.update_many(q, {"$set": {
         "deleted": True, "deleted_by": uid, "deleted_at": datetime.now(timezone.utc).isoformat()

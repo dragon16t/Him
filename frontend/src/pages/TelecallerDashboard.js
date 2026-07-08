@@ -89,12 +89,8 @@ export default function TelecallerDashboard() {
   const [leadPage, setLeadPage] = useState(1);
   const LEADS_PER_PAGE = 25;
   const leadListRef = React.useRef(null);
-  // Scroll to top of the lead list whenever the page changes — feels like a normal "next page"
-  useEffect(() => {
-    if (leadListRef.current) {
-      leadListRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [leadPage]);
+  // Infinite-scroll sentinel — when it enters viewport, we bump the page.
+  const infiniteSentinelRef = React.useRef(null);
   const [month, setMonth] = useState((new Date().getMonth()+1).toString());
   const [showAddLead, setShowAddLead] = useState(false);
   const [showCallLog, setShowCallLog] = useState(false);
@@ -271,6 +267,20 @@ export default function TelecallerDashboard() {
   // Reset pagination whenever any filter input changes
   useEffect(() => { setLeadPage(1); }, [tab, statusFilter, dateFilter, searchQuery]);
 
+  // Infinite-scroll — bump leadPage whenever the sentinel enters the viewport.
+  useEffect(() => {
+    const el = infiniteSentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) {
+        setLeadPage(p => p + 1);
+      }
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+    // Re-attach whenever the sentinel gets a new DOM node (list re-render / tab change)
+  }, [leadPage, activeCallLeadId, searchQuery, tab]);
+
   const filteredLeads = React.useMemo(() => leads.filter(l => {
     // Hide leads routed to collab
     if (l.status === "routed_to_collab") return false;
@@ -336,7 +346,17 @@ export default function TelecallerDashboard() {
     }
     const pa = leadPriority(a), pb = leadPriority(b);
     if (pa !== pb) return pa - pb;
-    // Within the same priority, newer leads first (created_at desc)
+    // Within the same priority, leads NOT yet called today come FIRST — a lead you've
+    // already handled today should drop below untouched ones so the queue rotates fresh.
+    const todayStr = today;
+    const lastCallDay = (l) => {
+      const cl = l.call_logs && l.call_logs.length ? l.call_logs[l.call_logs.length - 1] : null;
+      return (cl && (cl.logged_at || cl.timestamp) || "").slice(0, 10);
+    };
+    const aCalledToday = lastCallDay(a) === todayStr ? 1 : 0;
+    const bCalledToday = lastCallDay(b) === todayStr ? 1 : 0;
+    if (aCalledToday !== bCalledToday) return aCalledToday - bCalledToday;
+    // Within the same "called-today" cohort, newer leads first (created_at desc)
     return (b.created_at || "").localeCompare(a.created_at || "");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [leads, statusFilter, dateFilter, searchQuery, tab, today]);
@@ -760,7 +780,7 @@ export default function TelecallerDashboard() {
               const lockedList = activeCallLeadId ? filteredLeads.filter(l => l.id === activeCallLeadId) : filteredLeads;
               // When searching or locked, bypass pagination so the TC sees the target lead instantly.
               const bypassPagination = !!activeCallLeadId || !!searchQuery;
-              const pageList = bypassPagination ? lockedList : lockedList.slice((leadPage-1)*LEADS_PER_PAGE, leadPage*LEADS_PER_PAGE);
+              const pageList = bypassPagination ? lockedList : lockedList.slice(0, leadPage * LEADS_PER_PAGE);
               return pageList.map(lead => {
                 const prio = leadPriority(lead);
                 const prioMeta = PRIORITY_META[prio];
@@ -856,40 +876,34 @@ export default function TelecallerDashboard() {
                     />
                   </span>
                   {(lead.status === "interested" || lead.status === "ordered") && <Button size="sm" className="rounded-full text-xs bg-[#6B8E6B] text-white h-7" onClick={()=>{setSelectedLead(lead);setOrderForm({customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",customer_phone:lead.phone_number,customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod"});setShowOrder(true);}} data-testid={`create-order-${lead.id}`}><Plus className="w-3 h-3 mr-1"/>Create Order</Button>}
-                  <Button size="sm" variant="outline" className="rounded-full text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 h-7 w-7 p-0" onClick={async()=>{ const ok = await confirm({title:"Delete this lead?",description:"This lead will be permanently removed and won't reappear.",danger:true,okLabel:"Delete"}); if(!ok) return; try { await axios.delete(`${API}/leads/${lead.id}`); toast.success("Lead deleted"); fetchData(); } catch(e) { toast.error(e.response?.data?.detail || "Failed"); } }} data-testid={`del-lead-${lead.id}`} title="Delete lead"><X className="w-3 h-3"/></Button>
+                  {/* Delete lead button intentionally removed for telecallers — every number must be preserved.
+                      Only Sales Managers / Admin can delete leads (via the SM Leads panel). */}
                 </div>
               </div>
                 );
               });
             })()}
           </div>
-          {/* Pagination — only show when more than one page AND not locked / searching */}
+          {/* Infinite-scroll sentinel + status footer — hidden during lock / search (they bypass pagination) */}
           {!activeCallLeadId && !searchQuery && filteredLeads.length > LEADS_PER_PAGE && (() => {
             const totalPages = Math.ceil(filteredLeads.length / LEADS_PER_PAGE);
-            // Build a compact page-number list (first, ..., neighbours, ..., last)
-            const pageNums = [];
-            const push = (n) => { if (!pageNums.includes(n) && n >= 1 && n <= totalPages) pageNums.push(n); };
-            push(1); push(2);
-            push(leadPage - 1); push(leadPage); push(leadPage + 1);
-            push(totalPages - 1); push(totalPages);
-            pageNums.sort((a,b) => a - b);
-            const final = [];
-            pageNums.forEach((n, i) => { if (i && n - pageNums[i-1] > 1) final.push("…"); final.push(n); });
+            const shown = Math.min(leadPage * LEADS_PER_PAGE, filteredLeads.length);
+            const hasMore = shown < filteredLeads.length;
             return (
-              <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-[#E5E3DB]" data-testid="leads-pagination">
+              <div className="flex flex-col items-center gap-2 mt-3 pt-3 border-t border-[#E5E3DB]" data-testid="leads-pagination">
                 <p className="text-[10px] text-[#59615D]">
-                  Showing <b>{(leadPage-1)*LEADS_PER_PAGE+1}–{Math.min(leadPage*LEADS_PER_PAGE, filteredLeads.length)}</b> of <b className="text-[#3B5249]">{filteredLeads.length}</b> leads · Page <b>{leadPage}</b> of <b>{totalPages}</b>
+                  Showing <b className="text-[#3B5249]">1–{shown}</b> of <b className="text-[#3B5249]">{filteredLeads.length}</b> leads
+                  {hasMore ? <span> · scroll to auto-load more (page {leadPage}/{totalPages})</span> : <span> · <b className="text-emerald-700">all loaded</b></span>}
                 </p>
-                <div className="flex items-center gap-1 flex-wrap">
-                  <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(1)} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-first">« First</Button>
-                  <Button size="sm" variant="outline" disabled={leadPage===1} onClick={()=>setLeadPage(p=>Math.max(1,p-1))} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-prev">‹ Prev</Button>
-                  {final.map((n, i) => n === "…"
-                    ? <span key={`d${i}`} className="text-[10px] text-[#59615D] px-1">…</span>
-                    : <Button key={n} size="sm" variant={n===leadPage?"default":"outline"} onClick={()=>setLeadPage(n)} className={`rounded-full h-7 min-w-[28px] px-2 text-[10px] ${n===leadPage?"bg-[#3B5249] text-white":""}`} data-testid={`leads-page-${n}`}>{n}</Button>
-                  )}
-                  <Button size="sm" variant="outline" disabled={leadPage>=totalPages} onClick={()=>setLeadPage(p=>Math.min(totalPages,p+1))} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-next">Next ›</Button>
-                  <Button size="sm" variant="outline" disabled={leadPage>=totalPages} onClick={()=>setLeadPage(totalPages)} className="rounded-full h-7 px-2 text-[10px]" data-testid="leads-last">Last »</Button>
-                </div>
+                {hasMore && (
+                  <>
+                    <div ref={infiniteSentinelRef} className="h-6 w-full flex items-center justify-center" data-testid="leads-infinite-sentinel">
+                      <span className="text-[9px] text-[#7B6D5A] animate-pulse">↓ loading more…</span>
+                    </div>
+                    {/* Explicit fallback button (older browsers / no IntersectionObserver) */}
+                    <Button size="sm" variant="outline" onClick={() => setLeadPage(p => p + 1)} className="rounded-full h-7 px-3 text-[10px]" data-testid="leads-load-more">Load more</Button>
+                  </>
+                )}
               </div>
             );
           })()}

@@ -30,7 +30,11 @@ export default function StockAllocationPanel() {
   const [employees, setEmployees] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ employee_id: "", product_id: "", qty: 1, unit_price: "", note: "" });
+  // NEW-ALLOCATION form supports MULTIPLE SKUs at once via `items[]`.
+  // EDIT-ALLOCATION still edits a single row (backend row = one SKU per employee).
+  const [form, setForm] = useState({ employee_id: "", note: "", items: [] }); // items: [{product_id, qty, unit_price}]
+  const [editForm, setEditForm] = useState({ product_id: "", qty: 1, unit_price: "", note: "" });
+  const [saving, setSaving] = useState(false);
 
   // Offline-order (sell) modal state
   const [sellTarget, setSellTarget] = useState(null); // the product row (alloc) being sold from
@@ -51,11 +55,23 @@ export default function StockAllocationPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => { setEditing(null); setForm({ employee_id: "", product_id: "", qty: 1, unit_price: "", note: "" }); setShowForm(true); };
+  const openNew = () => { setEditing(null); setForm({ employee_id: "", note: "", items: [] }); setShowForm(true); };
   const openEdit = (alloc) => {
     setEditing(alloc);
-    setForm({ employee_id: alloc.employee_id || "", product_id: alloc.product_id, qty: alloc.allocated_qty, unit_price: alloc.unit_price || "", note: alloc.note || "" });
+    setEditForm({ product_id: alloc.product_id, qty: alloc.allocated_qty, unit_price: alloc.unit_price || "", note: alloc.note || "" });
     setShowForm(true);
+  };
+  // Multi-SKU helpers for the NEW-allocation form
+  const addFormItem = (p) => setForm(f => f.items.find(i => i.product_id === p.id)
+    ? f
+    : { ...f, items: [...f.items, { product_id: p.id, name: p.name, default_price: Number(p.price || 0), qty: 1, unit_price: "" }] });
+  const removeFormItem = (pid) => setForm(f => ({ ...f, items: f.items.filter(i => i.product_id !== pid) }));
+  const setFormItemQty = (pid, q) => {
+    const v = parseInt(q, 10);
+    setForm(f => ({ ...f, items: f.items.map(i => i.product_id === pid ? { ...i, qty: Number.isFinite(v) && v > 0 ? v : 1 } : i) }));
+  };
+  const setFormItemPrice = (pid, p) => {
+    setForm(f => ({ ...f, items: f.items.map(i => i.product_id === pid ? { ...i, unit_price: p } : i) }));
   };
   const openSell = (alloc) => {
     setSellTarget(alloc);
@@ -70,19 +86,41 @@ export default function StockAllocationPanel() {
   };
 
   const save = async () => {
-    const payload = { ...form };
-    if (payload.unit_price === "" || payload.unit_price == null) delete payload.unit_price;
+    if (saving) return;
     if (!editing) {
-      if (!payload.employee_id || !payload.product_id || !payload.qty) return toast.error("Fill employee, product & qty");
-      try {
-        await axios.post(`${API}/stock-allocations`, payload);
-        toast.success("Allocated"); setShowForm(false); load();
-      } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+      // MULTI-SKU new allocation — one POST per SKU (backend row is one SKU per allocation)
+      if (!form.employee_id) return toast.error("Pick an employee/manager");
+      if (form.items.length === 0) return toast.error("Add at least one product to allocate");
+      const bad = form.items.find(i => !i.qty || i.qty < 1);
+      if (bad) return toast.error(`Quantity for "${bad.name}" must be ≥ 1`);
+      setSaving(true);
+      let ok = 0, fail = 0;
+      for (const item of form.items) {
+        const payload = {
+          employee_id: form.employee_id,
+          product_id: item.product_id,
+          qty: item.qty,
+          note: form.note || "",
+        };
+        if (item.unit_price !== "" && item.unit_price != null) payload.unit_price = Number(item.unit_price);
+        try { await axios.post(`${API}/stock-allocations`, payload); ok++; } catch { fail++; }
+      }
+      setSaving(false);
+      if (fail === 0) toast.success(`Allocated ${ok} SKU${ok === 1 ? "" : "s"}`);
+      else toast.error(`${ok} allocated, ${fail} failed — see logs`);
+      setShowForm(false); load();
     } else {
+      // Single-row EDIT (qty / unit_price / note)
+      setSaving(true);
       try {
-        await axios.put(`${API}/stock-allocations/${editing.id}`, { qty: payload.qty, unit_price: payload.unit_price ?? 0, note: payload.note });
+        await axios.put(`${API}/stock-allocations/${editing.id}`, {
+          qty: editForm.qty,
+          unit_price: editForm.unit_price === "" ? 0 : Number(editForm.unit_price),
+          note: editForm.note,
+        });
         toast.success("Updated"); setShowForm(false); load();
       } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+      setSaving(false);
     }
   };
 
@@ -212,44 +250,100 @@ export default function StockAllocationPanel() {
 
       {/* Allocate / Edit dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md rounded-2xl" data-testid="alloc-dialog" aria-describedby="alloc-desc">
-          <DialogHeader><DialogTitle className="font-heading">{editing ? "Edit Allocation" : "New Allocation"}</DialogTitle></DialogHeader>
-          <p id="alloc-desc" className="sr-only">Assign a product quantity and optional manual unit price to an employee.</p>
-          <div className="space-y-2.5">
-            {!editing && (
-              <>
-                <div>
-                  <Label className="text-xs">Employee / Manager *</Label>
-                  <Select value={form.employee_id} onValueChange={v => setForm(f => ({ ...f, employee_id: v }))}>
-                    <SelectTrigger className="rounded-xl h-9 text-xs" data-testid="alloc-employee"><SelectValue placeholder="Pick person"/></SelectTrigger>
-                    <SelectContent>{employees.map(e => <SelectItem key={e.id} value={e.id}>{e.name} ({(e.role||"").replace(/_/g," ")})</SelectItem>)}</SelectContent>
-                  </Select>
+        <DialogContent className="max-w-lg rounded-2xl max-h-[92vh] overflow-y-auto" data-testid="alloc-dialog" aria-describedby="alloc-desc">
+          <DialogHeader><DialogTitle className="font-heading">{editing ? "Edit Allocation" : "New Allocation — Multi SKU"}</DialogTitle></DialogHeader>
+          <p id="alloc-desc" className="sr-only">Assign one or more products with quantities and optional manual unit prices to an employee.</p>
+          {editing ? (
+            <div className="space-y-2.5">
+              <div className="bg-[#F9F8F6] rounded-xl p-2 border border-[#E5E3DB] text-[11px]">
+                <p className="font-medium">{editing.product_name}</p>
+                <p className="text-[10px] text-[#7B6D5A]">Already sold: {editing.sold_qty ?? 0} unit(s)</p>
+              </div>
+              <div>
+                <Label className="text-xs">Quantity *</Label>
+                <Input type="number" min={editing.sold_qty || 1} value={editForm.qty} onChange={e => setEditForm(f => ({ ...f, qty: Number(e.target.value) }))} className="rounded-xl h-9 text-xs" data-testid="alloc-qty"/>
+                {editing.sold_qty > 0 && <p className="text-[9px] text-[#A66E4E]">Already sold: {editing.sold_qty} — cannot go lower.</p>}
+              </div>
+              <div>
+                <Label className="text-xs">Unit Price (optional)</Label>
+                <Input type="number" min={0} step="0.01" value={editForm.unit_price} onChange={e => setEditForm(f => ({ ...f, unit_price: e.target.value }))} placeholder={INR(editing.default_price)} className="rounded-xl h-9 text-xs" data-testid="alloc-unit-price"/>
+              </div>
+              <div>
+                <Label className="text-xs">Note (optional)</Label>
+                <Input value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} className="rounded-xl h-9 text-xs" data-testid="alloc-note"/>
+              </div>
+              <Button onClick={save} disabled={saving} className="w-full rounded-full bg-[#3B5249] text-white text-xs disabled:opacity-60" data-testid="alloc-save">{saving ? "Saving…" : "Save Changes"}</Button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <div>
+                <Label className="text-xs">Employee / Manager *</Label>
+                <Select value={form.employee_id} onValueChange={v => setForm(f => ({ ...f, employee_id: v }))}>
+                  <SelectTrigger className="rounded-xl h-9 text-xs" data-testid="alloc-employee"><SelectValue placeholder="Pick person"/></SelectTrigger>
+                  <SelectContent>{employees.map(e => <SelectItem key={e.id} value={e.id}>{e.name} ({(e.role||"").replace(/_/g," ")})</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+
+              {/* Multi-SKU picker */}
+              <div>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>Products to allocate ({form.items.length})</span>
+                  {form.items.length > 0 && <span className="text-[9px] text-[#7B6D5A] font-normal">Total value: <b className="text-[#3B5249]">{INR(form.items.reduce((s,i) => s + (i.qty * (Number(i.unit_price || i.default_price || 0))), 0))}</b></span>}
+                </Label>
+                {form.items.length === 0 ? (
+                  <p className="text-[10px] text-[#7B6D5A] italic mt-1">Tap products from the catalog below to add.</p>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {form.items.map(it => (
+                      <div key={it.product_id} className="bg-[#F9F8F6] rounded-lg p-2 border border-[#E5E3DB]" data-testid={`alloc-item-${it.product_id}`}>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <p className="text-[11px] font-medium truncate flex-1">{it.name}</p>
+                          <button type="button" onClick={() => removeFormItem(it.product_id)} className="text-red-500 hover:text-red-700 flex-shrink-0" data-testid={`alloc-item-rm-${it.product_id}`}><Trash2 className="w-3 h-3"/></button>
+                        </div>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <Label className="text-[9px] text-[#7B6D5A]">Qty</Label>
+                          <Input type="number" min={1} value={it.qty} onChange={e => setFormItemQty(it.product_id, e.target.value)} className="h-6 w-14 text-[10px] text-center rounded-md" data-testid={`alloc-item-qty-${it.product_id}`}/>
+                          <Label className="text-[9px] text-[#7B6D5A] ml-1">Unit Price</Label>
+                          <Input type="number" min={0} step="0.01" value={it.unit_price} onChange={e => setFormItemPrice(it.product_id, e.target.value)} placeholder={INR(it.default_price)} className="h-6 w-20 text-[10px] text-center rounded-md" data-testid={`alloc-item-price-${it.product_id}`}/>
+                          <span className="text-[9px] text-[#3B5249] font-semibold ml-auto">= {INR(it.qty * Number(it.unit_price || it.default_price || 0))}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Catalog */}
+              <div>
+                <Label className="text-xs">Add from catalog</Label>
+                <div className="max-h-40 overflow-y-auto border border-[#E5E3DB] rounded-xl p-1 mt-1 space-y-0.5" data-testid="alloc-catalog">
+                  {products.length === 0 ? <p className="text-[10px] text-[#7B6D5A] p-2">Loading products…</p> :
+                  products.map(p => {
+                    const already = form.items.some(i => i.product_id === p.id);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between text-xs py-1 px-1.5 hover:bg-[#F9F8F6] rounded">
+                        <span className="flex-1 truncate">{p.name} <span className="text-[9px] text-[#7B6D5A]">· {INR(p.price)}</span></span>
+                        {already ? (
+                          <span className="text-[9px] text-emerald-700 font-medium">✓ added</span>
+                        ) : (
+                          <Button size="sm" type="button" onClick={() => addFormItem(p)} className="h-6 px-2 text-[10px] rounded-full bg-[#3B5249] text-white" data-testid={`alloc-add-${p.id}`}>+ Add</Button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div>
-                  <Label className="text-xs">Product *</Label>
-                  <Select value={form.product_id} onValueChange={v => setForm(f => ({ ...f, product_id: v }))}>
-                    <SelectTrigger className="rounded-xl h-9 text-xs" data-testid="alloc-product"><SelectValue placeholder="Pick product"/></SelectTrigger>
-                    <SelectContent>{products.map(p => <SelectItem key={p.id} value={p.id}>{p.name} — {INR(p.price)}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-              </>
-            )}
-            <div>
-              <Label className="text-xs">Quantity *</Label>
-              <Input type="number" min={editing ? (editing.sold_qty || 0) : 1} value={form.qty} onChange={e => setForm(f => ({ ...f, qty: Number(e.target.value) }))} className="rounded-xl h-9 text-xs" data-testid="alloc-qty"/>
-              {editing && editing.sold_qty > 0 && <p className="text-[9px] text-[#A66E4E]">Already sold: {editing.sold_qty} — cannot go lower.</p>}
+              </div>
+
+              <div>
+                <Label className="text-xs">Note (applies to all SKUs — optional)</Label>
+                <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="e.g. For June event stock" className="rounded-xl h-9 text-xs" data-testid="alloc-note"/>
+              </div>
+
+              <Button onClick={save} disabled={saving || form.items.length === 0 || !form.employee_id} className="w-full rounded-full bg-[#3B5249] text-white text-xs disabled:opacity-60" data-testid="alloc-save">
+                {saving ? "Allocating…" : `Allocate ${form.items.length} SKU${form.items.length === 1 ? "" : "s"}`}
+              </Button>
             </div>
-            <div>
-              <Label className="text-xs">Unit Price (optional) <span className="text-[9px] text-[#7B6D5A]">— leave blank to use product default at order time</span></Label>
-              <Input type="number" min={0} step="0.01" value={form.unit_price} onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))} placeholder="e.g. 499.00" className="rounded-xl h-9 text-xs" data-testid="alloc-unit-price"/>
-              {form.product_id && (() => { const p = products.find(x => x.id === form.product_id); return p ? <p className="text-[9px] text-[#3B5249]">Product default: {INR(p.price)} · Total value @ Qty {form.qty || 0}: <b>{INR((Number(form.unit_price || p.price || 0)) * Number(form.qty || 0))}</b></p> : null; })()}
-            </div>
-            <div>
-              <Label className="text-xs">Note (optional)</Label>
-              <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="e.g. For June event stock" className="rounded-xl h-9 text-xs" data-testid="alloc-note"/>
-            </div>
-            <Button onClick={save} className="w-full rounded-full bg-[#3B5249] text-white text-xs" data-testid="alloc-save">{editing ? "Save Changes" : "Allocate"}</Button>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
 
