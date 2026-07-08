@@ -11,7 +11,7 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import { Phone, MessageSquare, TrendingUp, Package, IndianRupee, CheckCircle2, RotateCcw, Truck, Calendar, Users } from "lucide-react";
+import { Phone, MessageSquare, TrendingUp, Package, IndianRupee, CheckCircle2, RotateCcw, Truck, Calendar, Users, Download } from "lucide-react";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 
@@ -73,6 +73,29 @@ export default function TelecallerPerformanceCards({ smId, title = "Telecaller P
               <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="h-6 text-[10px] border-0 p-1 w-32" data-testid="tc-perf-to"/>
             </div>
           )}
+          <button
+            onClick={async () => {
+              try {
+                const params = new URLSearchParams({ range });
+                if (smId) params.set("sm_id", smId);
+                if (range === "custom") { if (fromDate) params.set("from", fromDate); if (toDate) params.set("to", toDate); }
+                const url = `${API}/sm/telecaller-performance/pdf?${params.toString()}`;
+                const token = localStorage.getItem("token");
+                const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                if (!resp.ok) throw new Error("Failed to generate PDF");
+                const blob = await resp.blob();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `tc_performance_${range}.pdf`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch (e) { /* silent */ }
+            }}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] bg-[#3B5249] text-white hover:bg-[#2C3531]"
+            data-testid="tc-perf-download-pdf"
+            title="Download PDF report of the entire team">
+            <Download className="w-3 h-3"/> Download PDF
+          </button>
         </div>
       </div>
 

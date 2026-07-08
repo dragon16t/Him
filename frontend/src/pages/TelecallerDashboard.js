@@ -141,6 +141,24 @@ export default function TelecallerDashboard() {
     });
     return map;
   }, [orders]);
+
+  // Cross-TC warning — did any OTHER telecaller already create an order for this phone?
+  const [crossTcOrders, setCrossTcOrders] = useState({});
+  React.useEffect(() => {
+    if (!leads.length) return;
+    const phones = leads.map(l => l.phone_number).filter(Boolean);
+    if (!phones.length) return;
+    axios.post(`${API}/orders/by-phones`, { phones }).then(r => {
+      setCrossTcOrders(r.data?.orders_by_phone || {});
+    }).catch(() => {});
+  }, [leads]);
+  const otherTcOrderFor = (lead) => {
+    const norm = (lead.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "").slice(-10);
+    const list = crossTcOrders[norm] || [];
+    // Only flag if there's an order NOT created by the currently-logged-in TC
+    const me = JSON.parse(localStorage.getItem("user") || "{}")?.id;
+    return list.find(o => o.created_by && o.created_by !== me);
+  };
   const isPendingConversion = (l) => (l.status === "interested" || l.status === "ordered") && !orderedLeadIds.has(l.id);
 
   // Smart priority — lower number = higher in the list
@@ -667,9 +685,41 @@ export default function TelecallerDashboard() {
                     {lead.next_repeat_order_date && lead.next_repeat_order_date <= today && <Badge className="bg-orange-100 text-orange-800 text-[10px]">REPEAT DUE</Badge>}
                     {lead.next_relationship_date && lead.next_relationship_date <= today && <Badge className="bg-pink-100 text-pink-800 text-[10px]">RELATION CALL</Badge>}
                     {lead.callback_by && !lead.callback_done && new Date(lead.callback_by) <= new Date() && <div className="bg-red-100 border border-red-300 rounded px-1.5 py-0.5 animate-pulse"><span className="text-[9px] font-bold text-red-800">CALLBACK OVERDUE</span></div>}
+                    {(() => {
+                      const other = otherTcOrderFor(lead);
+                      if (!other) return null;
+                      return (
+                        <div className="bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5" data-testid={`cross-tc-warn-${lead.id}`} title={`Order ${other.id} — ${other.status} · Rs.${other.total_amount || 0}`}>
+                          <span className="text-[9px] font-bold text-amber-900">⚠ ORDER ALREADY BY {(other.created_by_name || "OTHER TC").toUpperCase()}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
-                {lead.remarks && <p className="text-xs text-[#59615D] mb-2">{lead.remarks}</p>}
+                {lead.remarks && <p className="text-xs text-[#59615D] mb-2">📌 {lead.remarks}</p>}
+                {(lead.call_logs || []).length > 0 && (() => {
+                  const recent = (lead.call_logs || []).slice(-3).reverse();
+                  return (
+                    <details className="mb-2 group" data-testid={`call-history-${lead.id}`}>
+                      <summary className="text-[10px] text-[#3B5249] cursor-pointer hover:underline flex items-center gap-1">
+                        <PhoneCall className="w-3 h-3"/> Call history ({lead.call_logs.length}) — latest: {recent[0]?.remarks?.slice(0, 40) || recent[0]?.customer_remarks?.slice(0, 40) || "no remarks"}{(recent[0]?.remarks?.length > 40) ? "…" : ""}
+                      </summary>
+                      <div className="mt-1.5 space-y-1 bg-[#F9F8F6] rounded-lg p-2 border border-[#E5E3DB]">
+                        {recent.map((cl, i) => (
+                          <div key={i} className="text-[10px] border-b border-[#F0EDE5] last:border-0 pb-1 last:pb-0" data-testid={`call-log-${lead.id}-${i}`}>
+                            <div className="flex items-center justify-between gap-2 mb-0.5">
+                              <span className="text-[#A66E4E] font-medium">{cl.status || cl.outcome || "call"}</span>
+                              <span className="text-[9px] text-[#7B6D5A]">{(cl.timestamp || cl.date || cl.created_at || "").slice(0, 16).replace('T', ' ')}</span>
+                            </div>
+                            {cl.remarks && <p className="text-[#3B5249]"><b>Note:</b> {cl.remarks}</p>}
+                            {cl.customer_remarks && cl.customer_remarks !== cl.remarks && <p className="text-[#59615D]"><b>Customer said:</b> {cl.customer_remarks}</p>}
+                            {cl.next_action && <p className="text-[#7B6D5A]">Next: {cl.next_action}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  );
+                })()}
                 {lead.next_follow_up_date && (() => {
                   const dt = lead.next_follow_up_date + (lead.next_follow_up_time ? `T${lead.next_follow_up_time}` : "");
                   const dueNow = isFollowUpDueNow(lead);

@@ -373,6 +373,30 @@ def _draw_label(c, x0: float, y0: float, w: float, h: float, order: dict):
     c.setFont("Helvetica-Bold", 12)
     c.setFillColor(accent)
     c.drawString(x0 + pad, max(cy, TO_BOTTOM + 4), "Phone: " + phone_str[:20])
+    cy -= 13
+
+    # Product items summary
+    items = order.get("items") or []
+    if items and cy > TO_BOTTOM + 4:
+        c.setFillColor(HexColor("#3B5249"))
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(x0 + pad, max(cy, TO_BOTTOM + 4), "PRODUCTS:")
+        cy -= 11
+        c.setFillColor("black")
+        c.setFont("Helvetica", 8.5)
+        for it in items[:4]:
+            if cy <= TO_BOTTOM + 4:
+                break
+            name = (it.get("name") or it.get("product_name") or "").strip()[:38]
+            qty = it.get("quantity") or it.get("qty") or 1
+            line = f"• {name} × {qty}"
+            c.drawString(x0 + pad, cy, line)
+            cy -= 10
+        if len(items) > 4 and cy > TO_BOTTOM + 4:
+            c.setFillColor(HexColor("#7B6D5A"))
+            c.setFont("Helvetica-Oblique", 7)
+            c.drawString(x0 + pad, cy, f"+{len(items) - 4} more items")
+            c.setFillColor("black")
 
     # ===== Bottom strip — Order ID + Payment + AWB + Total =====
     c.setFillColor(primary)

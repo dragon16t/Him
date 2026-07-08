@@ -1359,6 +1359,60 @@ async def edit_order(order_id: str, data: dict, current_user: dict = Depends(get
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     return {"message": "Order updated", "order": updated}
 
+@api_router.post("/orders/by-phones")
+async def orders_by_phones(data: dict, current_user: dict = Depends(get_current_user)):
+    """Batch companion of /orders/by-phone. Body: {phones:[...]}.
+    Returns {phone_norm: [{order_id, customer_name, created_by_name, status, ...}]}.
+    Used by TC dashboard to badge leads whose phone is already sitting in another TC's orders."""
+    from re import sub
+    phones = data.get("phones") or []
+    norms = set()
+    for p in phones:
+        n = sub(r"\D", "", p or "")
+        if len(n) > 10 and n.startswith("91"):
+            n = n[-10:]
+        if len(n) >= 6:
+            norms.add(n)
+    if not norms:
+        return {"orders_by_phone": {}}
+    # Match any customer_phone ending in the norm
+    or_clauses = [{"customer_phone": {"$regex": f"{n}$"}} for n in norms]
+    rows = await db.orders.find({
+        "deleted": {"$ne": True},
+        "$or": or_clauses,
+    }, {"_id": 0, "id": 1, "customer_name": 1, "customer_phone": 1, "status": 1,
+         "total_amount": 1, "created_by_name": 1, "created_by": 1, "created_at": 1}).sort("created_at", -1).to_list(2000)
+    grouped: dict = {}
+    for r in rows:
+        cp = sub(r"\D", "", r.get("customer_phone") or "")
+        if len(cp) > 10 and cp.startswith("91"):
+            cp = cp[-10:]
+        elif len(cp) < 10:
+            continue
+        grouped.setdefault(cp, []).append(r)
+    return {"orders_by_phone": grouped}
+
+@api_router.get("/orders/by-phone")
+async def orders_by_phone(phone: str, current_user: dict = Depends(get_current_user)):
+    """Return existing (non-deleted) orders for a given phone number, across
+    all telecallers/SMs — so callers can warn 'already ordered by TC X'
+    before creating a duplicate."""
+    from re import sub
+    phone_norm = sub(r"\D", "", phone or "")
+    if len(phone_norm) > 10 and phone_norm.startswith("91"):
+        phone_norm = phone_norm[-10:]
+    if len(phone_norm) < 6:
+        return {"orders": []}
+    # We can't rely on customer_phone being normalised, so use regex ending match
+    orders = await db.orders.find({
+        "deleted": {"$ne": True},
+        "customer_phone": {"$regex": f"{phone_norm}$"},
+    }, {"_id": 0, "id": 1, "customer_name": 1, "customer_phone": 1, "status": 1,
+         "total_amount": 1, "created_by_name": 1, "created_by_role": 1,
+         "created_at": 1, "items": 1, "shipment_date": 1, "courier_name": 1,
+         "awb_number": 1}).sort("created_at", -1).to_list(50)
+    return {"orders": orders, "count": len(orders), "phone_norm": phone_norm}
+
 @api_router.put("/orders/{order_id}/badges")
 async def update_order_badges(order_id: str, data: dict, current_user: dict = Depends(get_current_user)):
     """Inventory Manager / Admin / SM can tag orders with workflow badges
@@ -8420,6 +8474,13 @@ try:
     logger.info("lead_distribution routes registered")
 except Exception as _ld:
     logger.error(f"lead_distribution registration failed: {_ld}")
+
+try:
+    from stock_allocation import register_stock_allocation
+    register_stock_allocation(api_router, db, get_current_user)
+    logger.info("stock_allocation routes registered")
+except Exception as _sa:
+    logger.error(f"stock_allocation registration failed: {_sa}")
 
 app.include_router(api_router)
 

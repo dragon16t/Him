@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 49 batch — backend 14/14 pass (see /app/backend/tests/test_iteration_49.py). All bulk-distribute dedupe cases work (within-batch dupes, already_in_system with owner.telecaller_name, first-time creation), preview-distribute correctly enriches allocations with will_skip + skip_reason (duplicate_in_batch, already_in_system), POST /leads/dedupe-cleanup admin-only (403 for TC), returns {dry_run, duplicate_phone_norms, extra_leads_found, deleted}, GET /orders/by-phone + POST /orders/by-phones both work and honour TC-cross-scope, GET /sm/telecaller-performance/pdf?sm_id=sm-8654ce&range=7d returns real %PDF, stock-allocation CRUD works for inventory_manager and 403s for telecaller (create→by-person→edit→delete verified end-to-end), label PDF returns 200 %PDF. Frontend: TC Perf 'Download PDF' button (data-testid=tc-perf-download-pdf) visible on Admin → TC Performance tab and successfully downloads a 2.6KB PDF named tc_performance_7d.pdf. TC dashboard call-history collapsible works — verified data-testid=call-history-{lead_id} + call-log-{lead_id}-0 render after seeding a call_log via PUT /leads/{id} {call_log:{...}} against tc-002's lead. Cross-TC warning badge (⚠ ORDER ALREADY BY {tc_name}) verified via pre-seeded Reshma Krishnan lead (badge visible, testid rendered when there is a phone match with an order created by a different user). Inventory Manager 'Stock Allocation' tab (inv-tab-allocation) opens the panel, dialog opens, but the Employee dropdown is EMPTY because the panel's data-load calls /api/telecallers (403 for IM) and /api/store/agents/all (404 — endpoint doesn't exist). This blocks IM from ever allocating stock via the UI to any employee. Backend endpoints themselves accept the create (verified via direct API test), so the fix is purely in the frontend data-loading + backend permission surface.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/leads/{id}", "issue": "phone_number_norm is NOT recomputed when customer_phone/phone_number changes on a lead update — stale norm remains, which can defeat future dedupe scans and cross-TC lookups. Also PATCH is not supported (405) — only PUT — worth documenting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "StockAllocationPanel", "issue": "Employee dropdown is always empty for Inventory Manager: (a) axios.get(`${API}/telecallers`) returns 403 (endpoint gated to district_manager/admin/sales_manager/asm/head_of_sales — inventory_manager not allowed) (b) axios.get(`${API}/store/agents/all`) returns 404 — endpoint does not exist (should probably be `${API}/agents`). Result: IM cannot pick any employee, so end-to-end allocation via UI is impossible.", "selector": "[data-testid='alloc-employee']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_49.py",
+    "/app/test_reports/pytest/iter49.xml"
+  ],
+  "action_items": [
+    "In /app/frontend/src/components/StockAllocationPanel.jsx line 28-38, replace the broken employee loader: either (a) add a new backend endpoint `/api/employees/allocatable` that returns telecallers + agents and is admin+inventory_manager scoped, OR (b) reuse `/api/agents` (exists) and grant inventory_manager access to `/api/telecallers` (server.py line 1940) — currently 403 for IM.",
+    "Fix `/api/store/agents/all` → `/api/agents` (URL typo; store/agents/all does not exist and returns 404 for every role).",
+    "In /app/backend/server.py PUT /api/leads/{id} handler (line 1057-1090), recompute phone_number_norm whenever customer_phone or phone_number is being updated (currently the norm becomes stale, undermining the all-time dedupe guarantee)."
+  ],
+  "critical_code_review_comments": [
+    "StockAllocationPanel employees list silently swallows the 403/404 (catch → empty). Add a toast so the IM sees why the dialog is unusable, and fix the loader.",
+    "The all-time dedupe is otherwise solid — within-batch collapse, existing_norms preload, and skipped_details.owner.telecaller_name enrichment all work as spec'd.",
+    "sm/telecaller-performance/pdf takes ?sm_id=… (not sales_manager_id). Spec is consistent with backend; noted for main agent.",
+    "POST /leads/dedupe-cleanup response keys are 'duplicate_phone_norms' + 'extra_leads_found' + 'deleted' + 'dry_run' — main agent may want to add a stable 'count' or 'would_delete' alias for API consumers to consume without knowing the internal wording."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (14/14 pytest passed)", "frontend": "80% (TC dashboard call-history + cross-tc-warn + TC Perf PDF verified; Inventory Manager stock-allocation UI blocked by empty employees list)"},
+  "test_credentials": {
+    "admin": "admin@celestaglow.com / admin123",
+    "sales_manager": "salesmanager@celestaglow.com / sm123",
+    "telecaller1": "telecaller1@celestaglow.com / tc123 (no leads)",
+    "telecaller2": "telecaller2@celestaglow.com / tc123 (Anjali Menon, 14 leads — used for UI testing)",
+    "inventory_manager": "inventory@celestaglow.com / inv123"
+  },
+  "seed_data_creation": "Planted 1 TEST_iter49 call_log on lead-11931c85 (tc-002) via PUT /api/leads/{id} to verify call-history UI. Planted 1 admin-created order for phone +918888227902 (cross-TC test) — order ORD-20260708-A6F521. Bulk-distribute test created 2 leads with TEST-tagged unique phones (+91911119xxxxx range) — will be picked up by future dedupe-cleanup if needed. Stock-allocation test created + soft-deleted 1 allocation.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reuse /app/backend/tests/test_iteration_49.py for regression of this iteration's endpoints. For frontend verification of Stock Allocation, main agent must first fix the employees loader in StockAllocationPanel.jsx (either fix URL to /api/agents + grant IM read on /api/telecallers, or add a new /api/employees/allocatable endpoint). All other frontend fixes from iter49 (call-history, cross-tc-warn, tc-perf-download-pdf, label PDF) are verified working. Login button text is 'Sign In'.",
+  "rca of the issue": "StockAllocationPanel.jsx line 31-32 fetches employees from two URLs — /api/telecallers (backend gate at server.py:1940 excludes inventory_manager → 403) and /api/store/agents/all (this path never existed — likely a copy-paste from another module; the real endpoint is /api/agents at server.py:2066). Both requests are caught silently, resulting in an empty employees list and an unusable Employee dropdown for Inventory Manager. Impact: Inventory Manager cannot allocate stock to any employee through the UI even though the backend endpoints work fine via curl."
+}

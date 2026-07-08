@@ -16,8 +16,10 @@ Exposes:
 Visible to: admin + sales_manager + assistant_sales_manager + inventory_manager.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+import io
 
 
 def register_sm_performance(api_router: APIRouter, db, get_current_user):
@@ -166,3 +168,91 @@ def register_sm_performance(api_router: APIRouter, db, get_current_user):
             "telecallers": out,
             "totals": totals,
         }
+
+
+    @api_router.get("/sm/telecaller-performance/pdf")
+    async def telecaller_performance_pdf(
+        range: str = Query("7d"),
+        from_: Optional[str] = Query(None, alias="from"),
+        to: Optional[str] = None,
+        sm_id: Optional[str] = None,
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Same data as GET /sm/telecaller-performance but streamed as a PDF report
+        with ALL telecallers listed (even zero-order ones), plus totals footer."""
+        # Reuse the JSON endpoint to compute the data
+        payload = await telecaller_performance(range=range, from_=from_, to=to,
+                                                sm_id=sm_id, current_user=current_user)
+        # Look up SM name
+        sm_doc = await db.sales_managers.find_one({"id": payload["sm_id"]}, {"_id": 0, "name": 1})
+        sm_name = (sm_doc or {}).get("name") or payload["sm_id"]
+
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        except ImportError:
+            raise HTTPException(500, "reportlab not installed")
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=20, rightMargin=20, topMargin=20, bottomMargin=20)
+        styles = getSampleStyleSheet()
+        story = []
+        story.append(Paragraph(f"<b>Telecaller Performance — {sm_name}</b>", styles["Title"]))
+        story.append(Paragraph(f"Range: <b>{payload['range']}</b> · {payload['from']} to {payload['to']} · Team size: <b>{payload['team']['total_telecallers']}</b>", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+        header = ["#", "Telecaller", "Phone", "Orders", "Qty", "Revenue", "Delivered", "In-Transit", "Returned", "Pending", "Delivery %", "RTO %"]
+        rows = [header]
+        for i, t in enumerate(payload["telecallers"], start=1):
+            rows.append([
+                str(i),
+                t["telecaller_name"] or "—",
+                t.get("telecaller_phone") or "",
+                str(t.get("orders", 0)),
+                str(t.get("total_qty", 0)),
+                f"Rs.{t.get('revenue', 0):,.0f}",
+                str(t.get("delivered", 0)),
+                str(t.get("in_transit", 0)),
+                str(t.get("returned", 0)),
+                str(t.get("pending", 0) + t.get("confirmed", 0)),
+                f"{t.get('delivery_pct', 0)}%",
+                f"{t.get('rto_pct', 0)}%",
+            ])
+        totals = payload["totals"]
+        rows.append([
+            "", "TOTAL", "",
+            str(totals.get("orders", 0)),
+            str(totals.get("qty", 0)),
+            f"Rs.{totals.get('revenue', 0):,.0f}",
+            str(totals.get("delivered", 0)),
+            str(totals.get("in_transit", 0)),
+            str(totals.get("returned", 0)),
+            str(totals.get("pending", 0) + totals.get("confirmed", 0)),
+            "", "",
+        ])
+        col_widths = [22, 130, 80, 45, 45, 75, 60, 65, 55, 55, 65, 55]
+        tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3B5249")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("ALIGN", (3, 1), (-1, -1), "CENTER"),
+            ("ALIGN", (5, 1), (5, -1), "RIGHT"),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F4EAE0")),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D6D2C8")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F9F8F6")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(tbl)
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(f"<i>Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by Celesta Glow CRM</i>", styles["Normal"]))
+        doc.build(story)
+        buf.seek(0)
+        filename = f"tc_performance_{sm_name.replace(' ', '_')}_{payload['from']}_{payload['to']}.pdf"
+        return StreamingResponse(buf, media_type="application/pdf",
+                                  headers={"Content-Disposition": f'attachment; filename="{filename}"'})
