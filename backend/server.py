@@ -8772,6 +8772,113 @@ async def delhivery_track(awb: str, current_user: dict = Depends(get_current_use
         raise HTTPException(status_code=502, detail=f"Delhivery returned {r.status_code}: {r.text[:500]}")
     return {"awb": awb, "tracking_url": PUBLIC_TRACKING_URL.format(awb=awb), "data": r.json()}
 
+@api_router.get("/shipping/delhivery/label/{oid}")
+async def delhivery_label_pdf(oid: str, current_user: dict = Depends(get_current_user)):
+    """Download the Delhivery shipping label as a PDF. Includes the AWB barcode +
+    matched item names + qty (pulled from the order so the label ALWAYS matches what
+    was shipped). Falls back to a self-generated PDF if Delhivery's packing-slip
+    endpoint is unavailable."""
+    if current_user['role'] not in ('admin', 'inventory_manager', 'sales_manager'):
+        raise HTTPException(status_code=403)
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    awb = order.get("awb_number")
+    if not awb:
+        raise HTTPException(status_code=400, detail="This order has no Delhivery AWB — ship it first")
+
+    # 1) Try Delhivery's official packing slip PDF endpoint
+    pdf_bytes = None
+    if DELHIVERY_API_KEY:
+        try:
+            r = requests.get(f"{DELHIVERY_BASE_URL}/api/p/packing_slip",
+                             headers=_delhivery_headers(),
+                             params={"wbns": awb, "pdf": "true"},
+                             timeout=15)
+            if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/pdf"):
+                pdf_bytes = r.content
+        except Exception as _e:
+            logger.warning(f"Delhivery packing slip fetch failed for {awb}: {_e}")
+
+    # 2) Fallback — build our own PDF with the AWB + itemised product list
+    if not pdf_bytes:
+        try:
+            from reportlab.lib.pagesizes import A5
+            from reportlab.lib.units import mm
+            from reportlab.pdfgen import canvas
+            from reportlab.graphics.barcode import code128
+            import io as _io
+            buf = _io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=A5)
+            w, h = A5
+            y = h - 15 * mm
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(10 * mm, y, "DELHIVERY SHIPPING LABEL")
+            y -= 6 * mm
+            c.setFont("Helvetica", 8)
+            c.drawString(10 * mm, y, f"Order: {oid}   ·   {(order.get('payment_type') or 'COD').upper()}   ·   Rs.{order.get('total_amount', 0)}")
+            y -= 10 * mm
+            # Barcode
+            bc = code128.Code128(awb, barHeight=15 * mm, barWidth=0.4 * mm)
+            bc.drawOn(c, 10 * mm, y - 15 * mm)
+            y -= 20 * mm
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(10 * mm, y, f"AWB: {awb}")
+            y -= 8 * mm
+            # From
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(10 * mm, y, "FROM:")
+            y -= 4 * mm
+            c.setFont("Helvetica", 8)
+            c.drawString(10 * mm, y, COMPANY.get("name", "Celesta Glow"))
+            y -= 3.5 * mm
+            c.drawString(10 * mm, y, (COMPANY.get("address_line1", "") + ", " + COMPANY.get("address_line2", ""))[:70])
+            y -= 6 * mm
+            # To
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(10 * mm, y, "TO:")
+            y -= 4 * mm
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(10 * mm, y, (order.get("customer_name") or "")[:60])
+            y -= 4.5 * mm
+            c.setFont("Helvetica", 8)
+            addr = (order.get("customer_address") or "")[:75]
+            c.drawString(10 * mm, y, addr); y -= 3.5 * mm
+            c.drawString(10 * mm, y, f"{order.get('customer_city') or ''}, {order.get('customer_state') or ''} - {order.get('customer_pincode') or ''}")
+            y -= 3.5 * mm
+            c.drawString(10 * mm, y, f"Phone: {order.get('customer_phone') or ''}")
+            y -= 7 * mm
+            # ── ITEMS (must match what was shipped) ──
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(10 * mm, y, "PRODUCTS:")
+            y -= 4 * mm
+            c.setFont("Helvetica", 8)
+            for it in (order.get("items") or []):
+                name = (it.get("product_name") or it.get("name") or "Item").strip()
+                qty = int(it.get("quantity") or 1)
+                price = float(it.get("price") or 0)
+                c.drawString(12 * mm, y, f"• {name[:60]}   ×{qty}   Rs.{price:.2f}")
+                y -= 3.5 * mm
+                if y < 25 * mm:
+                    break
+            # Payment mode footer
+            y = 15 * mm
+            c.setFont("Helvetica-Bold", 10)
+            pmode = "COD" if (order.get("payment_type") or "cod").lower() == "cod" else "PREPAID"
+            c.drawString(10 * mm, y, f"{pmode}   ·   Total: Rs.{order.get('total_amount', 0)}")
+            c.showPage()
+            c.save()
+            pdf_bytes = buf.getvalue()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Label generation failed: {e}")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="delhivery-label-{awb}.pdf"'},
+    )
+
+
 @api_router.post("/shipping/delhivery/cancel/{oid}")
 async def delhivery_cancel(oid: str, current_user: dict = Depends(get_current_user)):
     """Cancel a Delhivery shipment for an order. Admin + Inventory Manager only."""

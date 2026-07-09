@@ -73,6 +73,23 @@ export default function DelhiveryShipActions({ order, role, onChange, compact = 
     setBusy(false);
   };
 
+  const downloadLabel = async () => {
+    if (!awb) return;
+    setBusy(true);
+    try {
+      const r = await axios.get(`${API}/shipping/delhivery/label/${order.id}`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `delhivery-label-${awb}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Delhivery label downloaded");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to download label");
+    }
+    setBusy(false);
+  };
+
   // Already shipped — show appropriate badge
   if (awb) {
     const url = order.tracking_url || `https://www.delhivery.com/tracking?awb=${awb}`;
@@ -81,6 +98,9 @@ export default function DelhiveryShipActions({ order, role, onChange, compact = 
         <a href={url} target="_blank" rel="noreferrer" className="text-[10px] text-[#3B5249] underline" data-testid={`track-link-${order.id}`} title={`Track ${awb}`}>
           📦 {awb}
         </a>
+        <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={downloadLabel} disabled={busy} data-testid={`download-label-${order.id}`} title="Download Delhivery shipping label PDF">
+          {busy ? "…" : "🏷 Label"}
+        </Button>
         {canCancel && !order.shipment_cancelled && (
           <Button size="sm" variant="outline" className="rounded-full text-[9px] h-6 px-2 text-red-600 border-red-200 hover:bg-red-50" onClick={cancel} disabled={busy} data-testid={`cancel-ship-${order.id}`}>
             {busy ? "…" : "Cancel"}
