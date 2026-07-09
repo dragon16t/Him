@@ -251,7 +251,7 @@ export default function TelecallerDashboard() {
     if (l.next_relationship_date && l.next_relationship_date <= today) return 4;
     if (l.status === "no_response") return 5;
     if (l.next_follow_up_date && l.next_follow_up_date > today) return 6;
-    if (l.status === "busy" || l.status === "follow_up") return 7;
+    if (l.status === "busy" || l.status === "follow_up" || l.status === "ok") return 7;
     return 6;
   };
 
@@ -328,7 +328,11 @@ export default function TelecallerDashboard() {
       if (isRecentlyOrdered(l)) return false;
       // Dead statuses NEVER appear in Today, even if stale follow-up dates linger on the record.
       if (["not_interested","rejected","cancelled","do_not_call","blocked","spam"].includes(l.status)) return false;
-      return l.status === "new" || isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
+      // Maximise the daily queue — pull in every re-callable status so a TC never runs out
+      // of leads. These statuses are all "still-in-play" and worth another call attempt.
+      const ENGAGE_STATUSES = ["new","no_response","busy","follow_up","interested","ok"];
+      if (ENGAGE_STATUSES.includes(l.status)) return true;
+      return isFollowUpDueNow(l) || isPendingConversion(l) || (l.next_repeat_order_date && l.next_repeat_order_date <= today) || (l.next_relationship_date && l.next_relationship_date <= today);
     }
     if (tab === "repeat") return !!l.next_repeat_order_date;  // show DUE + UPCOMING; sorted asc by date below
     if (tab === "relationship") return !!l.next_relationship_date;
