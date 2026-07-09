@@ -1513,36 +1513,16 @@ async def delhivery_sync_once():
                     existing = await db.commissions.find_one({"order_id": o["id"]})
                     if not existing:
                         await _credit_commission_for(o)
-                    # Credit finance ledger once (auto-sync was previously skipping this)
-                    existing_txn = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_revenue"})
-                    if not existing_txn:
-                        try:
-                            from server import record_transaction as _record_txn
-                            pay_method = "bank"  # Delhivery COD payout settles to seller's bank account
-                            await _record_txn(
-                                "credit", "order_revenue", o.get("total_amount", 0),
-                                f"Order {o['id']} delivered (auto-sync) - {o.get('customer_name','')}",
-                                reference_id=o["id"], method=pay_method, created_by="delhivery_auto"
-                            )
-                        except Exception as _txn_e:
-                            logger.warning(f"auto-sync txn record: {_txn_e}")
+                    # NOTE: Auto finance-ledger crediting on Delhivery "delivered" is DISABLED
+                    # per business rule. Managers must reconcile COD payouts manually,
+                    # mirroring the Post Office flow. Order status still flips to
+                    # "delivered" so downstream reports (leads, dashboards) work.
                 elif mapped == "returned":
-                    # If a revenue credit was previously recorded, reverse it (debit) and reverse commission
-                    prior_credit = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_revenue", "type": "credit"})
-                    if prior_credit:
-                        already_reversed = await db.finance_ledger.find_one({"reference_id": o["id"], "category": "order_return", "type": "debit"})
-                        if not already_reversed:
-                            try:
-                                from server import record_transaction as _record_txn
-                                pay_method = "bank"  # Reverse the same way it was credited
-                                await _record_txn(
-                                    "debit", "order_return", o.get("total_amount", 0),
-                                    f"Order {o['id']} returned/RTO (auto-sync) - {o.get('customer_name','')}",
-                                    reference_id=o["id"], method=pay_method, created_by="delhivery_auto"
-                                )
-                            except Exception as _txn_e:
-                                logger.warning(f"auto-sync return-reverse txn: {_txn_e}")
-                    # Reverse commission if it was credited
+                    # NOTE: Auto finance-ledger reversal on Delhivery "returned/RTO" is
+                    # DISABLED per business rule. Since no auto-credit is written on
+                    # delivery, there is nothing to reverse — managers handle it manually.
+                    # Reverse commission if it was credited (kept: this only affects
+                    # employee earnings, not the seller's finance ledger).
                     cm = await db.commissions.find_one({"order_id": o["id"], "status": {"$ne": "reversed"}})
                     if cm:
                         await db.commissions.update_one({"id": cm["id"]}, {"$set": {"status": "reversed", "reversed_at": now, "reversed_reason": "RTO / returned"}})
