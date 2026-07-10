@@ -1161,11 +1161,16 @@ async def manager_distribute_leads(data: dict, current_user: dict = Depends(get_
     for lid in lead_ids:
         norm = norms_by_lid.get(lid, "")
         owner = live_norm_owners.get(norm)
-        # If the lead's phone is already owned by a DIFFERENT TC (not one of the
-        # selected targets, or if we'd be moving from a TC who isn't in selection),
-        # skip — first-owner-wins.
-        if owner and owner["lead_id"] != lid and owner.get("tc_id") not in tc_id_set:
-            skipped_duplicates.append({"lead_id": lid, "existing_owner": owner.get("tc_name") or "unknown"})
+        # FIRST-OWNER-WINS: if the phone already lives on a TC's dashboard
+        # (either as the same lead or a different lead), and that owner is NOT in
+        # the selected target set, we skip. The original owner keeps the lead.
+        # Only exception: no current owner at all → free to assign.
+        if owner and owner.get("tc_id") and owner.get("tc_id") not in tc_id_set:
+            skipped_duplicates.append({
+                "lead_id": lid,
+                "existing_owner": owner.get("tc_name") or "unknown",
+                "reason": "owned by TC outside target set — first-owner-wins",
+            })
             continue
         tc = tcs[idx % len(tcs)]
         idx += 1
