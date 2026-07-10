@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 66 — validated 5 new backend endpoints and 5 UI touch-points (Admin CRM header cards, TC Reports 3rd table, TC Log Call attribution + want_to_order). 8/8 pytest passed, all UI testids present, cross-dashboard cleanup + mark-order-by-other-tc verified end-to-end.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter66_features.py",
+    "/app/test_reports/pytest/iter66.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 10032 lines — well beyond the 700-line guideline. Consider splitting endpoints into routers (leads, orders, admin, tc) per resource. Not a blocker but ongoing tech-debt.",
+    "create_lead prior-order 409 uses a regex on customer_phone ({\"$regex\": phone_norm[-10:]}). Combined with an $or that also matches raw phone, this is fine but slower than a normalized field lookup. Recommend a customer_phone_norm field on orders for O(1) index lookups."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter66_features.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (10/10 features validated)"},
+  "test_credentials": "Used admin/tc1/tc2/tc3 seeded creds from /app/memory/test_credentials.md",
+  "seed_data_creation": "3 TEST_iter66 leads inserted via direct mongo (to seed the cross-dashboard scenario the API's dupe-check normally prevents). All test data cleaned up post-run (delete_many on source=TEST_iter66 + name~=TEST_iter66 leads + TEST_iter66 orders).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend pytest file /app/backend/tests/test_iter66_features.py uses direct mongo insert to seed shared-phone leads for TC1/TC2/TC3 because /api/leads dupe-check would otherwise refuse. Order response comes back as {order, message} wrapper; GET /api/leads/{id} returns {lead, orders} wrapper. Admin route is /dashboard (not /admin/crm-panel). AdminCRMPanel header uses uppercase CSS on labels, so text search must ignore case if checking programmatically.",
+  "results_detail": {
+    "backend": {
+      "GET /api/admin/lead-stats-overview": "PASS (5 fields returned) + 403 for TC",
+      "GET /api/admin/tc-performance-range": "PASS (rows with 8 fields incl. tier ∈ high/medium/under/no_leads, totals block, range_from/to echo) + 403 for TC + 400 for bad date",
+      "POST /api/leads with phone that has prior order by other TC": "PASS — 409 with detail mentioning order id + creator name",
+      "POST /api/orders cross_dashboard_cleanup": "PASS — response.order.cross_dashboard_cleanup = {removed_leads: 2, reassigned_to: tc1_id}; TC2/TC3 leads soft-deleted with dedupe_merged_into set",
+      "POST /api/leads/{id}/mark-order-by-other-tc": "PASS — 403 for non-owner, 400 when other_tc_name missing, 200 happy path (deleted=True, deleted_reason contains 'another TC', removed_credit_to set)"
+    },
+    "frontend": {
+      "AdminCRMPanel header 6 cards": "PASS — kpi-sub-0='1 dupes removed', kpi-sub-2='orders / unique leads' visible; all 6 labels rendered (Unique Leads / Orders / Conversion % / Revenue / Expenses ✓ / Investment)",
+      "AdminCRMPanel > TC Reports third table": "PASS — [data-testid=tc-range-perf-table] rendered with 8 range-perf-row-* and 8 range-tier-* badges. All three tables ('TC Performance in Range', 'Leads Received per Telecaller', 'Call Status Summary per Telecaller') present.",
+      "TC Log Call - call-status-select includes 'Want to Create Order' + 'Order Created'": "PASS",
+      "TC Log Call - selecting 'Order Created' shows [order-attribution-block] with by-me + by-other buttons": "PASS",
+      "TC Log Call - clicking 'Another telecaller' shows [other-tc-name-input]": "PASS",
+      "TC Log Call - 'Want to Create Order' → closes dialog + opens Create Order form": "PASS (screenshot confirms Create Order dialog with prefilled customer name + phone)"
+    }
+  }
+}

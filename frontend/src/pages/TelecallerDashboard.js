@@ -114,7 +114,7 @@ export default function TelecallerDashboard() {
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
-  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "", not_interested_reason: "" });
+  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "", not_interested_reason: "", order_by_me: true, other_tc_name: "" });
   const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: "", payment_type: "cod" });
   const [fundForm, setFundForm] = useState({ amount: 0, reason: "", category: "travel" });
 
@@ -401,11 +401,17 @@ export default function TelecallerDashboard() {
   const handleCallLog = async () => {
     if (savingCallLog) return; // idempotency guard — don't submit twice
     if (!callForm.status) return toast.error("Select status");
+    // "Want to create order" → shortcut: close the call log dialog and open the order form.
+    if (callForm.status === "want_to_order") {
+      const nm = (callForm.customer_name || "").trim();
+      if (nm.length < 2) return toast.error("Enter customer name before creating order");
+      setShowCallLog(false);
+      // Prefill the order form with what we already know
+      setOrderForm(o => ({ ...o, customer_name: nm, customer_phone: selectedLead?.phone_number || "" }));
+      setShowOrder(true);
+      return;
+    }
     // ── MANDATORY REMARKS GATE (2026-02) ──
-    // Every log call must capture:
-    //   1. Customer name (min 2 chars) — so the lead card stops showing "Unknown"
-    //   2. Customer remarks — what did the customer say? (min 5 chars)
-    //   3. If status = not_interested → reason is mandatory (min 5 chars)
     const nm = (callForm.customer_name || "").trim();
     const rm = (callForm.customer_remarks || "").trim();
     if (nm.length < 2) return toast.error("Customer name is required (what did they say their name is?)");
@@ -417,6 +423,24 @@ export default function TelecallerDashboard() {
     // Interested customers MUST have a follow-up scheduled — otherwise they'll fall out of the queue
     if (callForm.enquiry_type === "orders" && callForm.status === "interested" && !callForm.next_follow_up_date) {
       return toast.error("Interested customer needs a follow-up date — please schedule the next call");
+    }
+    // ── ORDER ATTRIBUTION: "another TC placed it" → remove this lead from MY dashboard ──
+    if (callForm.status === "ordered" && callForm.order_by_me === false) {
+      if (!(callForm.other_tc_name || "").trim()) return toast.error("Please enter the other telecaller's name so we can route the number correctly");
+      try {
+        setSavingCallLog(true);
+        await axios.post(`${API}/leads/${selectedLead.id}/mark-order-by-other-tc`, { other_tc_name: callForm.other_tc_name });
+        toast.success("Lead removed from your dashboard — belongs to the actual order owner");
+        setShowCallLog(false);
+        setActiveCallLeadId(null);
+        try { localStorage.removeItem(LOCK_KEY); } catch(_){ /* ignore */ }
+        fetchData();
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Could not remove lead");
+      } finally {
+        setSavingCallLog(false);
+      }
+      return;
     }
     const isOrder = callForm.enquiry_type === "orders";
     const payload = {
@@ -953,7 +977,7 @@ export default function TelecallerDashboard() {
                   );
                 })()}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setActiveCallLeadId(lead.id);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||"",not_interested_reason:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setActiveCallLeadId(lead.id);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||"",not_interested_reason:"",order_by_me:true,other_tc_name:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
                   <span onClick={() => { axios.post(`${API}/contact-events`, {type:"whatsapp", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name, message: "auto-track"}).catch(()=>{}); }}>
                     <WhatsAppCTA
                       phone={lead.phone_number}
@@ -1042,7 +1066,38 @@ export default function TelecallerDashboard() {
               <p className="text-[10px] text-[#A66E4E] mt-1">⤳ This contact will be moved to the {callForm.enquiry_type === "sales_opportunity" ? "Sales Manager's Sales Collab book" : "Social Media Manager's Collaborations book"} after you save. No follow-up will be scheduled on your side.</p>
             )}
           </div>
-          <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent>{callForm.enquiry_type === "orders" ? <><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="ordered">Order Created</SelectItem></> : <><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="no_response">No Response</SelectItem></>}</SelectContent></Select></div>
+          <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v, order_by_me: v==="ordered" ? true : f.order_by_me}))}><SelectTrigger className="rounded-xl" data-testid="call-status-select"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent>{callForm.enquiry_type === "orders" ? <><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="want_to_order">Want to Create Order</SelectItem><SelectItem value="ordered">Order Created</SelectItem></> : <><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="no_response">No Response</SelectItem></>}</SelectContent></Select></div>
+          {callForm.status === "ordered" && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg" data-testid="order-attribution-block">
+              <Label className="text-xs font-semibold text-blue-900 block mb-2">Who placed this order?</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button" size="sm"
+                  variant={callForm.order_by_me !== false ? "default" : "outline"}
+                  onClick={()=>setCallForm(f=>({...f,order_by_me:true,other_tc_name:""}))}
+                  data-testid="order-by-me-btn"
+                >I placed the order</Button>
+                <Button
+                  type="button" size="sm"
+                  variant={callForm.order_by_me === false ? "default" : "outline"}
+                  onClick={()=>setCallForm(f=>({...f,order_by_me:false}))}
+                  data-testid="order-by-other-btn"
+                >Another telecaller placed it</Button>
+              </div>
+              {callForm.order_by_me === false && (
+                <div className="mt-2">
+                  <Input
+                    value={callForm.other_tc_name || ""}
+                    onChange={e=>setCallForm(f=>({...f,other_tc_name:e.target.value}))}
+                    placeholder="Name of the other telecaller (so we can route this number correctly)"
+                    className="rounded-xl text-xs"
+                    data-testid="other-tc-name-input"
+                  />
+                  <p className="text-[10px] text-blue-700 mt-1">This number will disappear from your dashboard — it belongs to the actual order owner. First-order-creator wins.</p>
+                </div>
+              )}
+            </div>
+          )}
           <div><Label className="text-xs">Notes / Remarks <span className="text-[9px] text-red-700">*required — min 5 chars</span></Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did the customer say? Their exact words help managers coach you." data-testid="call-remarks"/>
             <div className="flex justify-end mt-1"><VoiceNoteButton compact label="Dictate notes" onTranscribed={(text)=>setCallForm(f=>({...f,customer_remarks:(f.customer_remarks?f.customer_remarks+" ":"")+text}))} /></div>
           </div>

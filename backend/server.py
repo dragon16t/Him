@@ -993,6 +993,32 @@ async def delete_lead(lead_id: str, current_user: dict = Depends(get_current_use
     }})
     return {"message": "Lead deleted"}
 
+
+@api_router.post("/leads/{lead_id}/mark-order-by-other-tc")
+async def mark_order_by_other_tc(lead_id: str, data: dict = Body(default={}), current_user: dict = Depends(get_current_user)):
+    """TC self-service: signal that another telecaller already placed an order for this
+    number. The lead is removed from THIS TC's dashboard only. Audit trail preserved."""
+    if current_user.get('role') not in ('telecaller', 'inhouse_telecaller'):
+        raise HTTPException(status_code=403, detail="TC-only endpoint")
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead: raise HTTPException(status_code=404, detail="Lead not found")
+    if lead.get("assigned_to") != current_user['id']:
+        raise HTTPException(status_code=403, detail="You don't own this lead")
+    other_tc = (data.get("other_tc_name") or "").strip()
+    if not other_tc:
+        raise HTTPException(status_code=400, detail="other_tc_name is required")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.leads.update_one({"id": lead_id}, {"$set": {
+        "deleted": True,
+        "deleted_at": now_iso,
+        "deleted_by": current_user['id'],
+        "deleted_reason": f"Order placed by another TC ({other_tc}) — self-removed by {current_user.get('name','')}",
+        "removed_due_to_order_by_other_tc": True,
+        "removed_credit_to": other_tc,
+    }})
+    return {"message": "Lead removed from your dashboard", "credit_to": other_tc}
+
+
 @api_router.post("/leads/bulk-delete")
 async def bulk_delete_leads(data: dict, current_user: dict = Depends(get_current_user)):
     lead_ids = data.get('lead_ids') or []
@@ -1323,6 +1349,114 @@ async def admin_weekly_performance(week_start: str = "", current_user: dict = De
     }
 
 
+@api_router.get("/admin/tc-performance-range")
+async def admin_tc_performance_range(
+    from_date: str = "",
+    to_date: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Filterable per-TC performance for the chosen date window:
+    leads_given, orders, qty, revenue, conversion %, tier.
+    Defaults to today when unset. Admin / SM / HoS only."""
+    if current_user.get('role') not in ('admin', 'sales_manager', 'assistant_sales_manager', 'head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    today = ist_now.date()
+    try:
+        cfrom = date.fromisoformat(from_date) if from_date else today
+        cto = date.fromisoformat(to_date) if to_date else today
+    except Exception:
+        raise HTTPException(status_code=400, detail="from_date/to_date must be YYYY-MM-DD")
+    if cto < cfrom:
+        cfrom, cto = cto, cfrom
+    tcs = await db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(500)
+    tc_ids = [t["id"] for t in tcs]
+    from_iso = cfrom.isoformat(); to_next_iso = (cto + timedelta(days=1)).isoformat()
+    # Leads received in range
+    lead_counts = {}
+    async for l in db.leads.find({
+        "assigned_to": {"$in": tc_ids},
+        "deleted": {"$ne": True},
+    }, {"_id": 0, "assigned_to": 1, "created_at": 1, "assigned_at": 1, "distributed_at": 1}):
+        ref = (l.get("assigned_at") or l.get("distributed_at") or l.get("created_at") or "")[:10]
+        if not ref: continue
+        if cfrom.isoformat() <= ref <= cto.isoformat():
+            lead_counts[l["assigned_to"]] = lead_counts.get(l["assigned_to"], 0) + 1
+    # Orders in range
+    order_stats = {}
+    async for o in db.orders.find({
+        "created_by": {"$in": tc_ids},
+        "created_at": {"$gte": from_iso, "$lt": to_next_iso},
+        "status": {"$nin": ["cancelled", "rejected"]},
+        "deleted": {"$ne": True},
+    }, {"_id": 0, "created_by": 1, "items": 1, "total_amount": 1}):
+        s = order_stats.setdefault(o["created_by"], {"orders": 0, "qty": 0, "rev": 0.0})
+        s["orders"] += 1
+        s["qty"] += sum(int(it.get("quantity") or 0) for it in (o.get("items") or []))
+        s["rev"] += float(o.get("total_amount") or 0)
+    rows = []
+    for tc in tcs:
+        lg = lead_counts.get(tc["id"], 0)
+        os_ = order_stats.get(tc["id"], {"orders": 0, "qty": 0, "rev": 0.0})
+        conv = round((os_["orders"] / lg) * 100.0, 1) if lg > 0 else 0.0
+        if lg == 0:
+            tier = "no_leads"
+        elif conv >= 25:
+            tier = "high"
+        elif conv >= 10:
+            tier = "medium"
+        else:
+            tier = "under"
+        rows.append({
+            "telecaller_id": tc["id"],
+            "telecaller_name": tc.get("name", ""),
+            "email": tc.get("email", ""),
+            "leads_given": lg,
+            "orders": os_["orders"],
+            "qty": os_["qty"],
+            "revenue": round(os_["rev"], 2),
+            "conversion_pct": conv,
+            "tier": tier,
+        })
+    rows.sort(key=lambda r: (-r["conversion_pct"], -r["orders"]))
+    return {
+        "range_from": cfrom.isoformat(),
+        "range_to": cto.isoformat(),
+        "rows": rows,
+        "totals": {
+            "leads_given": sum(r["leads_given"] for r in rows),
+            "orders": sum(r["orders"] for r in rows),
+            "qty": sum(r["qty"] for r in rows),
+            "revenue": round(sum(r["revenue"] for r in rows), 2),
+        },
+    }
+
+
+@api_router.get("/admin/lead-stats-overview")
+async def admin_lead_stats_overview(current_user: dict = Depends(get_current_user)):
+    """Overall lead / order / conversion snapshot for the admin header:
+    - unique_leads (live, non-deleted, non-dead-status)
+    - total_orders (excluding cancelled/rejected/deleted)
+    - overall_conversion_pct (orders / unique_leads)
+    - duplicates_removed (soft-deleted via dedupe)
+    Admin / SM / HoS only."""
+    if current_user.get('role') not in ('admin', 'sales_manager', 'assistant_sales_manager', 'head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    dead = ["not_interested", "rejected", "cancelled", "do_not_call", "blocked", "spam"]
+    unique_leads = await db.leads.count_documents({"deleted": {"$ne": True}, "status": {"$nin": dead}})
+    all_leads = await db.leads.count_documents({"deleted": {"$ne": True}})
+    duplicates_removed = await db.leads.count_documents({"deleted": True, "dedupe_merged_into": {"$exists": True}})
+    total_orders = await db.orders.count_documents({"deleted": {"$ne": True}, "status": {"$nin": ["cancelled", "rejected"]}})
+    conv = round((total_orders / unique_leads) * 100.0, 1) if unique_leads > 0 else 0.0
+    return {
+        "unique_leads": unique_leads,
+        "all_leads_incl_dead": all_leads,
+        "duplicates_removed": duplicates_removed,
+        "total_orders": total_orders,
+        "overall_conversion_pct": conv,
+    }
+
+
 @api_router.get("/admin/leads-received-report")
 async def admin_leads_received_report(
     from_date: str = "",
@@ -1551,6 +1685,23 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
             status_code=409,
             detail=f"This number already exists in the system (owned by {owner}, status: {existing.get('status')}). Duplicate not allowed."
         )
+    # ── ORDER-CREATOR SUPERSEDES (2026-02-12) ──
+    # If ANY order was previously placed with this phone number, the lead belongs to
+    # the last order's creator. Adding as a new lead for a different TC is forbidden.
+    if phone_norm and len(phone_norm) >= 8:
+        prior_order = await db.orders.find_one({
+            "$or": [
+                {"customer_phone": phone},
+                {"customer_phone": {"$regex": phone_norm[-10:]}},
+            ],
+            "status": {"$nin": ["cancelled", "rejected"]},
+            "deleted": {"$ne": True},
+        }, {"_id": 0, "id": 1, "created_by": 1, "created_by_name": 1, "customer_phone": 1})
+        if prior_order and prior_order.get("created_by") != current_user['id']:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Order {prior_order['id']} was already placed on this number by {prior_order.get('created_by_name') or 'another telecaller'}. This customer belongs to them.",
+            )
     assigned_to = data.get("assigned_to", current_user['id'])
     # Lookup name of assignee for downstream call-logs/conversations display
     assigned_to_name = current_user.get('name', '') if assigned_to == current_user['id'] else ""
@@ -1803,6 +1954,62 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
             "next_repeat_order_date": _next_repeat,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }})
+    # ── CROSS-DASHBOARD CLEANUP (2026-02-12) ──
+    # Once ANY TC creates an order for phone X, the number belongs to the order
+    # creator alone. Every OTHER live lead sharing that phone number is soft-deleted
+    # from other TCs' dashboards. This retroactively clears the "same number on 3
+    # dashboards" problem and prevents future ones.
+    cust_phone = (data.get("customer_phone") or "").strip()
+    if cust_phone:
+        cust_norm = _normalize_phone_10(cust_phone)
+        if cust_norm and len(cust_norm) >= 8:
+            # Find every other live lead sharing this phone (excluding the primary lead_id)
+            other_lead_query = {
+                "$or": [
+                    {"phone_number_norm": cust_norm},
+                    {"phone_number": cust_phone},
+                ],
+                "deleted": {"$ne": True},
+            }
+            if order['lead_id']:
+                other_lead_query["id"] = {"$ne": order['lead_id']}
+            other_leads = await db.leads.find(other_lead_query, {"_id": 0, "id": 1, "assigned_to": 1, "assigned_to_name": 1, "call_logs": 1}).to_list(500)
+            if other_leads:
+                order_owner_id = creator_id
+                order_owner_name = creator_name
+                # If a primary lead_id exists, merge call_logs into it before removing dupes.
+                primary_id = order['lead_id']
+                if primary_id:
+                    primary = await db.leads.find_one({"id": primary_id}, {"_id": 0, "call_logs": 1})
+                    merged_calls = list((primary or {}).get("call_logs") or [])
+                    for ol in other_leads:
+                        for cl in (ol.get("call_logs") or []):
+                            cl_c = dict(cl); cl_c["_merged_from"] = ol["id"]
+                            cl_c["_merged_from_tc"] = ol.get("assigned_to_name")
+                            merged_calls.append(cl_c)
+                    merged_calls.sort(key=lambda c: c.get("logged_at") or c.get("timestamp") or "")
+                    await db.leads.update_one({"id": primary_id}, {"$set": {
+                        "call_logs": merged_calls,
+                        "assigned_to": order_owner_id,
+                        "assigned_to_name": order_owner_name,
+                        "phone_number_norm": cust_norm,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }})
+                # Soft-delete every other duplicate — they vanish from those TC dashboards.
+                await db.leads.update_many(
+                    {"id": {"$in": [ol["id"] for ol in other_leads]}},
+                    {"$set": {
+                        "deleted": True,
+                        "deleted_at": datetime.now(timezone.utc).isoformat(),
+                        "deleted_by": creator_id,
+                        "deleted_reason": f"Order {order_id} placed by {order_owner_name} — first-order-creator wins",
+                        "dedupe_merged_into": primary_id or order_id,
+                    }}
+                )
+                order["cross_dashboard_cleanup"] = {
+                    "removed_leads": len(other_leads),
+                    "reassigned_to": order_owner_id,
+                }
     # Non-COD orders (UPI/prepaid/online/card/netbanking) — DO NOT auto-credit revenue.
     # Inventory Manager must manually verify the payment landed in the bank first.
     pt = (data.get("payment_type") or "cod").lower()

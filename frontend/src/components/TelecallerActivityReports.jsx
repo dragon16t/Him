@@ -21,17 +21,20 @@ export default function TelecallerActivityReports() {
   const [to, setTo] = useState(today);
   const [received, setReceived] = useState(null);
   const [statusSum, setStatusSum] = useState(null);
+  const [rangePerf, setRangePerf] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         axios.get(`${API}/admin/leads-received-report?from_date=${from}&to_date=${to}`),
         axios.get(`${API}/admin/status-summary-report?from_date=${from}&to_date=${to}`),
+        axios.get(`${API}/admin/tc-performance-range?from_date=${from}&to_date=${to}`),
       ]);
       setReceived(r1.data);
       setStatusSum(r2.data);
+      setRangePerf(r3.data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -63,6 +66,62 @@ export default function TelecallerActivityReports() {
             </div>
           </div>
         </CardHeader>
+      </Card>
+
+      {/* TC Performance in Range (leads / orders / conv %) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="w-4 h-4 text-[#3B5249]" /> TC Performance in Range (Leads · Orders · Conv %)
+          </CardTitle>
+          {rangePerf && (
+            <p className="text-xs text-[#59615D]">
+              Range: {rangePerf.range_from} → {rangePerf.range_to} · Team totals — leads: <b>{rangePerf.totals?.leads_given}</b>, orders: <b>{rangePerf.totals?.orders}</b>, qty: <b>{rangePerf.totals?.qty}</b>, revenue: Rs.{Number(rangePerf.totals?.revenue || 0).toLocaleString("en-IN")}
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="tc-range-perf-table">
+              <thead className="bg-[#F5F3EE] text-[#3B5249]">
+                <tr>
+                  <th className="text-left px-3 py-2 font-semibold">Telecaller</th>
+                  <th className="text-right px-3 py-2 font-semibold">Leads Given</th>
+                  <th className="text-right px-3 py-2 font-semibold">Orders</th>
+                  <th className="text-right px-3 py-2 font-semibold">Qty</th>
+                  <th className="text-right px-3 py-2 font-semibold">Revenue</th>
+                  <th className="text-right px-3 py-2 font-semibold">Conv %</th>
+                  <th className="text-center px-3 py-2 font-semibold">Tier</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(rangePerf?.rows || []).map((row) => {
+                  const tierColor = row.tier === "high" ? "bg-emerald-600 text-white" : row.tier === "medium" ? "bg-amber-500 text-white" : row.tier === "under" ? "bg-red-600 text-white" : "bg-slate-300 text-slate-700";
+                  const tierLabel = row.tier === "high" ? "HIGH ≥25%" : row.tier === "medium" ? "MEDIUM 10-24%" : row.tier === "under" ? "UNDER <10%" : "NO LEADS";
+                  return (
+                    <tr key={row.telecaller_id} className="border-b border-[#E5E3DB]" data-testid={`range-perf-row-${row.telecaller_id}`}>
+                      <td className="px-3 py-2 font-medium">
+                        {row.telecaller_name}
+                        {row.email && <div className="text-[9px] text-[#8E9A94]">{row.email}</div>}
+                      </td>
+                      <td className="text-right px-3 py-2">{row.leads_given}</td>
+                      <td className="text-right px-3 py-2 font-semibold">{row.orders}</td>
+                      <td className="text-right px-3 py-2">{row.qty}</td>
+                      <td className="text-right px-3 py-2">Rs.{Number(row.revenue || 0).toLocaleString("en-IN")}</td>
+                      <td className="text-right px-3 py-2 font-bold">{row.leads_given > 0 ? `${row.conversion_pct}%` : "—"}</td>
+                      <td className="text-center px-3 py-2">
+                        <Badge className={`${tierColor} text-[9px]`} data-testid={`range-tier-${row.telecaller_id}`}>{tierLabel}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {(rangePerf?.rows || []).length === 0 && !loading && (
+                  <tr><td colSpan={7} className="text-center py-6 text-[#8E9A94]">No data for this range.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
       </Card>
 
       {/* Leads Received Report */}

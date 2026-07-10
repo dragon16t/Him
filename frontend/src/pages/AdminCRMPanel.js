@@ -138,6 +138,7 @@ export default function AdminCRMPanel() {
   const confirm = useConfirm();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [stats, setStats] = useState({});
+  const [leadOverview, setLeadOverview] = useState({});
   const [profilePhone, setProfilePhone] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [leads, setLeads] = useState([]);
@@ -327,6 +328,7 @@ export default function AdminCRMPanel() {
     const endpoints = [
       "/api/dashboard/stats", "/api/all-users", "/api/products",
       "/api/states", "/api/regions", "/api/leads", "/api/orders",
+      "/api/admin/lead-stats-overview",
     ];
     const results = await Promise.allSettled(endpoints.map(u => cachedGet(u)));
     const pick = (i, k, fallback) => results[i].status === "fulfilled" ? (results[i].value?.[k] ?? fallback) : fallback;
@@ -337,6 +339,7 @@ export default function AdminCRMPanel() {
     setRegions(pick(4, "regions", []));
     setLeads(pick(5, "leads", []));
     setOrders(pick(6, "orders", []));
+    setLeadOverview(results[7].status === "fulfilled" ? results[7].value : {});
     // Mark leads/orders tabs as already loaded since core loaded them
     loadedTabsRef.current.add("leads");
     loadedTabsRef.current.add("orders");
@@ -557,7 +560,7 @@ export default function AdminCRMPanel() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Stats */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
-          {[{l:"Leads",v:stats.total_leads||0},{l:"Orders",v:stats.total_orders||0},{l:"Revenue",v:`Rs.${stats.total_revenue||0}`},{l:"Expenses ✓",v:`Rs.${stats.total_expenses||0}`,sub:stats.pending_expenses_amount?`+ Rs.${stats.pending_expenses_amount} pending`:null},{l:"Investment",v:`Rs.${stats.total_investment||0}`},{l:"Pending Funds",v:stats.pending_fund_requests||0}].map((s,i)=>(
+          {[{l:"Unique Leads",v:leadOverview.unique_leads ?? (stats.total_leads||0),sub:leadOverview.duplicates_removed?`${leadOverview.duplicates_removed} dupes removed`:null},{l:"Orders",v:leadOverview.total_orders ?? (stats.total_orders||0)},{l:"Conversion %",v:`${leadOverview.overall_conversion_pct ?? 0}%`,sub:"orders / unique leads"},{l:"Revenue",v:`Rs.${stats.total_revenue||0}`},{l:"Expenses ✓",v:`Rs.${stats.total_expenses||0}`,sub:stats.pending_expenses_amount?`+ Rs.${stats.pending_expenses_amount} pending`:null},{l:"Investment",v:`Rs.${stats.total_investment||0}`}].map((s,i)=>(
             <div key={`acrmp-${i}`} className="bg-white rounded-xl border border-[#E5E3DB] p-3 sm:p-4"><p className="font-heading text-lg sm:text-xl font-semibold">{s.v}</p><p className="text-[10px] text-[#59615D] uppercase">{s.l}</p>{s.sub && <p className="text-[9px] text-orange-600 mt-0.5" data-testid={`kpi-sub-${i}`}>{s.sub}</p>}</div>
           ))}
         </div>
