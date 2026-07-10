@@ -178,6 +178,18 @@ export default function TelecallerDashboard() {
     });
     return map;
   }, [orders]);
+  // Latest order per lead — used for "ORDER: Rs.X · date" badge on the lead card
+  const latestOrderByLead = React.useMemo(() => {
+    const map = {};
+    (orders || []).forEach(o => {
+      if (o.status === "cancelled" || o.status === "rejected" || o.deleted) return;
+      const lid = o.lead_id;
+      if (!lid) return;
+      const prev = map[lid];
+      if (!prev || (o.created_at || "") > (prev.created_at || "")) map[lid] = o;
+    });
+    return map;
+  }, [orders]);
 
   // Cross-TC warning — did any OTHER telecaller already create an order for this phone?
   const [crossTcOrders, setCrossTcOrders] = useState({});
@@ -221,9 +233,14 @@ export default function TelecallerDashboard() {
   const isRecentlyOrdered = (l) => {
     // Hide leads whose order was created/delivered within the last 30 days from active "Today" actionable buckets.
     // They reappear automatically once 30d window passes (next_repeat_order_date kicks in).
-    if (l.status !== "order_created" && l.status !== "converted" && l.status !== "delivered") return false;
+    // FIX 2026-02: previously we only trusted lead.status — but if a TC re-logs a call and
+    // flips the status back to interested/follow_up, the ordered customer would resurface.
+    // Now we ALSO trust the orders table (orderedLeadIds) so an actual order always wins.
+    const hasOrder = orderedLeadIds.has(l.id) || (ordersByLead[l.id] || 0) > 0;
+    const statusOrdered = ["order_created", "converted", "delivered", "ordered", "shipped", "confirmed"].includes(l.status);
+    if (!hasOrder && !statusOrdered) return false;
     const ref = l.last_order_date || (l.updated_at || "").slice(0,10);
-    if (!ref) return false;
+    if (!ref) return hasOrder;  // order exists but no date → treat as recent to be safe
     const ageMs = new Date(today) - new Date(ref);
     return ageMs >= 0 && ageMs < 30 * 24 * 60 * 60 * 1000;
   };
@@ -817,7 +834,16 @@ export default function TelecallerDashboard() {
                     <LeadScoreBadge leadId={lead.id} compact />
                     <StatusBadge status={lead.status} />
                     {isPendingConversion(lead) && <Badge className="bg-[#6B8E6B] text-white text-[9px]">ORDER PENDING</Badge>}
-                    {orderedLeadIds.has(lead.id) && <Badge className="bg-blue-100 text-blue-800 text-[10px]" data-testid={`order-placed-${lead.id}`}>ORDER PLACED</Badge>}
+                    {orderedLeadIds.has(lead.id) && (() => {
+                      const lo = latestOrderByLead[lead.id];
+                      const amt = lo ? Number(lo.total_amount || 0).toLocaleString("en-IN") : "";
+                      const dt = lo && lo.created_at ? new Date(lo.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "";
+                      return (
+                        <Badge className="bg-blue-100 text-blue-800 text-[10px] font-semibold" data-testid={`order-placed-${lead.id}`} title={lo?.id || ""}>
+                          ORDER · Rs.{amt}{dt ? ` · ${dt}` : ""}
+                        </Badge>
+                      );
+                    })()}
                     {(() => {
                       const phoneKey = (lead.phone_number || "").replace(/\D/g, "").replace(/^91/, "").replace(/^0/, "");
                       const n = ordersByLead[lead.id] || ordersByLead[phoneKey] || 0;

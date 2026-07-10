@@ -24,6 +24,7 @@ import PostOfficePanel from "../components/PostOfficePanel";
 import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import AllTelecallersPerformancePanel from "../components/AllTelecallersPerformancePanel";
 import TelecallerLeaderboardPanel from "../components/TelecallerLeaderboardPanel";
+import WeeklyPerformancePanel from "../components/WeeklyPerformancePanel";
 import LeadDistributionPanel from "../components/LeadDistributionPanel";
 import ContactActivityPanel from "../components/ContactActivityPanel";
 import CustomerProfileDialog from "../components/CustomerProfileDialog";
@@ -568,7 +569,7 @@ export default function AdminCRMPanel() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"tcperf",l:"📊 TC Performance"},{v:"alltcs",l:"🌐 All TCs by Manager"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
+            {[{v:"users",l:"Users"},{v:"employees",l:"👥 Employees"},{v:"store",l:"🛍 Store"},{v:"pickup",l:"📍 Pickup"},{v:"agentwithdraws",l:"💰 Agent Payouts"},{v:"efficiency",l:"⚡ Efficiency"},{v:"forecast",l:"📈 Forecast"},{v:"pipeline",l:"🔀 Pipeline"},{v:"products",l:"Products"},{v:"pnl",l:"P&L"},{v:"states",l:"States"},{v:"orders",l:"Orders"},{v:"post",l:"📮 India Post"},{v:"tcperf",l:"📊 TC Performance"},{v:"weekperf",l:"🎯 Weekly Target"},{v:"alltcs",l:"🌐 All TCs by Manager"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"leads",l:"Leads"},{v:"conversations",l:"Conversations"},{v:"finance",l:"Finance"},{v:"commissions",l:"Commission"},{v:"funds",l:"Funds"},{v:"expenses",l:"Expenses"},{v:"payroll",l:"Payroll"},{v:"instructions",l:"Instructions"},{v:"hr",l:"HR"},{v:"invest",l:"Invest"},{v:"content",l:"Content"},{v:"audit",l:"Audit"},{v:"trash",l:"🗑 Trash"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-[11px] data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-2.5 py-1.5" data-testid={`admin-tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -735,6 +736,7 @@ export default function AdminCRMPanel() {
           <TabsContent value="orders"><OrdersPanel role="admin" showCreateButton onCreateOrder={() => setShowOrderDlg(true)} /></TabsContent>
           <TabsContent value="post"><PostOfficePanel role="admin" /></TabsContent>
           <TabsContent value="tcperf"><AdminTcPerfWrapper /></TabsContent>
+          <TabsContent value="weekperf"><WeeklyPerformancePanel /></TabsContent>
           <TabsContent value="alltcs"><AllTelecallersPerformancePanel /></TabsContent>
           <TabsContent value="leaderboard"><TelecallerLeaderboardPanel role="telecaller" /></TabsContent>
           <TabsContent value="leaderboard"><TelecallerLeaderboardPanel role="telecaller" /></TabsContent>
