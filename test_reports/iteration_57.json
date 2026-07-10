@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 65 review testing. Backend: 17/18 pytest cases pass covering sanitize-emails, email validation+cross-collection uniqueness, dedupe idempotency (first-owner-wins), weekly-performance new fields (leads_given/conversion_pct/tier/is_active_7d/last_activity) + active-first sort, leads-received-report and status-summary-report shape+ranges+RBAC, and manager-distribute notification no-crash when SMTP absent. ONE failure: manager-distribute does NOT skip when the SAME lead is being reassigned to a TC set that does not include current owner — skip only triggers on cross-lead phone duplicates (owner['lead_id'] != lid guard). If the spec intends to also skip same-lead re-assignment when current owner is outside target set, this is a gap. Frontend: Admin '📋 TC Reports' tab renders both Leads Received (8 rows) + Status Summary (8 rows) tables with report-from/report-to/reload-reports-btn/report-today-btn/report-7d-btn all present. Weekly Target tab shows 8 tier badges (HIGH/MEDIUM/UNDER/NO_LEADS). TC Dashboard Log Call: customer_name gate works, customer_remarks (min 5 chars) gate works with toast, selecting 'Not Interested' status reveals not-interested-reason-block + select + input, and submit without reason fires 'Please enter the reason why the customer is NOT interested (min 5 characters)' toast.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/leads/manager-distribute", "issue": "skipped_duplicates only fires for cross-lead phone duplicates (owner.lead_id != lid). When the SAME lead is redistributed to a TC set excluding current owner, no skip occurs — the lead is reassigned. Review request wording ('lead already owned by a TC not in target set is skipped') suggests skip should also apply here. Ambiguous — main agent to confirm intent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter65_features.py",
+    "/app/test_reports/pytest/iter65_results.xml"
+  ],
+  "action_items": [
+    "Clarify manager-distribute skip semantics: should redistribution of a lead currently owned by TC outside target set be skipped, or should the SM be allowed to reassign? Current code only guards against cross-lead phone duplicates."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 9821 lines — modularization overdue.",
+    "manager-distribute skip logic: `owner['lead_id'] != lid AND owner['tc_id'] not in tc_id_set` is narrow. If dedupe worked correctly there won't be cross-lead duplicates, so skip effectively never fires except during a race window — makes skipped_duplicates almost always empty in prod.",
+    "sanitize-emails: doesn't rebuild any auth/session invalidation for TCs whose email changed — user login by old email will fail silently after sanitize. Consider audit log or forced re-login notice.",
+    "Dedupe endpoint's _score() uses _iso_to_int string arithmetic on datetime strings — fragile. Parse to datetime instead."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter65_features.py"
+  ],
+  "success_rate": {"backend": "94% (17/18)", "frontend": "100%"},
+  "test_credentials": "admin@celestaglow.com/admin123, telecaller2@celestaglow.com/tc123",
+  "seed_data_creation": "Tests create TEST_-prefixed leads and one TC user (auto-cleaned via DELETE with password='delete'). Wet dedupe run executed live — safe.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 65 pytest file at /app/backend/tests/test_iter65_features.py (18 tests). One assertion failure is a semantic gap in manager-distribute skip logic — not a crash. All new admin endpoints /api/admin/sanitize-emails, /api/admin/leads-received-report, /api/admin/status-summary-report and TC Dashboard mandatory-remarks gate are functional. Admin tab data-testid=admin-tab-tcreports. Tier badges data-testid=tier-<tc_id>. TC Log Call testids: call-customer-name, call-remarks, not-interested-reason-block, not-interested-reason-select, not-interested-reason-input, submit-call-log.",
+  "rca_of_the_issue": "manager-distribute skip test failed because the code path `if owner and owner['lead_id'] != lid and owner.get('tc_id') not in tc_id_set` requires owner.lead_id to differ from the lead being distributed. When the caller distributes an existing lead (already owned by TC-A) to a set [TC-B], live_norm_owners returns the SAME lead as owner (owner.lead_id == lid), so skip condition fails and reassignment proceeds silently. Likely fix: separate check `if current_owner_tc and current_owner_tc not in tc_id_set: skip` regardless of lead-id match."
+}

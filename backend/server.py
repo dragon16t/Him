@@ -1020,6 +1020,15 @@ def _normalize_phone_10(p: str) -> str:
     if digits.startswith("91") and len(digits) > 10: digits = digits[-10:]
     return digits[-10:] if len(digits) >= 10 else digits
 
+def _iso_to_int(s: str) -> int:
+    """Convert an ISO-ish timestamp to a comparable int (earlier = smaller)."""
+    if not s: return 0
+    digits = "".join(ch for ch in s if ch.isdigit())[:14]
+    try:
+        return int(digits) if digits else 0
+    except Exception:
+        return 0
+
 @api_router.post("/leads/dedupe")
 async def dedupe_leads(data: dict = Body(default={}), current_user: dict = Depends(get_current_user)):
     """Scan every lead, group by normalized phone. For each phone with >1 live leads,
@@ -1043,16 +1052,21 @@ async def dedupe_leads(data: dict = Body(default={}), current_user: dict = Depen
         if len(leads_group) < 2:
             continue
         groups_processed += 1
-        # Winner priority: (1) has an order → wins; (2) most-recent call log; (3) most-recent updated_at
+        # WINNER RULE (2026-02-11): The telecaller who FIRST added / was assigned the
+        # number owns it. Earlier `created_at` wins. This matches business rule
+        # "customer is being called by multiple TCs — annoying — first-contact wins".
+        # Tie-breakers: (1) has an order (money already spent > preserve relationship);
+        # (2) most-recent activity (call log or updated_at).
         def _score(l):
-            has_order_bonus = 0
-            # We can't await here — approximate via last_order_date presence
-            if l.get("last_order_date"): has_order_bonus = 10_000_000_000
+            has_order_bonus = 1 if l.get("last_order_date") else 0
+            created = l.get("created_at") or l.get("updated_at") or "9999"
             calls = l.get("call_logs") or []
-            last_call = ""
-            if calls:
-                last_call = (calls[-1].get("logged_at") or calls[-1].get("timestamp") or "")
-            return has_order_bonus + int((last_call or l.get("updated_at") or l.get("created_at") or "0").replace("-", "").replace("T", "").replace(":", "").replace(".", "").replace("+", "").ljust(14, "0")[:14] or 0)
+            last_call = (calls[-1].get("logged_at") or calls[-1].get("timestamp") or "") if calls else ""
+            # Return tuple: (has_order desc, created asc, last_call desc)
+            # We invert created (negate via ord placeholder) since sort=reverse=True.
+            # Simplest: sort by (has_order, -created_ts, last_call). Convert created to
+            # numeric so lower (earlier) wins after inversion.
+            return (has_order_bonus, -_iso_to_int(created), _iso_to_int(last_call))
         leads_group.sort(key=_score, reverse=True)
         winner = leads_group[0]
         losers = leads_group[1:]
@@ -1082,11 +1096,17 @@ async def dedupe_leads(data: dict = Body(default={}), current_user: dict = Depen
             )
             merged += 1
             removed += len(losers)
-    # Also try to enforce a unique index going forward (best-effort)
+    # Also try to enforce a unique index going forward (best-effort).
+    # NOTE: MongoDB partialFilterExpression doesn't support $ne, so we index
+    # rows where deleted is explicitly false OR the field is missing (default state).
     if not dry_run:
         try:
-            await db.leads.create_index("phone_number_norm", name="uniq_phone_norm_live",
-                                        partialFilterExpression={"deleted": {"$ne": True}}, unique=True)
+            await db.leads.create_index(
+                "phone_number_norm",
+                name="uniq_phone_norm_live",
+                partialFilterExpression={"deleted": {"$exists": False}},
+                unique=True,
+            )
         except Exception as _e:
             logger.warning(f"dedupe: could not create unique partial index: {_e}")
     return {
@@ -1115,9 +1135,40 @@ async def manager_distribute_leads(data: dict, current_user: dict = Depends(get_
     now_iso = datetime.now(timezone.utc).isoformat()
     assigned_counts = {t["id"]: 0 for t in tcs}
     total_assigned = 0
+    skipped_duplicates = []  # [{lead_id, existing_owner}]
+    # STRICT: cross-check every lead's phone against the whole live pool.
+    # If the same normalized phone already lives on ANOTHER TC's dashboard,
+    # DO NOT re-assign — the FIRST owner keeps it.
+    src_leads = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "phone_number": 1, "phone_number_norm": 1}).to_list(20000)
+    norms_by_lid = {l["id"]: (l.get("phone_number_norm") or _normalize_phone_10(l.get("phone_number", ""))) for l in src_leads}
+    all_norms = list({n for n in norms_by_lid.values() if n})
+    tc_id_set = {t["id"] for t in tcs}
+    live_norm_owners = {}  # norm → {lead_id, tc_id, tc_name}
+    if all_norms:
+        async for ld in db.leads.find({
+            "phone_number_norm": {"$in": all_norms},
+            "deleted": {"$ne": True},
+        }, {"_id": 0, "id": 1, "phone_number_norm": 1, "assigned_to": 1, "assigned_to_name": 1}):
+            n = ld.get("phone_number_norm")
+            if n and n not in live_norm_owners:
+                live_norm_owners[n] = {
+                    "lead_id": ld["id"],
+                    "tc_id": ld.get("assigned_to"),
+                    "tc_name": ld.get("assigned_to_name"),
+                }
     # Round-robin
-    for idx, lid in enumerate(lead_ids):
+    idx = 0
+    for lid in lead_ids:
+        norm = norms_by_lid.get(lid, "")
+        owner = live_norm_owners.get(norm)
+        # If the lead's phone is already owned by a DIFFERENT TC (not one of the
+        # selected targets, or if we'd be moving from a TC who isn't in selection),
+        # skip — first-owner-wins.
+        if owner and owner["lead_id"] != lid and owner.get("tc_id") not in tc_id_set:
+            skipped_duplicates.append({"lead_id": lid, "existing_owner": owner.get("tc_name") or "unknown"})
+            continue
         tc = tcs[idx % len(tcs)]
+        idx += 1
         await db.leads.update_one({"id": lid, "deleted": {"$ne": True}}, {"$set": {
             "assigned_to": tc["id"],
             "assigned_to_name": tc.get("name", ""),
@@ -1129,10 +1180,17 @@ async def manager_distribute_leads(data: dict, current_user: dict = Depends(get_
         total_assigned += 1
     await log_audit("distribute_leads", "leads", ",".join(lead_ids[:5]) + ("..." if len(lead_ids) > 5 else ""),
                     current_user['id'], current_user.get('name', ''),
-                    f"Distributed {total_assigned} leads across {len(tcs)} TCs")
+                    f"Distributed {total_assigned} leads across {len(tcs)} TCs ({len(skipped_duplicates)} skipped as duplicates)")
+    # Fire notification emails to each TC (and their manager) that new leads arrived.
+    for t in tcs:
+        tc_id = t["id"]
+        cnt = assigned_counts.get(tc_id, 0)
+        if cnt > 0:
+            await _notify_new_leads_assigned(tc_id, cnt, sample_phones=[])
     return {
-        "message": f"Distributed {total_assigned} leads equally across {len(tcs)} telecaller(s)",
+        "message": f"Distributed {total_assigned} leads · {len(skipped_duplicates)} skipped (already owned)",
         "total": total_assigned,
+        "skipped_duplicates": skipped_duplicates,
         "per_telecaller": [{"id": t["id"], "name": t.get("name", ""), "assigned": assigned_counts[t["id"]]} for t in tcs],
     }
 
@@ -1166,6 +1224,28 @@ async def admin_weekly_performance(week_start: str = "", current_user: dict = De
         "deleted": {"$ne": True},
     }, {"_id": 0, "id": 1, "created_by": 1, "created_by_name": 1, "created_at": 1, "items": 1, "total_amount": 1, "status": 1}).to_list(20000)
     TARGET_QTY = 18
+    # Compute activity in the last 7 days per TC — used for sort order.
+    # A TC is "active" if they received a lead OR logged a call in the last 7d.
+    seven_days_ago = (ist_now - timedelta(days=7)).isoformat()
+    tc_last_activity = {}  # tc_id → latest ISO of (lead assigned OR call logged)
+    tc_leads_in_range = {}  # tc_id → count of leads received during the WEEK window
+    async for l in db.leads.find({
+        "assigned_to": {"$in": [t["id"] for t in tcs]},
+        "deleted": {"$ne": True},
+    }, {"_id": 0, "assigned_to": 1, "created_at": 1, "assigned_at": 1, "distributed_at": 1, "call_logs": 1}):
+        tc_id = l.get("assigned_to")
+        if not tc_id: continue
+        stamps = [l.get("assigned_at") or "", l.get("distributed_at") or "", l.get("created_at") or ""]
+        for cl in (l.get("call_logs") or [])[-3:]:
+            stamps.append(cl.get("logged_at") or cl.get("timestamp") or "")
+        latest = max([s for s in stamps if s] or [""])
+        if latest and latest >= seven_days_ago:
+            if latest > tc_last_activity.get(tc_id, ""):
+                tc_last_activity[tc_id] = latest
+        # Count leads received during the target week (for conversion % denominator)
+        ref = (l.get("assigned_at") or l.get("distributed_at") or l.get("created_at") or "")[:10]
+        if ref and mon.isoformat() <= ref <= sun.isoformat():
+            tc_leads_in_range[tc_id] = tc_leads_in_range.get(tc_id, 0) + 1
     rows = []
     for tc in tcs:
         per_day = {d: {"orders": 0, "qty": 0, "revenue": 0.0} for d in day_labels}
@@ -1183,6 +1263,21 @@ async def admin_weekly_performance(week_start: str = "", current_user: dict = De
         if total_qty >= TARGET_QTY: status = "green"
         elif total_qty >= 12: status = "amber"
         else: status = "red"
+        last_act = tc_last_activity.get(tc["id"], "")
+        is_active = bool(last_act)  # activity in last 7d
+        leads_given = tc_leads_in_range.get(tc["id"], 0)
+        # Conversion % — orders / leads-given (guard against zero denominator)
+        conv_pct = round((total_orders / leads_given) * 100.0, 1) if leads_given > 0 else 0.0
+        # Tier is PROPORTIONAL — a TC with 5 leads and 2 orders shouldn't be judged
+        # the same as one with 50 leads and 2 orders.
+        if leads_given == 0:
+            tier = "no_leads"       # can't grade — no denominator
+        elif conv_pct >= 25:
+            tier = "high"           # excellent conversion
+        elif conv_pct >= 10:
+            tier = "medium"
+        else:
+            tier = "under"
         rows.append({
             "telecaller_id": tc["id"],
             "telecaller_name": tc.get("name", ""),
@@ -1194,9 +1289,21 @@ async def admin_weekly_performance(week_start: str = "", current_user: dict = De
             "target_qty": TARGET_QTY,
             "gap": gap,
             "status": status,
+            "last_activity": last_act,
+            "is_active_7d": is_active,
+            "leads_given": leads_given,
+            "conversion_pct": conv_pct,
+            "tier": tier,
         })
-    # Sort by gap descending (worst performers on top)
-    rows.sort(key=lambda r: (-r["gap"], -r["total_qty"]))
+    # SORT (2026-02-11): Active TCs on top, ordered by biggest gap first (worst first).
+    # Inactive TCs (no activity in 7d) at the bottom. Within same active/inactive
+    # bucket, higher total_qty ranks first for green ones; higher gap ranks first for red/amber.
+    def _row_key(r):
+        active_bucket = 0 if r["is_active_7d"] else 1  # active first
+        # Under-performers should surface first within active bucket
+        gap_key = -r["gap"] if r["status"] == "green" else r["gap"]
+        return (active_bucket, -r["gap"], -r["total_qty"])
+    rows.sort(key=_row_key, reverse=False)  # smallest bucket first (0 = active)
     return {
         "week_start": mon.isoformat(),
         "week_end": sun.isoformat(),
@@ -1209,6 +1316,208 @@ async def admin_weekly_performance(week_start: str = "", current_user: dict = De
             "revenue": round(sum(r["total_revenue"] for r in rows), 2),
         },
     }
+
+
+@api_router.get("/admin/leads-received-report")
+async def admin_leads_received_report(
+    from_date: str = "",
+    to_date: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-TC leads-received report — how many new leads did every TC get today,
+    yesterday, last 3 days, last 7 days, plus the custom [from_date, to_date] range.
+    Admin / SM / Head of Sales only."""
+    if current_user.get('role') not in ('admin', 'sales_manager', 'assistant_sales_manager', 'head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    today = ist_now.date()
+    d1 = today.isoformat()
+    d3 = (today - timedelta(days=2)).isoformat()
+    d7 = (today - timedelta(days=6)).isoformat()
+    # Custom range (defaults: today when unset)
+    try:
+        cfrom = date.fromisoformat(from_date) if from_date else today
+        cto = date.fromisoformat(to_date) if to_date else today
+    except Exception:
+        raise HTTPException(status_code=400, detail="from_date / to_date must be YYYY-MM-DD")
+    if cto < cfrom:
+        cfrom, cto = cto, cfrom
+    tcs = await db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(500)
+    tc_ids = [t["id"] for t in tcs]
+    # Load every non-deleted lead assigned to these TCs within a wide window (last 30 days)
+    horizon = (today - timedelta(days=30)).isoformat()
+    leads = await db.leads.find({
+        "assigned_to": {"$in": tc_ids},
+        "deleted": {"$ne": True},
+        "created_at": {"$gte": horizon},
+    }, {"_id": 0, "assigned_to": 1, "created_at": 1, "distributed_at": 1, "assigned_at": 1}).to_list(50000)
+    def _ref_date(l):
+        # The moment the lead landed on this TC's dashboard.
+        return (l.get("assigned_at") or l.get("distributed_at") or l.get("created_at") or "")[:10]
+    rows = []
+    for tc in tcs:
+        my_leads = [l for l in leads if l.get("assigned_to") == tc["id"]]
+        c_today = sum(1 for l in my_leads if _ref_date(l) == d1)
+        c_3d = sum(1 for l in my_leads if _ref_date(l) >= d3)
+        c_7d = sum(1 for l in my_leads if _ref_date(l) >= d7)
+        c_range = sum(1 for l in my_leads if cfrom.isoformat() <= _ref_date(l) <= cto.isoformat())
+        rows.append({
+            "telecaller_id": tc["id"],
+            "telecaller_name": tc.get("name", ""),
+            "email": tc.get("email", ""),
+            "leads_today": c_today,
+            "leads_3d": c_3d,
+            "leads_7d": c_7d,
+            "leads_range": c_range,
+        })
+    rows.sort(key=lambda r: -r["leads_7d"])
+    return {
+        "today": d1,
+        "range_from": cfrom.isoformat(),
+        "range_to": cto.isoformat(),
+        "rows": rows,
+        "totals": {
+            "today": sum(r["leads_today"] for r in rows),
+            "3d": sum(r["leads_3d"] for r in rows),
+            "7d": sum(r["leads_7d"] for r in rows),
+            "range": sum(r["leads_range"] for r in rows),
+        },
+    }
+
+
+@api_router.get("/admin/status-summary-report")
+async def admin_status_summary_report(
+    from_date: str = "",
+    to_date: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-TC status summary — counts of no_response / interested / not_interested /
+    busy / follow_up / ordered / order_created for each TC over the chosen range,
+    plus a breakdown of `not_interested_reason` occurrences per TC.
+    Admin / SM / Head of Sales only."""
+    if current_user.get('role') not in ('admin', 'sales_manager', 'assistant_sales_manager', 'head_of_sales'):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    today = ist_now.date()
+    try:
+        cfrom = date.fromisoformat(from_date) if from_date else today
+        cto = date.fromisoformat(to_date) if to_date else today
+    except Exception:
+        raise HTTPException(status_code=400, detail="from_date / to_date must be YYYY-MM-DD")
+    if cto < cfrom:
+        cfrom, cto = cto, cfrom
+    tcs = await db.telecallers.find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(500)
+    tc_ids = [t["id"] for t in tcs]
+    # Look at every call log written within the range across all leads owned by these TCs
+    leads = await db.leads.find({
+        "assigned_to": {"$in": tc_ids},
+        "deleted": {"$ne": True},
+    }, {"_id": 0, "assigned_to": 1, "status": 1, "call_logs": 1, "not_interested_reason": 1}).to_list(50000)
+    STATUS_KEYS = ["no_response", "interested", "not_interested", "busy", "follow_up", "ok", "ordered", "order_created", "converted", "delivered"]
+    rows = []
+    grand_reasons = {}
+    for tc in tcs:
+        my = [l for l in leads if l.get("assigned_to") == tc["id"]]
+        counts = {k: 0 for k in STATUS_KEYS}
+        reasons = {}
+        for l in my:
+            for cl in (l.get("call_logs") or []):
+                stamp = (cl.get("logged_at") or cl.get("timestamp") or "")[:10]
+                if not stamp: continue
+                if stamp < cfrom.isoformat() or stamp > cto.isoformat(): continue
+                st = (cl.get("status") or "").lower()
+                if st in counts:
+                    counts[st] += 1
+                if st == "not_interested":
+                    r = (cl.get("not_interested_reason") or cl.get("reason") or "").strip() or "Not specified"
+                    reasons[r] = reasons.get(r, 0) + 1
+                    grand_reasons[r] = grand_reasons.get(r, 0) + 1
+        rows.append({
+            "telecaller_id": tc["id"],
+            "telecaller_name": tc.get("name", ""),
+            "email": tc.get("email", ""),
+            "counts": counts,
+            "not_interested_reasons": reasons,
+            "total_calls": sum(counts.values()),
+        })
+    rows.sort(key=lambda r: -r["total_calls"])
+    totals = {k: sum(r["counts"][k] for r in rows) for k in STATUS_KEYS}
+    return {
+        "range_from": cfrom.isoformat(),
+        "range_to": cto.isoformat(),
+        "status_keys": STATUS_KEYS,
+        "rows": rows,
+        "totals": totals,
+        "grand_not_interested_reasons": grand_reasons,
+    }
+
+
+@api_router.post("/admin/sanitize-emails")
+async def admin_sanitize_emails(data: dict = Body(default={}), current_user: dict = Depends(get_current_user)):
+    """One-shot cleanup for existing user rows: strip ALL whitespace from email,
+    lowercase, validate. Rows with invalid emails are flagged (not deleted).
+    Admin only."""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin only")
+    import re as _re
+    email_rx = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    fixed = 0; flagged = []
+    for coll in AUTH_COLLECTIONS.keys():
+        async for u in db[coll].find({}, {"_id": 0, "id": 1, "email": 1, "name": 1}):
+            raw = u.get("email") or ""
+            clean = "".join(raw.split()).lower()
+            if raw != clean and clean:
+                await db[coll].update_one({"id": u["id"]}, {"$set": {"email": clean, "email_sanitized_at": datetime.now(timezone.utc).isoformat()}})
+                fixed += 1
+            if clean and not email_rx.match(clean):
+                flagged.append({"collection": coll, "id": u["id"], "name": u.get("name", ""), "email": clean})
+    return {"fixed": fixed, "flagged": flagged}
+
+
+async def _notify_new_leads_assigned(tc_id: str, count: int, sample_phones: list = None):
+    """Fire-and-forget email to the TC + their manager that N new leads were shared.
+    Uses SMTP_EMAIL / SMTP_PASSWORD env vars. Silent no-op if SMTP not configured."""
+    if not (SMTP_EMAIL and SMTP_PASSWORD) or count <= 0 or not tc_id:
+        return
+    try:
+        tc = await db.telecallers.find_one({"id": tc_id, "deleted": {"$ne": True}}, {"_id": 0, "email": 1, "name": 1, "managed_by": 1, "managed_by_name": 1})
+        if not tc: return
+        recipients = []
+        if tc.get("email"): recipients.append(tc["email"])
+        # Also loop in the manager
+        sm_id = tc.get("managed_by")
+        if sm_id:
+            sm = await db.sales_managers.find_one({"id": sm_id}, {"_id": 0, "email": 1}) or {}
+            if sm.get("email"): recipients.append(sm["email"])
+        recipients = list({e for e in recipients if e})
+        if not recipients: return
+        sample = ", ".join((sample_phones or [])[:5])
+        body = (
+            f"Hi {tc.get('name','Telecaller')},\n\n"
+            f"You have {count} new lead(s) assigned to your dashboard.\n"
+            + (f"Sample: {sample}\n\n" if sample else "\n")
+            + "Please login to Celesta Glow CRM and start calling.\n\n"
+            "Fastest wins the customer — first-owner-wins policy is now enforced, so act early.\n\n"
+            "— Celesta Glow CRM"
+        )
+        def _send():
+            try:
+                msg = MIMEMultipart()
+                msg['Subject'] = f"[Celesta Glow] {count} new lead(s) assigned to you"
+                msg['From'] = SMTP_EMAIL
+                msg['To'] = ", ".join(recipients)
+                msg.attach(MIMEText(body, 'plain'))
+                with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=15) as s:
+                    s.login(SMTP_EMAIL, SMTP_PASSWORD)
+                    s.send_message(msg)
+            except Exception as e:
+                logger.warning(f"new-lead notify failed for {tc_id}: {e}")
+        import asyncio as _aio
+        _aio.get_event_loop().run_in_executor(None, _send)
+    except Exception as e:
+        logger.warning(f"_notify_new_leads_assigned outer: {e}")
+
+
 
 
 
@@ -1261,6 +1570,10 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
     }
     await db.leads.insert_one(lead)
     lead.pop("_id", None)
+    # Notify TC (and their manager) that a new lead landed on their dashboard.
+    # Only for leads assigned to someone OTHER than the creator (i.e. distributed leads).
+    if assigned_to and assigned_to != current_user['id']:
+        await _notify_new_leads_assigned(assigned_to, 1, sample_phones=[phone])
     return {"lead": lead, "message": "Lead created successfully"}
 
 @api_router.get("/leads/{lead_id}")
@@ -2738,13 +3051,26 @@ async def get_hr_team(current_user: dict = Depends(get_current_user)):
 
 def _create_user_factory(coll_name, id_prefix, default_pw, extra_fields=None):
     async def create_user(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
-        email = data.get("email","").lower().strip()
+        # STRICT EMAIL SANITIZATION — kill leading/trailing/internal whitespace before
+        # anything else touches this string. Duplicate accounts have historically come
+        # from copy-pasted emails with hidden spaces.
+        raw_email = data.get("email", "") or ""
+        email = "".join(raw_email.split()).lower()  # strips ALL whitespace, lowercases
+        # Basic RFC-lite format validation when email is provided
+        if email:
+            import re as _re
+            if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+                raise HTTPException(status_code=400, detail=f"Invalid email format: '{email}' — check for typos or missing '@'/domain.")
         phone = (data.get("phone") or "").strip()
         if not phone: raise HTTPException(status_code=400, detail="Phone number is required")
         if len(phone.replace("+","").replace(" ","").replace("-","")) < 7:
             raise HTTPException(status_code=400, detail="Invalid phone number")
-        # Email is OPTIONAL — only enforce uniqueness when actually provided
-        if email and await db[coll_name].find_one({"email": email}): raise HTTPException(status_code=400, detail="Email exists")
+        # Email uniqueness across the ENTIRE user base — not just this one collection.
+        # A telecaller and an agent can't share the same email; login routes by email.
+        if email:
+            for c in AUTH_COLLECTIONS.keys():
+                if await db[c].find_one({"email": email}):
+                    raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in {c}")
         pw = data.get("password", default_pw)
         u = {"id": f"{id_prefix}-{uuid.uuid4().hex[:6]}", "email": email, "name": data.get("name",""),
              "phone": phone,

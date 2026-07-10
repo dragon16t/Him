@@ -140,6 +140,9 @@ export default function WeeklyPerformancePanel() {
                   ))}
                   <th className="text-right px-3 py-2 font-semibold">Orders</th>
                   <th className="text-right px-3 py-2 font-semibold">Total Qty</th>
+                  <th className="text-right px-3 py-2 font-semibold">Leads Given</th>
+                  <th className="text-right px-3 py-2 font-semibold">Conv %</th>
+                  <th className="text-center px-3 py-2 font-semibold">Tier</th>
                   <th className="text-right px-3 py-2 font-semibold">Target</th>
                   <th className="text-right px-3 py-2 font-semibold">Gap</th>
                   <th className="text-center px-3 py-2 font-semibold">Status</th>
@@ -178,20 +181,35 @@ export default function WeeklyPerformancePanel() {
                       })}
                       <td className="text-right px-3 py-2">{row.total_orders}</td>
                       <td className="text-right px-3 py-2 font-bold">{row.total_qty}</td>
+                      <td className="text-right px-3 py-2 text-[#3B5249]">{row.leads_given || 0}</td>
+                      <td className="text-right px-3 py-2 font-semibold">
+                        {row.leads_given > 0 ? `${row.conversion_pct}%` : "—"}
+                      </td>
+                      <td className="text-center px-3 py-2">
+                        {row.tier === "no_leads" ? (
+                          <Badge className="bg-slate-300 text-slate-700 text-[9px]" data-testid={`tier-${row.telecaller_id}`}>NO LEADS</Badge>
+                        ) : row.tier === "high" ? (
+                          <Badge className="bg-emerald-600 text-white text-[9px]" data-testid={`tier-${row.telecaller_id}`}>HIGH ≥25%</Badge>
+                        ) : row.tier === "medium" ? (
+                          <Badge className="bg-amber-500 text-white text-[9px]" data-testid={`tier-${row.telecaller_id}`}>MEDIUM 10-24%</Badge>
+                        ) : (
+                          <Badge className="bg-red-600 text-white text-[9px]" data-testid={`tier-${row.telecaller_id}`}>UNDER &lt;10%</Badge>
+                        )}
+                      </td>
                       <td className="text-right px-3 py-2 text-[#8E9A94]">{row.target_qty}</td>
                       <td className={`text-right px-3 py-2 font-bold ${row.gap > 0 ? "text-red-600" : "text-emerald-600"}`}>
                         {row.gap > 0 ? `-${row.gap}` : `+${-row.gap}`}
                       </td>
                       <td className="text-center px-3 py-2">
                         <Badge className={`${badgeTone} text-[9px]`}>
-                          {row.status === "red" ? "UNDER-PERFORMING" : row.status === "amber" ? "AT RISK" : "ON TARGET"}
+                          {row.is_active_7d ? "" : "💤 "}{row.status === "red" ? "UNDER-PERFORMING" : row.status === "amber" ? "AT RISK" : "ON TARGET"}
                         </Badge>
                       </td>
                     </tr>
                   );
                 })}
                 {(data?.rows || []).length === 0 && !loading && (
-                  <tr><td colSpan={13} className="text-center py-6 text-[#8E9A94]">No telecallers found for this week.</td></tr>
+                  <tr><td colSpan={16} className="text-center py-6 text-[#8E9A94]">No telecallers found for this week.</td></tr>
                 )}
               </tbody>
             </table>

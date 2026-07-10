@@ -114,7 +114,7 @@ export default function TelecallerDashboard() {
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leadForm, setLeadForm] = useState({ phone_number: "", name: "", source: "manual", interested_products: [], remarks: "", status: "new" });
-  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "" });
+  const [callForm, setCallForm] = useState({ status: "", customer_remarks: "", customer_name: "", enquiry_type: "orders", next_follow_up_date: "", next_follow_up_time: "", not_interested_reason: "" });
   const [orderForm, setOrderForm] = useState({ customer_name: "", customer_phone: "", customer_address: "", customer_city: "", customer_pincode: "", customer_landmark: "", items: [], total_amount: "", payment_type: "cod" });
   const [fundForm, setFundForm] = useState({ amount: 0, reason: "", category: "travel" });
 
@@ -401,6 +401,19 @@ export default function TelecallerDashboard() {
   const handleCallLog = async () => {
     if (savingCallLog) return; // idempotency guard — don't submit twice
     if (!callForm.status) return toast.error("Select status");
+    // ── MANDATORY REMARKS GATE (2026-02) ──
+    // Every log call must capture:
+    //   1. Customer name (min 2 chars) — so the lead card stops showing "Unknown"
+    //   2. Customer remarks — what did the customer say? (min 5 chars)
+    //   3. If status = not_interested → reason is mandatory (min 5 chars)
+    const nm = (callForm.customer_name || "").trim();
+    const rm = (callForm.customer_remarks || "").trim();
+    if (nm.length < 2) return toast.error("Customer name is required (what did they say their name is?)");
+    if (rm.length < 5) return toast.error("Please enter what the customer said (at least 5 characters)");
+    if (callForm.status === "not_interested") {
+      const reason = (callForm.not_interested_reason || "").trim();
+      if (reason.length < 5) return toast.error("Please enter the reason why the customer is NOT interested (min 5 characters)");
+    }
     // Interested customers MUST have a follow-up scheduled — otherwise they'll fall out of the queue
     if (callForm.enquiry_type === "orders" && callForm.status === "interested" && !callForm.next_follow_up_date) {
       return toast.error("Interested customer needs a follow-up date — please schedule the next call");
@@ -409,6 +422,7 @@ export default function TelecallerDashboard() {
     const payload = {
       status: callForm.status,
       customer_remarks: callForm.customer_remarks,
+      ...(callForm.status === "not_interested" ? { not_interested_reason: callForm.not_interested_reason } : {}),
       ...(isOrder ? {
         next_follow_up_date: callForm.next_follow_up_date,
         next_follow_up_time: callForm.next_follow_up_time,
@@ -418,6 +432,7 @@ export default function TelecallerDashboard() {
         remarks: callForm.customer_remarks,
         customer_name: callForm.customer_name,
         enquiry_type: callForm.enquiry_type,
+        ...(callForm.status === "not_interested" ? { not_interested_reason: callForm.not_interested_reason } : {}),
       },
     };
     setSavingCallLog(true);
@@ -938,7 +953,7 @@ export default function TelecallerDashboard() {
                   );
                 })()}
                 <div className="flex gap-2 flex-wrap">
-                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setActiveCallLeadId(lead.id);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
+                  <a href={`tel:${lead.phone_number}`} onClick={()=>{ axios.post(`${API}/contact-events`, {type:"call", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name}).catch(()=>{}); }}><Button size="sm" variant="outline" className="rounded-full text-xs border-[#E5E3DB] h-7" onClick={()=>{setSelectedLead(lead);setActiveCallLeadId(lead.id);setCallForm({status:lead.status,customer_remarks:"",customer_name:lead.name && lead.name!=="Unknown"?lead.name:"",enquiry_type:"orders",next_follow_up_date:lead.next_follow_up_date||"",next_follow_up_time:lead.next_follow_up_time||"",not_interested_reason:""});setShowCallLog(true);}} data-testid={`log-call-${lead.id}`}><PhoneCall className="w-3 h-3 mr-1"/>Log Call</Button></a>
                   <span onClick={() => { axios.post(`${API}/contact-events`, {type:"whatsapp", lead_id: lead.id, customer_phone: lead.phone_number, customer_name: lead.name, message: "auto-track"}).catch(()=>{}); }}>
                     <WhatsAppCTA
                       phone={lead.phone_number}
@@ -1028,9 +1043,34 @@ export default function TelecallerDashboard() {
             )}
           </div>
           <div><Label className="text-xs font-medium">Status After Call *</Label><Select value={callForm.status} onValueChange={v=>setCallForm(f=>({...f,status:v}))}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Select status"/></SelectTrigger><SelectContent>{callForm.enquiry_type === "orders" ? <><SelectItem value="interested">Interested</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="follow_up">Follow-up Later</SelectItem><SelectItem value="no_response">No Response</SelectItem><SelectItem value="busy">Busy</SelectItem><SelectItem value="ordered">Order Created</SelectItem></> : <><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="not_interested">Not Interested</SelectItem><SelectItem value="no_response">No Response</SelectItem></>}</SelectContent></Select></div>
-          <div><Label className="text-xs">Notes / Remarks</Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did they say? Any context for the manager…"/>
+          <div><Label className="text-xs">Notes / Remarks <span className="text-[9px] text-red-700">*required — min 5 chars</span></Label><Textarea value={callForm.customer_remarks} onChange={e=>setCallForm(f=>({...f,customer_remarks:e.target.value}))} className="rounded-xl" placeholder="What did the customer say? Their exact words help managers coach you." data-testid="call-remarks"/>
             <div className="flex justify-end mt-1"><VoiceNoteButton compact label="Dictate notes" onTranscribed={(text)=>setCallForm(f=>({...f,customer_remarks:(f.customer_remarks?f.customer_remarks+" ":"")+text}))} /></div>
           </div>
+          {callForm.status === "not_interested" && (
+            <div data-testid="not-interested-reason-block">
+              <Label className="text-xs font-medium text-red-700">Why NOT interested? <span className="text-[9px]">*required</span></Label>
+              <Select value={callForm.not_interested_reason || ""} onValueChange={v=>setCallForm(f=>({...f,not_interested_reason:v}))}>
+                <SelectTrigger className="rounded-xl border-red-300" data-testid="not-interested-reason-select"><SelectValue placeholder="Pick a reason (or type custom below)"/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Price too high">Price too high</SelectItem>
+                  <SelectItem value="Already using competitor">Already using competitor</SelectItem>
+                  <SelectItem value="No need right now">No need right now</SelectItem>
+                  <SelectItem value="Bad past experience">Bad past experience</SelectItem>
+                  <SelectItem value="Wrong number / not the customer">Wrong number / not the customer</SelectItem>
+                  <SelectItem value="Not decision maker">Not decision maker</SelectItem>
+                  <SelectItem value="Language barrier">Language barrier</SelectItem>
+                  <SelectItem value="Other">Other (write below)</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                value={callForm.not_interested_reason && !["Price too high","Already using competitor","No need right now","Bad past experience","Wrong number / not the customer","Not decision maker","Language barrier","Other"].includes(callForm.not_interested_reason) ? callForm.not_interested_reason : (callForm.not_interested_reason === "Other" ? "" : "")}
+                onChange={e=>setCallForm(f=>({...f,not_interested_reason:e.target.value}))}
+                placeholder="Or type a custom reason (min 5 chars)"
+                className="rounded-xl mt-2 border-red-300"
+                data-testid="not-interested-reason-input"
+              />
+            </div>
+          )}
           {/* Follow-up date/time — only when it makes logical sense (skip terminal statuses) */}
           {callForm.enquiry_type === "orders" && !["not_interested","rejected","cancelled","do_not_call","blocked","spam","ordered"].includes(callForm.status) && (
             <div className="grid grid-cols-2 gap-2">
