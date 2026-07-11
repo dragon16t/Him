@@ -204,7 +204,13 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
     @api_router.put("/orders/{order_id}/status")
     async def set_order_status(order_id: str, data: dict,
                                current_user: dict = Depends(get_current_user)):
-        """Generic status updater with automatic finance/commission reversal on return/RTO.
+        """Generic status updater. Auto revenue-reversal on return/RTO is DISABLED
+        per business rule (2026-02, mirrors Post Office manual flow). Only commission
+        gets auto-reversed on returned/RTO (that's employee earnings, not seller ledger).
+
+        Custom `returned_at` date can be supplied via body {"returned_at":"YYYY-MM-DD"}
+        so IM can back-date returns for historical analysis.
+
         Allowed roles: admin, sales_manager, inventory_manager."""
         if current_user['role'] not in ('admin', 'sales_manager', 'inventory_manager'):
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -215,6 +221,22 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         prev_status = order.get("status")
+
+        # ── FORWARD-ONLY TRANSITION GUARD (2026-02-13) ──
+        # Once an order is shipped/delivered/returned/cancelled it can NEVER go back
+        # to a pre-shipment status. This closes the "shipped order coming back to
+        # pending" bug that IMs were reporting. Only forward moves (shipped→delivered,
+        # delivered→returned, etc.) or lateral moves within terminal states (returned
+        # ↔ rto) are permitted. Admin can override with force=True.
+        rank = {"pending": 0, "confirmed": 1, "shipped": 2, "delivered": 3, "returned": 4, "rto": 4, "cancelled": 5}
+        cur_rank = rank.get(prev_status, -1)
+        new_rank = rank.get(new_status, -1)
+        force = bool(data.get("force", False)) and current_user.get("role") == "admin"
+        if not force and cur_rank >= 2 and new_rank < cur_rank and not (cur_rank == 4 and new_rank == 4):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot regress from '{prev_status}' to '{new_status}'. Once an order is shipped/delivered/returned it stays there. Ask admin to force if truly needed.",
+            )
         reason = (data.get("reason") or "").strip()
         update_set = {
             "status": new_status,
@@ -224,44 +246,109 @@ def register_enhancements(api_router, db, get_current_user, log_audit, logger):
         }
         if reason:
             update_set["status_reason"] = reason
-        # Handle return/RTO: reverse revenue + cancel commission (idempotent)
+        # Handle return/RTO: reverse commission only (finance ledger stays manual).
         if new_status in ('returned', 'rto'):
-            update_set["returned_at"] = datetime.now(timezone.utc).isoformat()
-            try:
-                from server import record_transaction as _rt
-                rev = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
-                if rev:
-                    already = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_return", "type": "debit"})
-                    if not already:
-                        await _rt("debit", "order_return", rev.get("amount", 0),
-                                  f"Order {order_id} returned — reversing revenue (reason: {reason or 'N/A'})",
-                                  reference_id=order_id, method=rev.get("method", "bank"),
-                                  created_by=current_user['id'])
-            except Exception as _e:
-                logger.warning(f"finance reversal on return failed for {order_id}: {_e}")
+            # Custom return date support (IM can back-date historical returns)
+            custom_ret = (data.get("returned_at") or "").strip()
+            if custom_ret:
+                try:
+                    # accept YYYY-MM-DD or full ISO
+                    from datetime import date as _dt
+                    _dt.fromisoformat(custom_ret[:10])
+                    update_set["returned_at"] = custom_ret if "T" in custom_ret else f"{custom_ret[:10]}T00:00:00+00:00"
+                except Exception:
+                    raise HTTPException(status_code=400, detail="returned_at must be YYYY-MM-DD")
+            else:
+                update_set["returned_at"] = datetime.now(timezone.utc).isoformat()
+            # NOTE: auto revenue-reversal REMOVED per iter 62. Finance stays manual.
+            # Reverse commission (employee earnings only — safe to auto)
             await db.commissions.update_many(
                 {"order_id": order_id, "status": {"$in": ["pending", "approved", "paid"]}},
                 {"$set": {"status": "cancelled",
                           "cancelled_at": datetime.now(timezone.utc).isoformat(),
                           "cancel_reason": f"Order returned: {reason or 'N/A'}"}}
             )
-        # Handle delivered transitioning (idempotent revenue credit)
+        # Handle delivered transitioning — NO auto finance credit either (manual only).
         if new_status == 'delivered' and prev_status != 'delivered':
-            try:
-                from server import record_transaction as _rt
-                existing = await db.finance_ledger.find_one({"reference_id": order_id, "category": "order_revenue", "type": "credit"})
-                if not existing:
-                    await _rt("credit", "order_revenue", order.get("total_amount", 0),
-                              f"Order {order_id} delivered (manual status change) - {order.get('customer_name', '')}",
-                              reference_id=order_id, method="bank", created_by=current_user['id'])
-                update_set["delivered_at"] = datetime.now(timezone.utc).isoformat()
-            except Exception as _e:
-                logger.warning(f"finance credit on delivery failed for {order_id}: {_e}")
+            update_set["delivered_at"] = datetime.now(timezone.utc).isoformat()
+            update_set["delivered_by"] = current_user['id']
+            update_set["delivered_by_name"] = current_user.get('name', '')
         await db.orders.update_one({"id": order_id}, {"$set": update_set})
         await log_audit("update_order_status", "order", order_id, current_user['id'],
                         current_user.get('name', ''),
                         f"{prev_status} → {new_status}" + (f" ({reason})" if reason else ""))
         return {"message": f"Order status updated to {new_status}", "order_id": order_id, "previous": prev_status}
+
+    @api_router.get("/inventory/telecaller-returns")
+    async def inventory_telecaller_returns(
+        from_date: str = "",
+        to_date: str = "",
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Per-TC returns analytics for the IM. Counts every order in status
+        `returned` or `rto` grouped by the telecaller who placed it, over the
+        selected date window. Body-less GET.
+        Admin / IM / SM only."""
+        if current_user['role'] not in ('admin', 'inventory_manager', 'sales_manager', 'head_of_sales'):
+            raise HTTPException(status_code=403)
+        from datetime import date as _date, timedelta as _td
+        today = _date.today()
+        try:
+            cfrom = _date.fromisoformat(from_date) if from_date else today - _td(days=30)
+            cto = _date.fromisoformat(to_date) if to_date else today
+        except Exception:
+            raise HTTPException(status_code=400, detail="from_date / to_date must be YYYY-MM-DD")
+        if cto < cfrom:
+            cfrom, cto = cto, cfrom
+        # Match returned/rto orders in range (by returned_at, fallback to updated_at)
+        from_iso = cfrom.isoformat(); to_iso = (cto + _td(days=1)).isoformat()
+        cursor = db.orders.find({
+            "status": {"$in": ["returned", "rto"]},
+            "deleted": {"$ne": True},
+        }, {"_id": 0}).limit(50000)
+        by_tc = {}
+        detail_rows = []
+        async for o in cursor:
+            ref = o.get("returned_at") or o.get("updated_at") or o.get("created_at") or ""
+            if not ref or ref < from_iso or ref >= to_iso:
+                continue
+            tc_id = o.get("created_by") or "unknown"
+            tc_name = o.get("created_by_name") or "Unknown"
+            b = by_tc.setdefault(tc_id, {"telecaller_id": tc_id, "telecaller_name": tc_name,
+                                         "returns_count": 0, "returns_value": 0.0,
+                                         "reasons": {}})
+            b["returns_count"] += 1
+            b["returns_value"] += float(o.get("total_amount") or 0)
+            r = o.get("status_reason") or "Not specified"
+            b["reasons"][r] = b["reasons"].get(r, 0) + 1
+            detail_rows.append({
+                "order_id": o.get("id"),
+                "telecaller_id": tc_id,
+                "telecaller_name": tc_name,
+                "customer_name": o.get("customer_name") or "",
+                "customer_phone": o.get("customer_phone") or "",
+                "amount": float(o.get("total_amount") or 0),
+                "returned_at": (o.get("returned_at") or o.get("updated_at") or "")[:10],
+                "reason": o.get("status_reason") or "",
+                "created_at": (o.get("created_at") or "")[:10],
+            })
+        # Sort telecallers by highest return count first
+        rows = list(by_tc.values())
+        rows.sort(key=lambda r: (-r["returns_count"], -r["returns_value"]))
+        for r in rows:
+            r["returns_value"] = round(r["returns_value"], 2)
+        return {
+            "range_from": cfrom.isoformat(),
+            "range_to": cto.isoformat(),
+            "rows": rows,
+            "detail_rows": detail_rows[:2000],
+            "totals": {
+                "returns_count": sum(r["returns_count"] for r in rows),
+                "returns_value": round(sum(r["returns_value"] for r in rows), 2),
+                "telecallers_with_returns": len(rows),
+            },
+        }
+
 
     @api_router.get("/orders/trash")
     async def get_deleted_orders(current_user: dict = Depends(get_current_user)):

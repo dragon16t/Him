@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import DelhiveryShipActions from "../components/DelhiveryShipActions";
 import LabelPrintButton, { BulkLabelButton } from "../components/LabelPrintButton";
 import TodayStatsCards from "../components/TodayStatsCards";
+import TelecallerReturnsPanel from "../components/TelecallerReturnsPanel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -146,10 +147,13 @@ export default function InventoryManagerDashboard() {
   const markReturned = async (oid) => {
     const reason = window.prompt("Reason for return / RTO?", "Customer rejected delivery");
     if (!reason) return;
+    const dateInput = window.prompt("Return date (YYYY-MM-DD) — leave blank for today", new Date().toISOString().slice(0, 10));
+    if (dateInput === null) return; // user hit cancel
+    const returned_at = (dateInput || "").trim();
     try {
-      await axios.put(`${API}/orders/${oid}/status`, { status: "returned", reason });
-      await axios.post(`${API}/returns`, { order_id: oid, reason, type: "return", amount: 0 }).catch(() => {});
-      toast.success("Marked as returned. Revenue/commission reversed.");
+      await axios.put(`${API}/orders/${oid}/status`, { status: "returned", reason, ...(returned_at ? { returned_at } : {}) });
+      await axios.post(`${API}/returns`, { order_id: oid, reason, type: "return", amount: 0, returned_at }).catch(() => {});
+      toast.success("Marked as returned. Commission reversed. Finance stays manual.");
       fetchData();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed");
@@ -317,6 +321,7 @@ export default function InventoryManagerDashboard() {
             <TabsTrigger value="stock" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-stock">Stock {lowStock.length>0&&<Badge className="ml-1 bg-red-500 text-white text-[8px]">{lowStock.length}</Badge>}</TabsTrigger>
             <TabsTrigger value="po" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-po">Purchase Orders</TabsTrigger>
             <TabsTrigger value="returns" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-returns">Returns/RTO</TabsTrigger>
+            <TabsTrigger value="tcreturns" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-tcreturns">📉 TC Returns</TabsTrigger>
             <TabsTrigger value="post" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-post">📮 India Post</TabsTrigger>
             <TabsTrigger value="tcperf" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-tcperf">📊 TC Performance</TabsTrigger>
             <TabsTrigger value="allocation" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-allocation">👥 Stock Allocation</TabsTrigger>
@@ -494,6 +499,8 @@ export default function InventoryManagerDashboard() {
           </TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Inventory Manager" /></TabsContent>
           <TabsContent value="post" className="animate-fade-in"><PostOfficePanel role="inventory_manager" /></TabsContent>
+
+          <TabsContent value="tcreturns" className="animate-fade-in"><TelecallerReturnsPanel /></TabsContent>
           <TabsContent value="tcperf" className="animate-fade-in">
             <div className="bg-white rounded-2xl border border-[#E5E3DB] p-4 mb-3 flex items-center gap-2">
               <Label className="text-xs">Sales Manager</Label>
