@@ -9775,6 +9775,14 @@ try:
 except Exception as _fg:
     logger.error(f"finance_gating registration failed: {_fg}")
 
+# ── RAZORPAY PAYMENT LINKS ─────────────────────────────────────────────
+try:
+    from razorpay_module import register as _rz_register
+    _rz_register(api_router, db, get_current_user, log_audit)
+    logger.info("razorpay payment-link routes registered")
+except Exception as _rz:
+    logger.error(f"razorpay registration failed: {_rz}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

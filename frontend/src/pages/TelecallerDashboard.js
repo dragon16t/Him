@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Phone, Plus, LogOut, PhoneCall, Users, TrendingUp, Calendar, IndianRupee, Loader2, X, ClipboardList, RefreshCw, Wallet, AlertTriangle, Trophy, Zap, Clock } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
+import PaymentLinksPanel from "../components/PaymentLinksPanel";
 import CustomerPhotosPanel from "../components/CustomerPhotosPanel";
 import OrdersPanel from "../components/OrdersPanel";
 import AttendanceCheckIn from "../components/AttendanceCheckIn";
@@ -571,6 +572,11 @@ export default function TelecallerDashboard() {
       </div>
       <div className="max-w-5xl mx-auto px-4 py-4">
         <RoleGuidelines role="telecaller" />
+
+        {/* PAYMENT LINKS — Razorpay integration; every TC can send a link */}
+        <div className="mb-4">
+          <PaymentLinksPanel scope="mine" />
+        </div>
 
         {/* SMART COACH ALERTS — proactive reminders & motivation */}
         {(() => {
