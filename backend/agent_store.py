@@ -1356,11 +1356,18 @@ def init_agent_store(db, get_current_user, JWT_SECRET, JWT_ALGORITHM, create_tok
         if user.get("role") != "admin":
             raise HTTPException(403, "Admin only")
 
+    def _ensure_admin_or_sm(user):
+        # Product create/edit is intentionally open to Sales Managers too — they
+        # need to adjust pricing/stock live without pinging the admin every time.
+        if user.get("role") not in ("admin", "sales_manager"):
+            raise HTTPException(403, "Admin or Sales Manager only")
+
     helpers = {
         "now": _now,
         "strip_mongo": _strip_mongo,
         "slugify": _slugify,
         "ensure_admin": _ensure_admin,
+        "ensure_admin_or_sm": _ensure_admin_or_sm,
         "ensure_seed": _ensure_seed,
         "validate_iso_date": _validate_iso_date,
         "validate_carousel_images": _validate_carousel_images,

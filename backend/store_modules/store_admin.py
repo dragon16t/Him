@@ -17,6 +17,7 @@ def register(router, db, get_current_user, helpers):
     now = helpers["now"]
     strip_mongo = helpers["strip_mongo"]
     ensure_admin = helpers["ensure_admin"]
+    ensure_admin_or_sm = helpers.get("ensure_admin_or_sm", ensure_admin)
     slugify = helpers["slugify"]
     ensure_seed = helpers["ensure_seed"]
     validate_carousel_images = helpers["validate_carousel_images"]
@@ -88,7 +89,7 @@ def register(router, db, get_current_user, helpers):
     # ------------------------------------------------------------- PRODUCT CRUD
     @router.get("/admin/store/products")
     async def admin_list_products(current_user: dict = Depends(get_current_user)):
-        ensure_admin(current_user)
+        ensure_admin_or_sm(current_user)
         await ensure_seed()
         out = []
         async for p in db.store_products.find().sort([("is_combo", 1), ("sort_order", 1), ("name", 1)]):
@@ -97,7 +98,7 @@ def register(router, db, get_current_user, helpers):
 
     @router.post("/admin/store/products")
     async def admin_create_product(data: dict, current_user: dict = Depends(get_current_user)):
-        ensure_admin(current_user)
+        ensure_admin_or_sm(current_user)
         name = (data.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "Name is required")
@@ -142,11 +143,22 @@ def register(router, db, get_current_user, helpers):
 
     @router.put("/admin/store/products/{pid}")
     async def admin_update_product(pid: str, data: dict, current_user: dict = Depends(get_current_user)):
-        ensure_admin(current_user)
+        ensure_admin_or_sm(current_user)
+        # STRICT: only include fields the client actually sent AND that are non-empty.
+        # Historically, sending image="" / gallery=[] would wipe the product image
+        # when the SM was just tweaking price. Now we skip empty-string / empty-list
+        # image fields entirely so the existing images are preserved.
         allowed = {"name", "tagline", "short_desc", "long_desc", "ingredients", "how_to_use", "benefits",
                    "price", "mrp", "image", "card_image", "home_image", "gallery", "badges", "size", "faqs", "is_combo", "combo_items",
                    "stock", "active", "rating", "review_count", "sort_order"}
-        updates = {k: v for k, v in (data or {}).items() if k in allowed}
+        _skip_if_empty = {"image", "card_image", "home_image", "gallery", "badges", "faqs"}
+        updates = {}
+        for k, v in (data or {}).items():
+            if k not in allowed: continue
+            # Skip empty image/gallery/faq updates so we don't wipe existing values on partial edits.
+            if k in _skip_if_empty and (v is None or v == "" or v == []):
+                continue
+            updates[k] = v
         if "price" in updates: updates["price"] = int(updates["price"] or 0)
         if "mrp" in updates: updates["mrp"] = int(updates["mrp"] or 0)
         if "stock" in updates: updates["stock"] = int(updates["stock"] or 0)
@@ -154,10 +166,12 @@ def register(router, db, get_current_user, helpers):
         if updates:
             updates["updated_at"] = now()
             await db.store_products.update_one({"id": pid}, {"$set": updates})
-        return {"ok": True}
+        return {"ok": True, "updated_fields": list(updates.keys())}
 
     @router.delete("/admin/store/products/{pid}")
     async def admin_delete_product(pid: str, current_user: dict = Depends(get_current_user)):
+        # Delete stays admin-only — SMs can edit but should not be able to permanently
+        # remove products from the catalog.
         ensure_admin(current_user)
         await db.store_products.delete_one({"id": pid})
         return {"ok": True}

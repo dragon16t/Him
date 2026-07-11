@@ -604,8 +604,8 @@ export default function SalesManagerDashboard() {
         <DialogContent className="rounded-2xl" data-testid="edit-tc-dialog">
           <DialogHeader><DialogTitle className="font-heading">Edit Telecaller — {editingTC?.name}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label className="text-xs">Name</Label><Input value={tcEditForm.name} onChange={e=>setTcEditForm(f=>({...f,name:e.target.value}))} className="rounded-xl"/></div>
-            <div><Label className="text-xs">Phone</Label><Input value={tcEditForm.phone} onChange={e=>setTcEditForm(f=>({...f,phone:e.target.value}))} className="rounded-xl"/></div>
+            <div><Label className="text-xs">Name</Label><Input value={tcEditForm.name} onChange={e=>setTcEditForm(f=>({...f,name:e.target.value}))} className="rounded-xl" data-testid="edit-tc-name"/></div>
+            <div><Label className="text-xs">Phone</Label><Input value={tcEditForm.phone} onChange={e=>setTcEditForm(f=>({...f,phone:e.target.value}))} className="rounded-xl" data-testid="edit-tc-phone"/></div>
             <div><Label className="text-xs">Language</Label><Input value={tcEditForm.language} onChange={e=>setTcEditForm(f=>({...f,language:e.target.value}))} placeholder="Malayalam / Hindi / English…" className="rounded-xl" data-testid="edit-tc-language"/></div>
             <div><Label className="text-xs">Place / Locality</Label><Input value={tcEditForm.location} onChange={e=>setTcEditForm(f=>({...f,location:e.target.value}))} placeholder="e.g. Kakkanad" className="rounded-xl" data-testid="edit-tc-location"/></div>
             <Button onClick={handleEditTC} className="w-full rounded-full bg-[#3B5249] text-white" data-testid="submit-edit-tc">Save Changes</Button>

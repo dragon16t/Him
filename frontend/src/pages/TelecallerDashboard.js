@@ -411,10 +411,11 @@ export default function TelecallerDashboard() {
       setShowOrder(true);
       return;
     }
-    // ── MANDATORY REMARKS GATE (2026-02) ──
+    // ── REMARKS GATE ──
+    // Customer NAME is OPTIONAL (2026-02-13 per user request — TC may not always know
+    // the name during the first call). Remarks stay mandatory so managers can review.
     const nm = (callForm.customer_name || "").trim();
     const rm = (callForm.customer_remarks || "").trim();
-    if (nm.length < 2) return toast.error("Customer name is required (what did they say their name is?)");
     if (rm.length < 5) return toast.error("Please enter what the customer said (at least 5 characters)");
     if (callForm.status === "not_interested") {
       const reason = (callForm.not_interested_reason || "").trim();
@@ -488,7 +489,11 @@ export default function TelecallerDashboard() {
     const computedTotal = orderForm.items.reduce((s,i)=>s+priceNum(i.price)*i.quantity, 0);
     const finalTotal = computedTotal > 0 ? computedTotal : Number(orderForm.total_amount || 0);
     const cleanName = (orderForm.customer_name || "").trim();
-    if (!cleanName || cleanName.toLowerCase() === "unknown") return toast.error("Please capture the customer's real name before creating the order");
+    // Customer NAME is OPTIONAL now (2026-02-13). If empty or "Unknown" we default
+    // to the phone-based placeholder so the shipping label still has SOMETHING.
+    const safeName = cleanName && cleanName.toLowerCase() !== "unknown"
+      ? cleanName
+      : `Customer ${(orderForm.customer_phone || "").replace(/\D/g, "").slice(-4)}`;
     if (orderForm.items.length === 0 && finalTotal <= 0) return toast.error("Add at least one product or enter manual amount");
     if (finalTotal <= 0) return toast.error("Total amount must be greater than 0");
     if (!orderForm.customer_address || orderForm.customer_address.trim().length < 8) return toast.error("Customer address is required (min 8 chars)");
@@ -503,7 +508,7 @@ export default function TelecallerDashboard() {
         price: priceNum(i.price),
         quantity: Number(i.quantity) || 1,
       }));
-      await axios.post(`${API}/orders`, { ...orderForm, items: cleanItems, customer_name: cleanName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
+      await axios.post(`${API}/orders`, { ...orderForm, items: cleanItems, customer_name: safeName, total_amount: finalTotal, lead_id: selectedLead?.id || "" });
       toast.success(`Order created! Total: Rs.${finalTotal}`);
       setShowOrder(false);
       fetchData();
@@ -1144,7 +1149,7 @@ export default function TelecallerDashboard() {
       {/* CREATE ORDER DIALOG */}
       <Dialog open={showOrder} onOpenChange={setShowOrder}><DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle className="font-heading">Create Order</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div><Label className="text-xs">Customer Name *</Label><Input value={orderForm.customer_name} onChange={e=>setOrderForm(f=>({...f,customer_name:e.target.value}))} className="rounded-xl" data-testid="order-customer-name"/></div>
+          <div><Label className="text-xs">Customer Name <span className="text-[9px] text-[#8E9A94]">(optional)</span></Label><Input value={orderForm.customer_name} onChange={e=>setOrderForm(f=>({...f,customer_name:e.target.value}))} placeholder="Skip if unknown — we'll auto-name from phone" className="rounded-xl" data-testid="order-customer-name"/></div>
           <div><Label className="text-xs">Phone *</Label><Input value={orderForm.customer_phone} onChange={e=>setOrderForm(f=>({...f,customer_phone:e.target.value}))} className="rounded-xl" data-testid="order-customer-phone"/></div>
           <div><Label className="text-xs text-[#B75D69] font-semibold">Full Delivery Address *</Label><Textarea value={orderForm.customer_address} onChange={e=>setOrderForm(f=>({...f,customer_address:e.target.value}))} className="rounded-xl" rows={3} placeholder="House/Flat no, Street, Locality, City, State, Pincode" data-testid="order-customer-address"/></div>
           <div className="grid grid-cols-2 gap-2">
