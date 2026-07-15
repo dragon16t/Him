@@ -9429,10 +9429,27 @@ async def list_ai_usage(current_user: dict = Depends(get_current_user)):
         by_purpose[it.get("purpose", "generic")] = by_purpose.get(it.get("purpose", "generic"), 0) + 1
     return {"usage": items, "totals": by_purpose, "count": len(items)}
 
-# CORS — whitelist production + preview domains; fallback to '*' only if explicitly set
-_cors = os.environ.get('CORS_ORIGINS', 'https://portal.veegal.com,https://veegal-stage.preview.emergentagent.com,http://localhost:3000').split(',')
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[o.strip() for o in _cors if o.strip()],
-                   allow_methods=["*"], allow_headers=["*"])
+# CORS — allow the real production + preview domains. Falls back to a permissive
+# regex so this works across Emergent preview URLs without env-var churn.
+_cors_raw = os.environ.get('CORS_ORIGINS', '')
+if _cors_raw.strip():
+    _origins = [o.strip() for o in _cors_raw.split(',') if o.strip()]
+    app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=_origins,
+                       allow_methods=["*"], allow_headers=["*"])
+else:
+    # No override → allow the production custom domain + any Emergent preview subdomain.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_credentials=True,
+        allow_origins=[
+            "https://software.celestaglow.com",
+            "https://celestaglow.com",
+            "http://localhost:3000",
+        ],
+        allow_origin_regex=r"https://.*\.(preview\.emergentagent\.com|emergent\.host)$",
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ==================== DELHIVERY SHIPPING INTEGRATION ====================
 DELHIVERY_API_KEY = os.environ.get("DELHIVERY_API_KEY", "")
@@ -9938,25 +9955,27 @@ async def startup():
             {"active": {"$exists": False}},
             {"$set": {"active": True}}
         )
+        # Env-driven base URL — production custom domain wins, preview falls back.
+        _PUB_BASE = os.environ.get("PUBLIC_BASE_URL", "https://software.celestaglow.com").rstrip("/")
         # Also pre-compute store_url + agent_portal_url for any docs missing them
         await db.store_agents.update_many(
             {"$or": [{"store_url": {"$exists": False}}, {"store_url": None}, {"store_url": ""}]},
             [{"$set": {
-                "store_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug"]},
-                "agent_portal_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug", "/agent-login"]}
+                "store_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug"]},
+                "agent_portal_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug", "/agent-login"]}
             }}]
         )
         await db.store_agents.update_many(
             {"store_url": {"$regex": "celestaglow\\.com/store", "$not": {"$regex": "software\\."}}},
             [{"$set": {
-                "store_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug"]},
-                "agent_portal_url": {"$concat": ["https://software.celestaglow.com/store/", "$slug", "/agent-login"]}
+                "store_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug"]},
+                "agent_portal_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug", "/agent-login"]}
             }}]
         )
         # Also force the settings doc to the right base
         await db.store_settings.update_many(
-            {"public_base_url": {"$ne": "https://software.celestaglow.com"}},
-            {"$set": {"public_base_url": "https://software.celestaglow.com"}}
+            {"public_base_url": {"$ne": _PUB_BASE}},
+            {"$set": {"public_base_url": _PUB_BASE}}
         )
     except Exception as _e:
         logger.warning(f"Store URL backfill failed: {_e}")
