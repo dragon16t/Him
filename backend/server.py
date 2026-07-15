@@ -9940,9 +9940,30 @@ async def startup():
     await write_test_credentials()
     init_storage()
     await _refresh_employment_terms_cache()
-    await _backfill_lead_last_order()
-    await _backfill_telecaller_counts()
-    await _backfill_created_by_names()
+    # ─── EXPENSIVE ONE-SHOT BACKFILLS (2026-02-15) ────────────────────
+    # These previously ran on EVERY boot — with production data (thousands of
+    # rows) they exceed the Kubernetes startup-probe timeout and kill the pod
+    # → Cloudflare sees empty/malformed responses (520). Now gated behind a
+    # persistent flag in `system_flags` so each backfill runs at most once per
+    # code version. Any code change that requires a re-run bumps the version tag.
+    async def _run_once(flag_name: str, version: str, coro_fn):
+        cur = await db.system_flags.find_one({"name": flag_name}, {"_id": 0, "version": 1})
+        if cur and cur.get("version") == version:
+            return  # already done for this version
+        try:
+            await coro_fn()
+            await db.system_flags.update_one(
+                {"name": flag_name},
+                {"$set": {"version": version, "done_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
+        except Exception as _e:
+            logger.warning(f"backfill {flag_name} failed but boot continues: {_e}")
+
+    # Fire-and-forget — do NOT block startup on these. They run in background.
+    asyncio.create_task(_run_once("backfill_lead_last_order", "v1", _backfill_lead_last_order))
+    asyncio.create_task(_run_once("backfill_telecaller_counts", "v1", _backfill_telecaller_counts))
+    asyncio.create_task(_run_once("backfill_created_by_names", "v1", _backfill_created_by_names))
     # Mark Habeeb Rahman as Head of Sales (flag used for proxy-login authority)
     await db.sales_managers.update_many(
         {"email": {"$regex": "^habeeb", "$options": "i"}},
