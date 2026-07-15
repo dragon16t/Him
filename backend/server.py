@@ -486,6 +486,17 @@ async def seed_database():
             await db.orders.create_index([("created_by", 1), ("created_at", -1)])
             await db.leads.create_index([("assigned_to", 1), ("created_at", -1)])
             await db.leads.create_index([("status", 1), ("created_at", -1)])
+            # 2026-02-13 speed pass — cover the hottest query paths reported by IM/TC dashboards
+            await db.orders.create_index([("deleted", 1), ("status", 1), ("created_at", -1)])
+            await db.orders.create_index([("created_by", 1), ("status", 1), ("deleted", 1)])
+            await db.orders.create_index([("customer_phone", 1)])
+            await db.leads.create_index([("assigned_to", 1), ("deleted", 1), ("status", 1)])
+            await db.leads.create_index([("phone_number_norm", 1)])
+            await db.leads.create_index([("phone_number", 1)])
+            await db.leads.create_index([("created_by", 1), ("created_at", -1)])
+            await db.payment_links.create_index([("created_by", 1), ("status", 1), ("created_at", -1)])
+            await db.commissions.create_index([("user_id", 1), ("status", 1)])
+            await db.finance_pending_credits.create_index([("status", 1), ("created_at", -1)])
             await db.expenses.create_index([("status", 1), ("created_at", -1)])
             await db.expenses.create_index([("reimburse_status", 1), ("created_at", -1)])
             await db.audit_logs.create_index([("timestamp", -1)])
@@ -2814,57 +2825,103 @@ async def get_telecallers(days: Optional[int] = None, day: Optional[str] = None,
     elif current_user['role'] == 'assistant_sales_manager':
         q['managed_by'] = current_user.get('managed_by','')
     tcs = await db.telecallers.find(q, {"_id": 0, "password_hash": 0}).to_list(5000)
-    # All-time totals
+    if not tcs:
+        return {"telecallers": []}
+    tc_ids = [tc['id'] for tc in tcs]
+    today_iso = date.today().isoformat()
+    seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
+
+    # ── SPEED PASS 2026-02-13 — pre-aggregate every per-TC metric in bulk instead
+    # of running N+1 queries per TC (was: 8+ queries × N TCs = O(N²) latency).
+    # Aggregate call log totals across ALL leads owned by these TCs in ONE pass.
+    call_totals = {tid: 0 for tid in tc_ids}
+    today_calls_map = {tid: 0 for tid in tc_ids}
+    pending_map = {tid: 0 for tid in tc_ids}
+    stale_int_map = {tid: 0 for tid in tc_ids}
+    not_updated_map = {tid: 0 for tid in tc_ids}
+    total_leads_map = {tid: 0 for tid in tc_ids}
+    # Which leads have already been ordered (any TC) — used for pending logic
+    ordered_lead_ids = set()
+    async for od in db.orders.find({"created_by": {"$in": tc_ids}, "lead_id": {"$exists": True, "$ne": ""}}, {"_id": 0, "lead_id": 1}):
+        if od.get("lead_id"): ordered_lead_ids.add(od["lead_id"])
+    async for ld in db.leads.find({"assigned_to": {"$in": tc_ids}}, {
+        "_id": 0, "id": 1, "assigned_to": 1, "status": 1, "call_logs": 1,
+        "next_follow_up_date": 1,
+    }):
+        tid = ld.get("assigned_to")
+        if tid not in call_totals: continue
+        logs = ld.get("call_logs") or []
+        call_totals[tid] += len(logs)
+        # today's call count
+        for cl in logs:
+            ts = cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or ""
+            if str(ts).startswith(today_iso):
+                today_calls_map[tid] += 1
+        # pending / stale
+        st = ld.get("status")
+        if st == "new" and not logs:
+            pending_map[tid] += 1
+        if st in ("interested", "ordered") and ld.get("id") not in ordered_lead_ids:
+            pending_map[tid] += 1
+        nfd = ld.get("next_follow_up_date") or ""
+        if nfd and nfd <= today_iso and st not in ("order_created", "converted", "not_interested"):
+            pending_map[tid] += 1
+        if st == "interested":
+            last_ts = ""
+            if logs:
+                lst = logs[-1]
+                last_ts = (lst.get("logged_at") or lst.get("timestamp") or "")[:10]
+            if not last_ts or last_ts < seven_days_ago:
+                stale_int_map[tid] += 1
+        if not logs:
+            not_updated_map[tid] += 1
+    # Leads authored by TC (contribution stat) — count in bulk
+    async for grp in db.leads.aggregate([
+        {"$match": {"created_by": {"$in": tc_ids}}},
+        {"$group": {"_id": "$created_by", "cnt": {"$sum": 1}}},
+    ]):
+        total_leads_map[grp["_id"]] = grp["cnt"]
+    # Conversions per TC — one aggregation
+    conv_map = {tid: 0 for tid in tc_ids}
+    async for grp in db.orders.aggregate([
+        {"$match": {"created_by": {"$in": tc_ids},
+                    "status": {"$in": ["confirmed", "shipped", "delivered"]},
+                    "deleted": {"$ne": True}}},
+        {"$group": {"_id": "$created_by", "cnt": {"$sum": 1}}},
+    ]):
+        conv_map[grp["_id"]] = grp["cnt"]
+    # Paid-commission totals per TC — one aggregation
+    comm_map = {tid: 0.0 for tid in tc_ids}
+    async for grp in db.commissions.aggregate([
+        {"$match": {"user_id": {"$in": tc_ids}, "status": "paid"}},
+        {"$group": {"_id": "$user_id", "total": {"$sum": "$commission_amount"}}},
+    ]):
+        comm_map[grp["_id"]] = round(grp["total"] or 0.0, 2)
+    # In-house call counts (batched)
+    inhouse_all = {tid: 0 for tid in tc_ids}
+    inhouse_today = {tid: 0 for tid in tc_ids}
+    async for grp in db.inhouse_call_logs.aggregate([
+        {"$match": {"caller_id": {"$in": tc_ids}}},
+        {"$group": {"_id": "$caller_id", "cnt": {"$sum": 1}}},
+    ]):
+        inhouse_all[grp["_id"]] = grp["cnt"]
+    async for grp in db.inhouse_call_logs.aggregate([
+        {"$match": {"caller_id": {"$in": tc_ids}, "created_at": {"$regex": f"^{today_iso}"}}},
+        {"$group": {"_id": "$caller_id", "cnt": {"$sum": 1}}},
+    ]):
+        inhouse_today[grp["_id"]] = grp["cnt"]
+
+    # Stitch every metric back onto each TC row
     for tc in tcs:
-        call_count = 0
-        async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
-            call_count += len(lead.get("call_logs") or [])
-        call_count += await db.inhouse_call_logs.count_documents({"caller_id": tc['id']})
-        tc['total_calls'] = call_count
-        conv = await db.orders.count_documents({"created_by": tc['id'], "status": {"$in": ["confirmed","shipped","delivered"]}, "deleted":{"$ne":True}})
-        tc['conversions'] = conv
-        # Show leads ADDED BY this telecaller (not just assigned), so SM sees her real contribution
-        tc['total_leads'] = await db.leads.count_documents({"created_by": tc['id']})
-        comm_pipeline = await db.commissions.find({"user_id": tc['id'], "status": "paid"}, {"_id":0, "commission_amount":1}).to_list(5000)
-        tc['commission_earned'] = round(sum(c.get("commission_amount", 0) for c in comm_pipeline), 2)
-        # ----- Live "health" stats so the SM sees what each TC sees in their alerts banner -----
-        today_iso = date.today().isoformat()
-        seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
-        # Pending: new+never-called OR follow-up due today/earlier OR interested without an order
-        pending = 0
-        stale_interested = 0
-        not_updated = 0  # leads with no call log AT ALL (regardless of status)
-        ordered_lead_ids = set([o.get("lead_id") for o in await db.orders.find({"created_by": tc['id'], "lead_id": {"$exists": True, "$ne": ""}}, {"_id":0,"lead_id":1}).to_list(2000) if o.get("lead_id")])
-        async for ld in db.leads.find({"assigned_to": tc['id']}, {"_id":0,"id":1,"status":1,"call_logs":1,"next_follow_up_date":1}):
-            logs = ld.get("call_logs") or []
-            if ld.get("status") == "new" and len(logs) == 0:
-                pending += 1
-            if ld.get("status") in ("interested", "ordered") and ld.get("id") not in ordered_lead_ids:
-                pending += 1
-            nfd = ld.get("next_follow_up_date") or ""
-            if nfd and nfd <= today_iso and ld.get("status") not in ("order_created","converted","not_interested"):
-                pending += 1
-            # Stale interested — no recent call log
-            if ld.get("status") == "interested":
-                last_ts = ""
-                if logs:
-                    last = logs[-1]
-                    last_ts = (last.get("logged_at") or last.get("timestamp") or "")[:10]
-                if not last_ts or last_ts < seven_days_ago:
-                    stale_interested += 1
-            if not logs:
-                not_updated += 1
-        tc['pending_calls'] = pending
-        tc['stale_interested'] = stale_interested
-        tc['not_updated_leads'] = not_updated
-        # Calls done TODAY (for the orange "no activity today" warning)
-        today_calls = 0
-        async for lead in db.leads.find({"assigned_to": tc['id']}, {"_id":0, "call_logs":1}):
-            for cl in (lead.get("call_logs") or []):
-                ts = cl.get("logged_at") or cl.get("timestamp") or cl.get("date") or cl.get("created_at") or ""
-                if str(ts).startswith(today_iso): today_calls += 1
-        today_calls += await db.inhouse_call_logs.count_documents({"caller_id": tc['id'], "created_at": {"$regex": f"^{today_iso}"}})
-        tc['today_calls'] = today_calls
+        tid = tc['id']
+        tc['total_calls'] = call_totals.get(tid, 0) + inhouse_all.get(tid, 0)
+        tc['conversions'] = conv_map.get(tid, 0)
+        tc['total_leads'] = total_leads_map.get(tid, 0)
+        tc['commission_earned'] = comm_map.get(tid, 0.0)
+        tc['pending_calls'] = pending_map.get(tid, 0)
+        tc['stale_interested'] = stale_int_map.get(tid, 0)
+        tc['not_updated_leads'] = not_updated_map.get(tid, 0)
+        tc['today_calls'] = today_calls_map.get(tid, 0) + inhouse_today.get(tid, 0)
     # Windowed counts when `days` is provided (3/7/15/30) for the SM tab filter chips
     if days and int(days) > 0:
         from datetime import timedelta as _td

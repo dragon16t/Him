@@ -100,7 +100,9 @@ export default function LeadDistributionPanel({ smId, telecallers: parentTelecal
     if (parentTelecallers) { setTeam(parentTelecallers); return; }
     if (!activeSm) { setTeam([]); return; }
     axios.get(`${API}/telecallers`).then(r => {
-      const list = (r.data?.telecallers || r.data || []).filter(t => t.managed_by === activeSm);
+      const list = (r.data?.telecallers || r.data || [])
+        .filter(t => t.managed_by === activeSm)
+        .filter(t => !t.deleted);  // hard-filter soft-deleted TCs from every distribute list
       setTeam(list);
     }).catch(() => setTeam([]));
   }, [activeSm, parentTelecallers]);

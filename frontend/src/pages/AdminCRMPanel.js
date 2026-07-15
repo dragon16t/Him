@@ -276,13 +276,25 @@ export default function AdminCRMPanel() {
   const [cascadeUser, setCascadeUser] = useState(null);
   const [cascadePreview, setCascadePreview] = useState(null);
   const [orderForm, setOrderForm] = useState({customer_name:"",customer_phone:"",customer_address:"",customer_city:"",customer_pincode:"",customer_landmark:"",items:[],total_amount:0,payment_type:"cod",created_by:""});
-  const orderTotal = orderForm.items.reduce((s,i)=>s+(i.price||0)*(i.quantity||0), 0);
+  const orderTotal = orderForm.items.reduce((s,i)=>s+(Number(i.price)||0)*(i.quantity||0), 0);
   const addOrderProduct = (p) => {
     setOrderForm(f => f.items.find(i=>i.product_id===p.id) ? f : ({...f, items:[...f.items, {product_id:p.id, name:p.name, price:p.price, quantity:1}]}));
   };
   const setOrderQty = (pid, q) => {
-    const qq = Math.max(0, parseInt(q || 0));
-    setOrderForm(f => ({...f, items: f.items.map(i=>i.product_id===pid?{...i, quantity:qq}:i).filter(i=>i.quantity>0)}));
+    // Keep quantity at minimum 1 — never auto-remove on minus click. To remove
+    // a product user must hit the explicit trash button. Fixes "product disappears
+    // when I click minus" bug reported by SMs.
+    const parsed = parseInt(q, 10);
+    const qq = Number.isFinite(parsed) ? Math.max(1, parsed) : 1;
+    setOrderForm(f => ({...f, items: f.items.map(i=>i.product_id===pid?{...i, quantity:qq}:i)}));
+  };
+  const setOrderItemPrice = (pid, price) => {
+    // Manual price edit — accept partial strings (e.g. "5." while typing).
+    // Keep raw value in state; final coercion happens on submit.
+    setOrderForm(f => ({...f, items: f.items.map(i=>i.product_id===pid?{...i, price}:i)}));
+  };
+  const removeOrderItem = (pid) => {
+    setOrderForm(f => ({...f, items: f.items.filter(i=>i.product_id!==pid)}));
   };
   const submitAdminOrder = async () => {
     if (!orderForm.customer_name) return toast.error("Customer name required");
@@ -291,8 +303,14 @@ export default function AdminCRMPanel() {
     const finalTotal = orderTotal > 0 ? orderTotal : Number(orderForm.total_amount || 0);
     if (finalTotal <= 0) return toast.error("Add products or enter a manual total amount");
     try {
-      // optional: assign to a telecaller/agent
-      const payload = {...orderForm, total_amount: finalTotal};
+      // Coerce every item.price to a number so backend gets clean values
+      const cleanItems = (orderForm.items || []).map(i => ({
+        product_id: i.product_id,
+        name: i.name,
+        price: Number(i.price) || 0,
+        quantity: Number(i.quantity) || 1,
+      }));
+      const payload = {...orderForm, items: cleanItems, total_amount: finalTotal};
       if (orderForm.created_by) {
         const u = allUsers.find(x => x.id === orderForm.created_by);
         if (u) { payload.assigned_to = u.id; }
@@ -1436,15 +1454,24 @@ export default function AdminCRMPanel() {
                 const item = orderForm.items.find(i=>i.product_id===p.id);
                 return (
                   <div key={p.id} className="flex items-center justify-between text-xs gap-2">
-                    <span className="flex-1 truncate">{p.name} <span className="text-[#59615D]">(Rs.{p.price})</span></span>
+                    <span className="flex-1 truncate">{p.name} <span className="text-[#59615D]">(list Rs.{p.price})</span></span>
                     {!item ? (
                       <Button size="sm" type="button" className="h-6 px-2 rounded-full bg-[#3B5249] text-white text-[10px]" onClick={()=>addOrderProduct(p)} data-testid={`adm-add-${p.id}`}><Plus className="w-3 h-3"/></Button>
                     ) : (
                       <div className="flex items-center gap-1">
+                        <Input
+                          type="number" min="0" step="0.01"
+                          value={item.price}
+                          onChange={e=>setOrderItemPrice(p.id, e.target.value)}
+                          className="h-6 w-16 text-center text-[10px] rounded-md p-0"
+                          placeholder="Price"
+                          data-testid={`adm-price-${p.id}`}
+                        />
                         <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB]" onClick={()=>setOrderQty(p.id, item.quantity-1)} data-testid={`adm-dec-${p.id}`}>−</button>
                         <Input type="number" value={item.quantity} onChange={e=>setOrderQty(p.id, e.target.value)} className="h-6 w-12 text-center text-[10px] rounded-md p-0" data-testid={`adm-qty-${p.id}`}/>
                         <button type="button" className="w-6 h-6 rounded-full border border-[#E5E3DB]" onClick={()=>setOrderQty(p.id, item.quantity+1)} data-testid={`adm-inc-${p.id}`}>+</button>
-                        <span className="text-[#3B5249] font-semibold text-[10px] min-w-[55px] text-right">Rs.{p.price*item.quantity}</span>
+                        <span className="text-[#3B5249] font-semibold text-[10px] min-w-[55px] text-right">Rs.{(Number(item.price)||0)*item.quantity}</span>
+                        <button type="button" className="text-red-500 text-[11px] px-1" onClick={()=>removeOrderItem(p.id)} data-testid={`adm-rm-${p.id}`} title="Remove">×</button>
                       </div>
                     )}
                   </div>
