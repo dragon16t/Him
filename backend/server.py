@@ -9840,6 +9840,14 @@ try:
 except Exception as _rz:
     logger.error(f"razorpay registration failed: {_rz}")
 
+# ── TC TODAY'S ACTIVITY ────────────────────────────────────────────────
+try:
+    from today_activity import register as _ta_register
+    _ta_register(api_router, db, get_current_user)
+    logger.info("today-activity routes registered")
+except Exception as _ta:
+    logger.error(f"today-activity registration failed: {_ta}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

@@ -20,13 +20,21 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-import razorpay
+try:
+    import razorpay
+    _RAZORPAY_INSTALLED = True
+except Exception as _rz_import_err:  # pragma: no cover
+    razorpay = None
+    _RAZORPAY_INSTALLED = False
+
 from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger("razorpay_module")
 
 
-def _client() -> Optional[razorpay.Client]:
+def _client():
+    if not _RAZORPAY_INSTALLED:
+        return None
     key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()
     key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
     if not (key_id and key_secret):
@@ -35,6 +43,11 @@ def _client() -> Optional[razorpay.Client]:
 
 
 def _ensure_keys():
+    if not _RAZORPAY_INSTALLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Razorpay SDK not installed on this server. Run `pip install razorpay` and redeploy.",
+        )
     c = _client()
     if not c:
         raise HTTPException(
