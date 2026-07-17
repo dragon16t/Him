@@ -69,22 +69,35 @@ export default function UniversalLogin() {
       toast.success(`Welcome, ${data.user.name || data.user.email}!`);
       navigate(ROLE_ROUTES[data.user.role] || "/login");
     } catch (err) {
-      // Defensive: only trust structured JSON error bodies. If the origin/proxy
-      // returned an HTML page (e.g. Cloudflare 520, nginx 502) we must NOT dump
-      // that HTML into the UI banner — it confuses the user and looks like a
-      // permanent failure. Fall back to a friendly generic message with a code.
+      // Defensive error handling: status code decides the message FIRST.
+      // Never trust proxy/edge error bodies (Cloudflare 520/521/522/523/524,
+      // nginx 502/503/504) — they often ship a scary plain-text or HTML blurb
+      // that looks like a permanent failure. We only trust the response body
+      // for 4xx (our own FastAPI validation/auth errors).
       let msg = "";
       const raw = err?.response?.data;
       const status = err?.response?.status;
-      if (raw && typeof raw === "object" && typeof raw.detail === "string") {
-        msg = raw.detail;
-      } else if (typeof raw === "string" && raw.length < 200 && !raw.includes("<") && !raw.includes("<!DOCTYPE")) {
-        msg = raw;
-      } else if (status === 401 || status === 403) {
-        msg = "Email or password is incorrect. Please try again.";
-      } else if (status === 502 || status === 503 || status === 504 || status === 520 || status === 521 || status === 522 || status === 523 || status === 524) {
+      const isServerError = typeof status === "number" && status >= 500 && status < 600;
+      const isCloudflarey = typeof raw === "string" && /cloudflare|origin (web )?server|error 5\d\d|ray id/i.test(raw);
+      if (isServerError || isCloudflarey) {
+        // Origin/edge hiccup — always show a friendly, non-scary message.
         msg = "Server is momentarily unavailable — please retry in 10 seconds.";
-      } else if (!status && err?.message === "Network Error") {
+      } else if (status === 401 || status === 403) {
+        // Prefer server's structured detail if present (e.g. "Password entered is wrong"),
+        // otherwise generic auth error. NEVER echo raw HTML/text bodies here.
+        if (raw && typeof raw === "object" && typeof raw.detail === "string" && raw.detail.length < 160) {
+          msg = raw.detail;
+        } else {
+          msg = "Email or password is incorrect. Please try again.";
+        }
+      } else if (status === 400 || status === 422) {
+        // Validation error from FastAPI — safe to show the JSON detail string.
+        if (raw && typeof raw === "object" && typeof raw.detail === "string") {
+          msg = raw.detail;
+        } else {
+          msg = "Please check your input and try again.";
+        }
+      } else if (!status && (err?.message === "Network Error" || err?.code === "ECONNABORTED")) {
         msg = "Cannot reach the server. Check your internet or try again.";
       } else {
         msg = `Login failed${status ? ` (code ${status})` : ""}. Please try again.`;
