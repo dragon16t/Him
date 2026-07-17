@@ -50,7 +50,26 @@ export default function UniversalLogin() {
       toast.success(`Welcome, ${data.user.name || data.user.email}!`);
       navigate(ROLE_ROUTES[data.user.role] || "/login");
     } catch (err) {
-      const msg = err.response?.data?.detail || "Login failed. Please try again.";
+      // Defensive: only trust structured JSON error bodies. If the origin/proxy
+      // returned an HTML page (e.g. Cloudflare 520, nginx 502) we must NOT dump
+      // that HTML into the UI banner — it confuses the user and looks like a
+      // permanent failure. Fall back to a friendly generic message with a code.
+      let msg = "";
+      const raw = err?.response?.data;
+      const status = err?.response?.status;
+      if (raw && typeof raw === "object" && typeof raw.detail === "string") {
+        msg = raw.detail;
+      } else if (typeof raw === "string" && raw.length < 200 && !raw.includes("<") && !raw.includes("<!DOCTYPE")) {
+        msg = raw;
+      } else if (status === 401 || status === 403) {
+        msg = "Email or password is incorrect. Please try again.";
+      } else if (status === 502 || status === 503 || status === 504 || status === 520 || status === 521 || status === 522 || status === 523 || status === 524) {
+        msg = "Server is momentarily unavailable — please retry in 10 seconds.";
+      } else if (!status && err?.message === "Network Error") {
+        msg = "Cannot reach the server. Check your internet or try again.";
+      } else {
+        msg = `Login failed${status ? ` (code ${status})` : ""}. Please try again.`;
+      }
       setErrMsg(msg);
       toast.error(msg);
     }
