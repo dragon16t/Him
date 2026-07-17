@@ -1,0 +1,24 @@
+{
+  "summary": "Retested login flows after axios interceptor fix (!isAuthCall guard on 401). All 4 test scenarios PASSED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "wrong_password_shows_error_no_reload": "PASS - [data-testid=login-error] visible with text 'Password entered is wrong' within <1s, URL stayed on /login",
+    "admin_login_success": "PASS - admin@celestaglow.com/admin123 navigated to /dashboard (admin dashboard) quickly",
+    "sm_login_success": "PASS - salesmanager@celestaglow.com/sm123 navigated to /sales-manager with 'Welcome, Hubby Brahman!' toast",
+    "invalid_token_redirects_to_login": "PASS - localStorage token='invalid-token-xyz' → visiting /admin redirected back to /login (protected route auth intact)"
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 59 fix verified: axios interceptor `else if (status === 401 && !isAuthCall)` correctly lets auth-endpoint 401s bubble to UniversalLogin.handleLogin catch block, showing error banner without wiping localStorage/redirecting. Non-auth 401s still trigger redirect to /login (verified). Login page testids: login-email-input, login-password-input, login-submit-btn, login-error. Admin lands on /dashboard, SM lands on /sales-manager."
+}

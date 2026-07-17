@@ -132,7 +132,7 @@ axios.interceptors.response.use(
       // Refresh failed → logout
       localStorage.clear();
       window.location.href = "/login";
-    } else if (status === 401) {
+    } else if (status === 401 && !isAuthCall) {
       localStorage.clear();
       window.location.href = "/login";
     }
