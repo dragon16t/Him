@@ -1485,9 +1485,15 @@ async def delhivery_sync_once():
         awb = o.get("awb_number") or ""
         if not awb: continue
         try:
-            r = requests.get(f"{DELHIVERY_BASE_URL}/api/v1/packages/json/",
-                headers={"Authorization": f"Token {DELHIVERY_API_KEY}"},
-                params={"waybill": awb}, timeout=15)
+            # Sync HTTP call to Delhivery — offload to thread pool so we don't
+            # block the event loop for the entire 5000-order sweep. Without this
+            # wrapper the scheduler was freezing the pod for minutes at a time,
+            # causing k8s liveness probe timeouts and Cloudflare 520s to users.
+            r = await asyncio.to_thread(
+                lambda: requests.get(f"{DELHIVERY_BASE_URL}/api/v1/packages/json/",
+                    headers={"Authorization": f"Token {DELHIVERY_API_KEY}"},
+                    params={"waybill": awb}, timeout=15)
+            )
             if r.status_code != 200:
                 errors += 1; continue
             data = r.json()
@@ -1545,6 +1551,10 @@ async def delhivery_sync_once():
         except Exception as e:
             errors += 1
             logger.warning(f"delhivery_sync {awb}: {e}")
+        # Cooperative yield so login/dashboard requests aren't starved during a
+        # long sync (5000 AWBs × 15s worst case = up to 20h — must let the
+        # event loop breathe between calls).
+        await asyncio.sleep(0.05)
     await db.app_config.update_one({"key": "delhivery_last_sync"},
         {"$set": {"key": "delhivery_last_sync", "at": datetime.now(timezone.utc).isoformat(),
                   "synced": synced, "updated": updated, "errors": errors}}, upsert=True)

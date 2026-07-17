@@ -681,7 +681,9 @@ async def login(request: Request, data: dict):
     for coll_name, role in AUTH_COLLECTIONS.items():
         user = await db[coll_name].find_one({"email": email}, {"_id": 0})
         if user:
-            if verify_password(password, user.get("password_hash", "")):
+            # bcrypt.checkpw is CPU-heavy (~250ms) and releases the GIL. Wrap
+            # in to_thread so parallel logins don't serialize on the event loop.
+            if await asyncio.to_thread(verify_password, password, user.get("password_hash", "")):
                 token = create_token(user["id"], email, role)
                 refresh = create_refresh_token(user["id"], email, role)
                 ud = {k: v for k, v in user.items() if k != "password_hash"}
@@ -812,9 +814,10 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
 async def change_password(data: dict, current_user: dict = Depends(get_current_user)):
     coll = ROLE_COLLECTIONS.get(current_user['role'])
     full = await db[coll].find_one({"id": current_user['id']})
-    if not verify_password(data.get("old_password",""), full.get("password_hash","")):
+    if not await asyncio.to_thread(verify_password, data.get("old_password",""), full.get("password_hash","")):
         raise HTTPException(status_code=400, detail="Current password incorrect")
-    await db[coll].update_one({"id": current_user['id']}, {"$set": {"password_hash": hash_password(data["new_password"])}})
+    new_hash = await asyncio.to_thread(hash_password, data["new_password"])
+    await db[coll].update_one({"id": current_user['id']}, {"$set": {"password_hash": new_hash}})
     return {"message": "Password changed"}
 
 # ==================== LEAD ROUTES ====================
@@ -4361,7 +4364,10 @@ async def upload_payment_proof(file: UploadFile = File(...), current_user: dict 
     ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
     path = f"{APP_NAME}/proofs/{current_user['id']}/{uuid.uuid4()}.{ext}"
     try:
-        result = put_object(path, contents, file.content_type)
+        # Sync HTTP call to Emergent storage blocks up to 120s — offload to
+        # thread pool so the FastAPI event loop stays responsive (prevents k8s
+        # liveness timeouts / Cloudflare 520s when other users are logging in).
+        result = await asyncio.to_thread(put_object, path, contents, file.content_type)
         ref = {"id": str(uuid.uuid4()), "storage_path": result.get("path",path), "original_filename": file.filename,
                "content_type": file.content_type, "size": len(contents), "uploaded_by": current_user['id'],
                "created_at": datetime.now(timezone.utc).isoformat()}
@@ -4392,7 +4398,7 @@ async def download_file(file_path: str, request: Request):
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     try:
-        data, ct = get_object(file_path)
+        data, ct = await asyncio.to_thread(get_object, file_path)
         return Response(content=data, media_type=ct)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
@@ -9527,7 +9533,10 @@ async def delhivery_ship_order(oid: str, current_user: dict = Depends(get_curren
     body = "format=json&data=" + json.dumps(payload)
 
     try:
-        r = requests.post(f"{DELHIVERY_BASE_URL}/api/cmu/create.json", headers=_delhivery_headers(), data=body, timeout=20)
+        # Sync HTTP call to Delhivery blocks event loop — offload to thread pool.
+        r = await asyncio.to_thread(
+            lambda: requests.post(f"{DELHIVERY_BASE_URL}/api/cmu/create.json", headers=_delhivery_headers(), data=body, timeout=20)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Delhivery API error: {e}")
     if r.status_code not in (200, 201):
@@ -9596,7 +9605,9 @@ async def delhivery_track(awb: str, current_user: dict = Depends(get_current_use
     if not DELHIVERY_API_KEY:
         raise HTTPException(status_code=500, detail="DELHIVERY_API_KEY not configured")
     try:
-        r = requests.get(f"{DELHIVERY_BASE_URL}/api/v1/packages/json/", headers=_delhivery_headers(), params={"waybill": awb}, timeout=15)
+        r = await asyncio.to_thread(
+            lambda: requests.get(f"{DELHIVERY_BASE_URL}/api/v1/packages/json/", headers=_delhivery_headers(), params={"waybill": awb}, timeout=15)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Delhivery tracking error: {e}")
     if r.status_code != 200:
@@ -9622,10 +9633,12 @@ async def delhivery_label_pdf(oid: str, current_user: dict = Depends(get_current
     pdf_bytes = None
     if DELHIVERY_API_KEY:
         try:
-            r = requests.get(f"{DELHIVERY_BASE_URL}/api/p/packing_slip",
-                             headers=_delhivery_headers(),
-                             params={"wbns": awb, "pdf": "true"},
-                             timeout=15)
+            r = await asyncio.to_thread(
+                lambda: requests.get(f"{DELHIVERY_BASE_URL}/api/p/packing_slip",
+                                     headers=_delhivery_headers(),
+                                     params={"wbns": awb, "pdf": "true"},
+                                     timeout=15)
+            )
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/pdf"):
                 pdf_bytes = r.content
         except Exception as _e:
@@ -9723,7 +9736,9 @@ async def delhivery_cancel(oid: str, current_user: dict = Depends(get_current_us
         raise HTTPException(status_code=400, detail="No Delhivery AWB on this order")
     payload = {"waybill": awb, "cancellation": "true"}
     try:
-        r = requests.post(f"{DELHIVERY_BASE_URL}/api/p/edit", headers={**_delhivery_headers(), "Content-Type": "application/json"}, json=payload, timeout=15)
+        r = await asyncio.to_thread(
+            lambda: requests.post(f"{DELHIVERY_BASE_URL}/api/p/edit", headers={**_delhivery_headers(), "Content-Type": "application/json"}, json=payload, timeout=15)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Delhivery API error: {e}")
     if r.status_code not in (200, 204):

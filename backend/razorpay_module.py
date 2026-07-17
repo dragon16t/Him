@@ -16,6 +16,7 @@ Env vars (in backend/.env):
     RAZORPAY_WEBHOOK_SECRET  — optional (for auto status updates on payment)
 """
 import os
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -123,7 +124,10 @@ def register(api_router, db, get_current_user, log_audit=None):
         }
 
         try:
-            link = client.payment_link.create(payload)
+            # Razorpay SDK is SYNC — offload to thread pool so we don't block
+            # the FastAPI event loop (which would freeze every other user's
+            # request and cause k8s liveness probe timeouts → Cloudflare 520s).
+            link = await asyncio.to_thread(client.payment_link.create, payload)
         except Exception as e:  # razorpay SDK raises BadRequestError / etc.
             logger.exception("Razorpay create_payment_link failed")
             raise HTTPException(status_code=502, detail=f"Razorpay error: {e}")
@@ -203,7 +207,7 @@ def register(api_router, db, get_current_user, log_audit=None):
                 and row.get("created_by") != current_user["id"]:
             raise HTTPException(status_code=403, detail="Not your link")
         try:
-            link = client.payment_link.fetch(plid)
+            link = await asyncio.to_thread(client.payment_link.fetch, plid)
         except Exception as e:
             logger.exception("Razorpay fetch failed")
             raise HTTPException(status_code=502, detail=f"Razorpay error: {e}")
@@ -242,7 +246,7 @@ def register(api_router, db, get_current_user, log_audit=None):
         if row.get("status") == "paid":
             raise HTTPException(status_code=400, detail="Already paid — cannot cancel")
         try:
-            client.payment_link.cancel(plid)
+            await asyncio.to_thread(client.payment_link.cancel, plid)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Razorpay error: {e}")
         await db.payment_links.update_one({"id": plid}, {"$set": {
@@ -262,7 +266,7 @@ def register(api_router, db, get_current_user, log_audit=None):
         if secret and client:
             sig = request.headers.get("X-Razorpay-Signature", "")
             try:
-                client.utility.verify_webhook_signature(body.decode(), sig, secret)
+                await asyncio.to_thread(client.utility.verify_webhook_signature, body.decode(), sig, secret)
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid signature")
         try:
