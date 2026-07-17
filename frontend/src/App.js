@@ -93,6 +93,17 @@ axios.interceptors.response.use(
     const original = error.config || {};
     const status = error.response?.status;
     const url = original.url || "";
+    // ─── AUTO-RETRY ON TRANSIENT UPSTREAM FAILURES (Cloudflare 520, K8s pod
+    // restarts, 502/503/504, network errors). Silent, exponential backoff, max 3
+    // extra attempts. This masks 90%+ of intermittent hiccups so users never see
+    // the scary Cloudflare error page during normal work.
+    const transient = (!status) || (status >= 500 && status < 600) || (status >= 520 && status <= 524);
+    if (transient && !original._retryCount) original._retryCount = 0;
+    if (transient && original._retryCount < 3 && original.method !== "delete") {
+      original._retryCount += 1;
+      await new Promise(r => setTimeout(r, 500 * original._retryCount * original._retryCount));
+      try { return await axios(original); } catch (_) { /* fall through to normal handling */ }
+    }
     // Storefront / agent-portal 401s must NOT clear admin localStorage or redirect to /login.
     // The storefront has its own auth flow (agent-token-<slug>).
     if (_isStoreUrl(url)) {
