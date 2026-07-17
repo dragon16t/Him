@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend login-speed validation on UniversalLogin. Success logins ARE fast (Admin 0.33s, SM 0.33s to their dashboards). BUT wrong-password UX is BROKEN: the login-error banner never appears because a 401 on /api/auth/login triggers a full page reload in the global axios interceptor. User sees the password field silently clear with no feedback — perceived as 'nothing happened' or 'still slow'.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "App.js global axios interceptor (lines 122-138)",
+        "issue": "On a 401 from /api/auth/login (wrong password), the `else if (status === 401)` fallback executes `localStorage.clear(); window.location.href='/login'` even though `isAuthCall` is true. `isAuthCall` is only consulted in the refresh branch above, NOT in this fallback. Result: browser navigates to /login before UniversalLogin can render the `[data-testid=login-error]` banner (setErrMsg + toast). User sees blank login form after submitting a wrong password — no visible error, no toast. Verified via Playwright: after wrong-password submit, main-frame navigates back to /login and login-error banner never appears (5s wait timeout).",
+        "selector": "[data-testid=\"login-error\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/wrong_pw.png", "/app/test_reports/admin_dash2.png"],
+  "action_items": [
+    "FIX App.js interceptor: change `else if (status === 401)` on line 135 to `else if (status === 401 && !isAuthCall)` (or return Promise.reject(error) early when isAuthCall && status===401). This preserves login-error banner + toast on wrong password.",
+    "OPTIONAL: UniversalLogin.js has its OWN retry loop (_postWithRetry with delays [0,800,1600,2500]) that could add up to ~5s on transient 5xx/network. Combined with the global interceptor this is redundant. Consider trimming to a single retry policy — currently benign for 401 (no retry) but adds latency during upstream flakes.",
+    "The wrong-password 'copy' expected by user is 'Password entered is wrong' but current code shows 'Email or password is incorrect. Please try again.' — align if needed."
+  ],
+  "critical_code_review_comments": [
+    "App.js:135 — `else if (status===401)` unconditionally clears storage + reloads, which fires even for /auth/login. This is the direct cause of the missing wrong-password error banner.",
+    "UniversalLogin.js has an in-component retry loop that duplicates the global interceptor's job; two layers of retry make transient errors take 5+ seconds to surface.",
+    "App.js interceptor swallows retry failures with `catch (_) {}` on line 114 which is fine, but if the retried axios call itself throws, the ORIGINAL error is not re-rejected explicitly — flow depends on falling through. Works today but fragile."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (not tested)", "frontend": "80% (4/5 checks pass — wrong-password UX fails)" },
+  "test_credentials": "Used /app/memory/test_credentials.md — admin@celestaglow.com/admin123, salesmanager@celestaglow.com/sm123, telecaller1@celestaglow.com/tc123. All valid.",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Success-path login speed is fine (~300-500ms). Focus retest on: (a) wrong password shows [data-testid=login-error] banner within <2s and page does NOT reload; (b) success flows still work after the interceptor guard is added. Telecaller1 login once took 5.17s in a run but repeat runs of admin/SM were consistently ~0.3s, so TC 5s appears to be one-off ingress latency rather than a retry-storm.",
+  "rca of the issue": "App.js axios response interceptor: `isAuthCall` (line 122) is used only to skip the refresh branch (if status===401 && !isAuthCall). The else-if fallback `else if (status===401)` at line 135 fires for ALL remaining 401s including auth endpoints. It calls `window.location.href='/login'`, causing a full page reload that destroys the React component holding the just-set errMsg state before it can paint. Reproduction: 1) open /login, 2) submit any valid email with wrong password, 3) observe URL bounces to /login again, error banner never visible. Mitigation: add `!isAuthCall` guard to the fallback branch so auth 401s are simply rejected back to the caller (UniversalLogin.handleLogin catch block will then setErrMsg/toast correctly)."
+}
