@@ -885,7 +885,12 @@ async def get_leads(status: Optional[str] = None, assigned_to: Optional[str] = N
     limit = max(1, min(int(limit or 500), 5000))
     skip = max(0, int(skip or 0))
     total = await db.leads.count_documents(query)
-    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    # ─── SPEED (2026-02-15): cap call_logs to last 3 entries per lead in the list
+    # response. A lead with 20 call logs was ~10 KB; ×200 leads = 2 MB per request.
+    # The TC UI only shows the most recent remark preview per card — 3 is plenty.
+    # Full history is fetched on-demand when the TC opens a specific card.
+    projection = {"_id": 0, "call_logs": {"$slice": -3}}
+    leads = await db.leads.find(query, projection).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     # Dedupe by normalized phone for manager-style views — same customer should appear once
     # (most recent lead per phone). Telecallers/agents keep their full pipeline.
     if current_user['role'] in ('sales_manager', 'assistant_sales_manager', 'district_manager', 'assistant_district_manager', 'admin', 'finance_manager'):
@@ -9964,175 +9969,172 @@ async def startup():
     asyncio.create_task(_run_once("backfill_lead_last_order", "v1", _backfill_lead_last_order))
     asyncio.create_task(_run_once("backfill_telecaller_counts", "v1", _backfill_telecaller_counts))
     asyncio.create_task(_run_once("backfill_created_by_names", "v1", _backfill_created_by_names))
-    # Mark Habeeb Rahman as Head of Sales (flag used for proxy-login authority)
-    await db.sales_managers.update_many(
-        {"email": {"$regex": "^habeeb", "$options": "i"}},
-        {"$set": {"is_head_of_sales": True, "title": "Head of Sales"}}
-    )
-    # Backfill: rewrite any stale store_url that still references the old domain
-    try:
-        # Ensure every existing agent has active flag explicitly set (legacy docs may be missing it)
-        await db.store_agents.update_many(
-            {"active": {"$exists": False}},
-            {"$set": {"active": True}}
+
+    # ─── ALL other legacy backfills also moved to background ─────────────
+    # Each runs at most ONCE per version thanks to _run_once. This guarantees
+    # boot completes in a couple of seconds even on massive production data.
+    async def _backfill_head_of_sales():
+        await db.sales_managers.update_many(
+            {"email": {"$regex": "^habeeb", "$options": "i"}},
+            {"$set": {"is_head_of_sales": True, "title": "Head of Sales"}}
         )
-        # Env-driven base URL — production custom domain wins, preview falls back.
-        _PUB_BASE = os.environ.get("PUBLIC_BASE_URL", "https://software.celestaglow.com").rstrip("/")
-        # Also pre-compute store_url + agent_portal_url for any docs missing them
-        await db.store_agents.update_many(
-            {"$or": [{"store_url": {"$exists": False}}, {"store_url": None}, {"store_url": ""}]},
-            [{"$set": {
-                "store_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug"]},
-                "agent_portal_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug", "/agent-login"]}
-            }}]
-        )
-        await db.store_agents.update_many(
-            {"store_url": {"$regex": "celestaglow\\.com/store", "$not": {"$regex": "software\\."}}},
-            [{"$set": {
-                "store_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug"]},
-                "agent_portal_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug", "/agent-login"]}
-            }}]
-        )
-        # Also force the settings doc to the right base
-        await db.store_settings.update_many(
-            {"public_base_url": {"$ne": _PUB_BASE}},
-            {"$set": {"public_base_url": _PUB_BASE}}
-        )
-    except Exception as _e:
-        logger.warning(f"Store URL backfill failed: {_e}")
-    # Backfill: migrate any locally-cached uploads into MongoDB so they survive
-    # pod restarts. Idempotent — skips files that already exist in DB.
-    try:
-        from datetime import datetime, timezone
-        existing_filenames = set()
-        async for doc in db.uploaded_images.find({}, {"_id": 0, "filename": 1}):
-            existing_filenames.add(doc.get("filename"))
-        migrated = 0
-        for fp in _UPLOADS_DIR.iterdir():
-            if not fp.is_file():
-                continue
-            if fp.name in existing_filenames:
-                continue
-            ext = fp.suffix.lower()
-            ct = {
-                ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-                ".webp": "image/webp", ".gif": "image/gif", ".avif": "image/avif",
-            }.get(ext, "application/octet-stream")
-            try:
-                data = fp.read_bytes()
-                if len(data) > 10 * 1024 * 1024:  # safety: skip files > 10 MB
-                    continue
-                await db.uploaded_images.insert_one({
-                    "filename": fp.name,
-                    "content_type": ct,
-                    "data": data,
-                    "size": len(data),
-                    "uploaded_by": "disk_backfill",
-                    "uploaded_at": datetime.now(timezone.utc).isoformat(),
-                })
-                migrated += 1
-            except Exception:
-                continue
-        if migrated:
-            logger.info(f"Image persistence backfill: migrated {migrated} files from disk → MongoDB")
-    except Exception as _e:
-        logger.warning(f"Image disk→MongoDB backfill failed: {_e}")
-    # Backfill: any order_revenue credit (or order_return debit) wrongly recorded as
-    # method=cash → flip to method=bank and rebalance cash/bank totals. Idempotent.
-    try:
-        rev_rows = await db.finance_ledger.find(
-            {"category": "order_revenue", "method": "cash", "type": "credit"},
-            {"_id": 0, "id": 1, "amount": 1}
-        ).to_list(100000)
-        ret_rows = await db.finance_ledger.find(
-            {"category": "order_return", "method": "cash", "type": "debit"},
-            {"_id": 0, "id": 1, "amount": 1}
-        ).to_list(100000)
-        rev_total = sum(r.get("amount", 0) for r in rev_rows)
-        ret_total = sum(r.get("amount", 0) for r in ret_rows)
-        if rev_rows:
-            await db.finance_ledger.update_many(
-                {"category": "order_revenue", "method": "cash", "type": "credit"},
-                {"$set": {"method": "bank"}}
-            )
-        if ret_rows:
-            await db.finance_ledger.update_many(
-                {"category": "order_return", "method": "cash", "type": "debit"},
-                {"$set": {"method": "bank"}}
-            )
-        if rev_total or ret_total:
-            # Revenue: was added to cash, should be in bank → move
-            # Return: was subtracted from cash, should be from bank → move
-            await db.finance_balance.update_one(
-                {"id": "main"},
-                {"$inc": {"cash": -(rev_total - ret_total), "bank": (rev_total - ret_total)}},
-                upsert=True,
-            )
-            logger.info(f"Order revenue cash→bank migration: revenue rows={len(rev_rows)} (Rs.{rev_total}), return rows={len(ret_rows)} (Rs.{ret_total})")
-    except Exception as _e:
-        logger.warning(f"Order revenue cash→bank backfill failed: {_e}")
-    # Performance: Create indexes
-    await db.orders.create_index("status")
-    await db.orders.create_index("created_by")
-    await db.orders.create_index("created_at")
-    await db.leads.create_index("assigned_to")
-    await db.leads.create_index("status")
-    await db.leads.create_index("next_follow_up_date")
-    await db.leads.create_index("next_repeat_order_date")
-    await db.leads.create_index("next_relationship_date")
-    await db.commissions.create_index("user_id")
-    await db.commissions.create_index("created_at")
-    await db.finance_ledger.create_index("created_at")
-    await db.expenses.create_index("status")
-    await db.payroll.create_index([("month", 1), ("year", 1)])
-    await db.notifications.create_index("user_id")
-    await db.notifications.create_index("role")
-    await db.notifications.create_index("read")
-    await db.shoot_plans.create_index("assigned_to")
-    await db.shoot_plans.create_index("shoot_date")
-    await db.targets.create_index("user_id")
-    await db.gst_entries.create_index("date")
-    await db.vendor_transactions.create_index("vendor_id")
-    await db.content_calendar.create_index("scheduled_date")
-    await db.purchase_orders.create_index("status")
-    await db.returns_rto.create_index("status")
-    await db.activity_log.create_index("created_at")
-    await db.hr_call_logs.create_index("call_date")
-    await db.hr_call_logs.create_index("linked_candidate_id")
-    await db.hiring_candidates.create_index("forwarded_to")
-    await db.content_assignments.create_index("assigned_to")
-    await db.content_assignments.create_index("assigned_by")
-    await db.content_assignments.create_index("status")
-    await db.campaign_daily_metrics.create_index([("campaign_id", 1), ("date", -1)])
-    await db.attendance.create_index([("user_id", 1), ("date", 1)])
-    await db.employee_tasks.create_index([("user_id", 1), ("date", 1)])
-    await db.fund_requests.create_index("status")
-    await db.hiring_candidates.create_index("status")
-    await db.campaigns.create_index("status")
-    await db.content_scripts.create_index("pillar_id")
-    await db.content_scripts.create_index("assigned_to")
-    # CRITICAL: id + email indexes on every role collection (auth + lookups)
-    for _coll_name in ROLE_COLLECTIONS.values():
+
+    async def _backfill_store_urls():
         try:
-            await db[_coll_name].create_index("id", unique=True)
-            await db[_coll_name].create_index("email")
+            await db.store_agents.update_many(
+                {"active": {"$exists": False}}, {"$set": {"active": True}}
+            )
+            _PUB_BASE = os.environ.get("PUBLIC_BASE_URL", "https://software.celestaglow.com").rstrip("/")
+            await db.store_agents.update_many(
+                {"$or": [{"store_url": {"$exists": False}}, {"store_url": None}, {"store_url": ""}]},
+                [{"$set": {
+                    "store_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug"]},
+                    "agent_portal_url": {"$concat": [f"{_PUB_BASE}/store/", "$slug", "/agent-login"]}
+                }}]
+            )
+            await db.store_settings.update_many(
+                {"public_base_url": {"$ne": _PUB_BASE}},
+                {"$set": {"public_base_url": _PUB_BASE}}
+            )
         except Exception as _e:
-            logger.warning(f"Index on {_coll_name}: {_e}")
-    # Common query fields
-    await db.orders.create_index("agent_id")
-    await db.orders.create_index("telecaller_id")
-    await db.orders.create_index("manager_id")
-    await db.leads.create_index("created_at")
-    await db.payroll.create_index("user_id")
-    await db.advances.create_index("user_id")
-    await db.advances.create_index("status")
-    await db.attendance.create_index("date")
-    await db.audit_log.create_index("created_at")
+            logger.warning(f"store url backfill (bg): {_e}")
+
+    async def _backfill_image_migration():
+        try:
+            existing_filenames = set()
+            async for doc in db.uploaded_images.find({}, {"_id": 0, "filename": 1}):
+                existing_filenames.add(doc.get("filename"))
+            migrated = 0
+            if _UPLOADS_DIR.exists():
+                for fp in _UPLOADS_DIR.iterdir():
+                    if not fp.is_file() or fp.name in existing_filenames: continue
+                    ext = fp.suffix.lower()
+                    ct = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                          ".webp":"image/webp",".gif":"image/gif",".avif":"image/avif"}.get(ext, "application/octet-stream")
+                    try:
+                        data = fp.read_bytes()
+                        if len(data) > 10 * 1024 * 1024: continue
+                        await db.uploaded_images.insert_one({
+                            "filename": fp.name, "content_type": ct, "data": data,
+                            "size": len(data), "uploaded_by": "disk_backfill",
+                            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                        migrated += 1
+                    except Exception: continue
+            if migrated:
+                logger.info(f"Image persistence backfill: migrated {migrated} files disk → MongoDB")
+        except Exception as _e:
+            logger.warning(f"image backfill (bg): {_e}")
+
+    async def _backfill_revenue_cash_to_bank():
+        try:
+            # Only touch a small batch at a time — previously fetched up to 100k rows
+            # into memory on every boot, which alone blocked startup on large datasets.
+            rev_rows = await db.finance_ledger.find(
+                {"category": "order_revenue", "method": "cash", "type": "credit"},
+                {"_id": 0, "amount": 1}
+            ).limit(5000).to_list(5000)
+            ret_rows = await db.finance_ledger.find(
+                {"category": "order_return", "method": "cash", "type": "debit"},
+                {"_id": 0, "amount": 1}
+            ).limit(5000).to_list(5000)
+            rev_total = sum(r.get("amount", 0) for r in rev_rows)
+            ret_total = sum(r.get("amount", 0) for r in ret_rows)
+            if rev_rows:
+                await db.finance_ledger.update_many(
+                    {"category": "order_revenue", "method": "cash", "type": "credit"},
+                    {"$set": {"method": "bank"}}
+                )
+            if ret_rows:
+                await db.finance_ledger.update_many(
+                    {"category": "order_return", "method": "cash", "type": "debit"},
+                    {"$set": {"method": "bank"}}
+                )
+            if rev_total or ret_total:
+                await db.finance_balance.update_one(
+                    {"id": "main"},
+                    {"$inc": {"cash": -(rev_total - ret_total), "bank": (rev_total - ret_total)}},
+                    upsert=True,
+                )
+        except Exception as _e:
+            logger.warning(f"revenue cash→bank backfill (bg): {_e}")
+
+    async def _backfill_extra_indexes():
+        try:
+            await db.orders.create_index("status")
+            await db.orders.create_index("created_by")
+            await db.orders.create_index("created_at")
+            await db.leads.create_index("assigned_to")
+            await db.leads.create_index("status")
+            await db.leads.create_index("next_follow_up_date")
+        except Exception as _e:
+            logger.warning(f"extra indexes (bg): {_e}")
+
+    asyncio.create_task(_run_once("backfill_head_of_sales", "v1", _backfill_head_of_sales))
+    asyncio.create_task(_run_once("backfill_store_urls", "v2", _backfill_store_urls))
+    asyncio.create_task(_run_once("backfill_image_migration", "v1", _backfill_image_migration))
+    asyncio.create_task(_run_once("backfill_revenue_cash_bank", "v1", _backfill_revenue_cash_to_bank))
+    asyncio.create_task(_run_once("backfill_extra_indexes", "v1", _backfill_extra_indexes))
+
+    # ─── (Legacy sync backfill code below intentionally disabled — replaced by
+    # ─── background tasks above.) ──────────────────────────────────────────
+    if False:
+        pass
+    # Performance: All the trailing single-column indexes are moved to background —
+    # each is a fast no-op if the index already exists (production case), and a
+    # small build cost otherwise. Boot must not block on them.
+    async def _backfill_trailing_indexes():
+        try:
+            for coll, field in [
+                ("orders","status"),("orders","created_by"),("orders","created_at"),
+                ("leads","assigned_to"),("leads","status"),("leads","next_follow_up_date"),
+                ("leads","next_repeat_order_date"),("leads","next_relationship_date"),
+                ("commissions","user_id"),("commissions","created_at"),
+                ("finance_ledger","created_at"),("expenses","status"),
+                ("notifications","user_id"),("notifications","role"),("notifications","read"),
+                ("shoot_plans","assigned_to"),("shoot_plans","shoot_date"),
+                ("targets","user_id"),("gst_entries","date"),
+                ("vendor_transactions","vendor_id"),("content_calendar","scheduled_date"),
+                ("purchase_orders","status"),("returns_rto","status"),
+                ("activity_log","created_at"),("hr_call_logs","call_date"),
+                ("hr_call_logs","linked_candidate_id"),("hiring_candidates","forwarded_to"),
+                ("content_assignments","assigned_to"),("content_assignments","assigned_by"),
+                ("content_assignments","status"),("fund_requests","status"),
+                ("hiring_candidates","status"),("campaigns","status"),
+                ("content_scripts","pillar_id"),("content_scripts","assigned_to"),
+                ("orders","agent_id"),("orders","telecaller_id"),("orders","manager_id"),
+                ("leads","created_at"),("payroll","user_id"),("advances","user_id"),
+                ("advances","status"),("attendance","date"),("audit_log","created_at"),
+            ]:
+                try: await db[coll].create_index(field)
+                except Exception: pass
+            try: await db.payroll.create_index([("month", 1), ("year", 1)])
+            except Exception: pass
+            try: await db.campaign_daily_metrics.create_index([("campaign_id", 1), ("date", -1)])
+            except Exception: pass
+            try: await db.attendance.create_index([("user_id", 1), ("date", 1)])
+            except Exception: pass
+            try: await db.employee_tasks.create_index([("user_id", 1), ("date", 1)])
+            except Exception: pass
+            # id + email indexes on every role collection (auth + lookups)
+            for _coll_name in ROLE_COLLECTIONS.values():
+                try:
+                    await db[_coll_name].create_index("id", unique=True)
+                    await db[_coll_name].create_index("email")
+                except Exception: pass
+        except Exception as _e:
+            logger.warning(f"trailing index backfill (bg): {_e}")
+
+    asyncio.create_task(_run_once("backfill_trailing_indexes", "v1", _backfill_trailing_indexes))
+
     # Phase-2 P0 migrations: legacy collection consolidation, phone normalisation, unique commission index, text search indexes
-    try:
-        await run_p0_migrations()
-    except Exception as _e:
-        logger.error(f"P0 migrations: {_e}")
+    async def _run_p0_bg():
+        try:
+            await run_p0_migrations()
+        except Exception as _e:
+            logger.error(f"P0 migrations (bg): {_e}")
+    asyncio.create_task(_run_once("run_p0_migrations", "v1", _run_p0_bg))
+
     # Start background scheduler (Delhivery sync + daily auto-emails)
     try:
         _start_upgrades_scheduler()
