@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, CheckCircle2, XCircle, Send, Activity, Link2 } from "lucide-react";
+import { RefreshCw, CheckCircle2, XCircle, Send, Activity, Link2, Database, Loader2 } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
 
@@ -23,6 +23,70 @@ export default function DataConnectionsPanel() {
     test_event_code: "",
   });
   const [firing, setFiring] = useState(false);
+
+  // Backfill state
+  const [bfPreview, setBfPreview] = useState({ leads: 0, orders: 0, since_days: null });
+  const [bfSinceDays, setBfSinceDays] = useState(""); // "" = all-time, "7" = last week, etc.
+  const [bfKind, setBfKind] = useState("both");
+  const [bfLimit, setBfLimit] = useState(5000);
+  const [bfRunning, setBfRunning] = useState(false);
+  const [bfResult, setBfResult] = useState(null);
+
+  const fetchBackfillPreview = async (days) => {
+    try {
+      const params = days ? `?since_days=${days}` : "";
+      const { data } = await axios.get(`${API}/meta/backfill/preview${params}`);
+      setBfPreview(data);
+    } catch (_) {
+      /* silent */
+    }
+  };
+
+  useEffect(() => {
+    fetchBackfillPreview(bfSinceDays || null);
+  }, [bfSinceDays]);
+
+  const runBackfill = async () => {
+    const totalToSend = bfKind === "leads"
+      ? bfPreview.leads
+      : bfKind === "orders"
+      ? bfPreview.orders
+      : bfPreview.leads + bfPreview.orders;
+    if (totalToSend === 0) {
+      toast.error("Nothing to backfill for this window");
+      return;
+    }
+    const windowLabel = bfSinceDays ? `last ${bfSinceDays} days` : "ALL TIME";
+    if (!window.confirm(`Send ${totalToSend} events (${bfKind}) from ${windowLabel} to Meta? This cannot be undone.`)) {
+      return;
+    }
+    setBfRunning(true);
+    setBfResult(null);
+    try {
+      const payload = {
+        kind: bfKind,
+        limit: Number(bfLimit) || 5000,
+      };
+      if (bfSinceDays) payload.since_days = Number(bfSinceDays);
+      const { data } = await axios.post(`${API}/meta/backfill`, payload);
+      setBfResult(data);
+      const l = data?.leads;
+      const o = data?.orders;
+      const acc = (l?.accepted || 0) + (o?.accepted || 0);
+      const fail = (l?.failed || 0) + (o?.failed || 0);
+      if (fail === 0) {
+        toast.success(`Backfill complete — ${acc} events accepted by Meta`);
+      } else {
+        toast.error(`Backfill finished — ${acc} accepted, ${fail} failed`);
+      }
+      fetchStatus();
+      fetchBackfillPreview(bfSinceDays || null);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Backfill failed");
+    } finally {
+      setBfRunning(false);
+    }
+  };
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -186,6 +250,107 @@ export default function DataConnectionsPanel() {
           <Send className={`w-3.5 h-3.5 mr-1.5 ${firing ? "animate-pulse" : ""}`} />
           {firing ? "Sending..." : "Send test event"}
         </Button>
+      </div>
+
+      {/* Historical Backfill card */}
+      <div className="bg-white rounded-xl border border-[#E5E3DB] p-5" data-testid="meta-backfill-card">
+        <div className="flex items-center gap-2 mb-1">
+          <Database className="w-4 h-4 text-[#3B5249]" />
+          <h3 className="font-heading text-base font-medium">Send historical data to Meta</h3>
+        </div>
+        <p className="text-xs text-[#59615D] mb-4">
+          Bulk-send all your existing leads &amp; orders to Meta as historical
+          Lead / Purchase events (event_time preserved). Meta uses events from
+          the last <b>7 days</b> for ad attribution; older events still help
+          build lookalike audiences and train the pixel.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+          <div>
+            <Label className="text-xs">What to send</Label>
+            <select
+              value={bfKind}
+              onChange={(e) => setBfKind(e.target.value)}
+              className="w-full h-10 rounded-md border border-[#E5E3DB] px-3 text-sm bg-white"
+              data-testid="meta-backfill-kind"
+            >
+              <option value="both">Both leads &amp; orders</option>
+              <option value="leads">Leads only</option>
+              <option value="orders">Orders only</option>
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Time window</Label>
+            <select
+              value={bfSinceDays}
+              onChange={(e) => setBfSinceDays(e.target.value)}
+              className="w-full h-10 rounded-md border border-[#E5E3DB] px-3 text-sm bg-white"
+              data-testid="meta-backfill-window"
+            >
+              <option value="7">Last 7 days (recommended)</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="">ALL TIME</option>
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Safety limit</Label>
+            <Input
+              type="number"
+              value={bfLimit}
+              onChange={(e) => setBfLimit(e.target.value)}
+              data-testid="meta-backfill-limit"
+            />
+          </div>
+          <div className="flex flex-col justify-end">
+            <div className="text-[11px] text-[#59615D] mb-1">Will send</div>
+            <div className="text-xl font-semibold text-[#2C3531]" data-testid="meta-backfill-preview">
+              {bfKind === "leads"
+                ? bfPreview.leads
+                : bfKind === "orders"
+                ? bfPreview.orders
+                : bfPreview.leads + bfPreview.orders}
+              <span className="text-xs text-[#59615D] ml-2">events</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            onClick={runBackfill}
+            disabled={bfRunning || !status?.configured}
+            className="rounded-full bg-[#3B5249] hover:bg-[#2C3531] text-white"
+            data-testid="meta-backfill-run-btn"
+          >
+            {bfRunning ? (
+              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Sending...</>
+            ) : (
+              <><Database className="w-3.5 h-3.5 mr-1.5" />Send to Meta now</>
+            )}
+          </Button>
+          {bfSinceDays === "" && (
+            <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-1">
+              ⚠️ ALL-TIME window — this will send every historical record. Prefer 7/30 days.
+            </span>
+          )}
+        </div>
+
+        {/* Result panel */}
+        {bfResult && (
+          <div className="mt-4 p-3 rounded-lg bg-[#F9F8F6] border border-[#E5E3DB] text-xs" data-testid="meta-backfill-result">
+            <div className="font-medium mb-1 text-[#2C3531]">Backfill result</div>
+            {bfResult.leads && (
+              <div className="mb-1">
+                Leads → sent <b>{bfResult.leads.sent}</b>, accepted <b className="text-green-700">{bfResult.leads.accepted}</b>, failed <b className="text-red-700">{bfResult.leads.failed}</b>
+              </div>
+            )}
+            {bfResult.orders && (
+              <div>
+                Orders → sent <b>{bfResult.orders.sent}</b>, accepted <b className="text-green-700">{bfResult.orders.accepted}</b>, failed <b className="text-red-700">{bfResult.orders.failed}</b>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recent events log */}

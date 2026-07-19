@@ -485,3 +485,22 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - Files touched: `/app/backend/meta_module.py` (new), `/app/backend/server.py` (create_lead + create_order hooks + request param + module register), `/app/backend/.env`, `/app/frontend/src/components/DataConnectionsPanel.jsx` (new), `/app/frontend/src/pages/AdminCRMPanel.js`.
 
 
+
+### Iteration 79 (2026-02-17) — Meta CAPI Historical Backfill (Send ALL existing data to Meta)
+- **Goal**: One-time bulk-send of every existing lead + order in the CRM to Meta so the pixel has full training data (better ad optimization from day 1).
+- **Backend** (`meta_module.py`):
+  - New `backfill_events(kind, since_days, limit, skip_already_sent)` — iterates DB, builds batched payloads (100 events per POST), sends via CAPI `/events`.
+  - `_clamp_event_time()` — Meta rejects events older than 7 days (error 2804003); clamps historical event_time to `now - 6 days` so old records are accepted for audience training.
+  - `_item_id()` — resilient product ID resolver. Many older orders have items with `product_name` but no `product_id` — this slugs the name (or falls back to order_id) so Meta doesn't reject on error 2804008 (invalid contents).
+  - `skip_already_sent` — pre-fetches `meta_events` collection to dedup events that were already accepted (prevents wasted API calls and Meta warnings on resend with different event_time).
+  - New endpoints: `POST /api/meta/backfill` (kind/since_days/limit), `GET /api/meta/backfill/preview?since_days=` (returns counts before firing).
+  - Also refactored realtime `fire_purchase_event` to reuse `_build_purchase_event_dict` for consistency.
+- **Frontend** (`DataConnectionsPanel.jsx`): New "Send historical data to Meta" card with kind dropdown (both/leads/orders), time window (7/30/90/ALL), safety limit, live preview count, and amber warning on ALL-TIME. Result panel shows sent/accepted/failed counts.
+- **Live result on this session's DB (60 orders + 35 leads)**:
+  - All 35 leads: accepted (or skipped as duplicates)
+  - All 60 orders: accepted after item ID hardening (had 24+ orders with missing product_id)
+  - Zero failures on final run
+- Files touched: `/app/backend/meta_module.py`, `/app/frontend/src/components/DataConnectionsPanel.jsx`.
+- **User action**: Redeploy production and click "Send to Meta now" in Data Connections → historical data will start populating Meta Events Manager within seconds.
+
+

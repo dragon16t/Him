@@ -228,56 +228,243 @@ async def fire_purchase_event(order: Dict[str, Any], request: Optional[Request] 
     if not is_configured():
         return {"skipped": "meta_not_configured"}
     try:
-        event_id = f"purchase-{order.get('id') or uuid_short()}"
+        event = _build_purchase_event_dict(order)
+        # Overwrite event_time with "now" for realtime events (backfill uses clamped historical)
+        event["event_time"] = int(time.time())
+        # Attach client IP/UA for advanced matching
         client_ip, client_ua = _extract_client(request)
-        user_data = _build_user_data(
-            email=order.get("customer_email") or "",
-            phone=order.get("customer_phone") or "",
-            name=order.get("customer_name") or "",
-            city=order.get("customer_city") or "",
-            state=order.get("customer_state") or "",
-            zip_code=order.get("customer_pincode") or "",
-            country="IN",
-            client_ip=client_ip,
-            client_ua=client_ua,
-        )
-        items = order.get("items") or []
-        content_ids = [str(it.get("product_id") or it.get("id") or "") for it in items if it]
-        content_ids = [c for c in content_ids if c]
-        contents = []
-        for it in items:
-            contents.append({
-                "id": str(it.get("product_id") or it.get("id") or ""),
-                "quantity": int(it.get("quantity") or 1),
-                "item_price": float(it.get("price") or it.get("unit_price") or 0),
-            })
-        payment_type = (order.get("payment_type") or "cod").lower()
-        event = {
-            "event_name": "Purchase",
-            "event_time": int(time.time()),
-            "event_id": event_id,
-            "action_source": "system_generated",
-            "user_data": user_data,
-            "custom_data": {
-                "currency": "INR",
-                "value": float(order.get("total_amount") or 0),
-                "order_id": order.get("id"),
-                "content_ids": content_ids or [order.get("id", "")],
-                "content_type": "product",
-                "contents": contents,
-                "num_items": sum(int(it.get("quantity") or 1) for it in items) or 1,
-                "payment_method": payment_type,  # cod / upi / razorpay etc.
-            },
-        }
+        if client_ip:
+            event["user_data"]["client_ip_address"] = client_ip
+        if client_ua:
+            event["user_data"]["client_user_agent"] = client_ua
         result = await _post_events([event], test_event_code_override=test_event_code)
         ok = result["status"] < 400
-        await _log_event(event_id, "Purchase", event, result, ok)
+        await _log_event(event["event_id"], "Purchase", event, result, ok)
         if not ok:
             logger.warning(f"Meta Purchase event rejected: {result}")
         return result
     except Exception as e:
         logger.exception(f"fire_purchase_event failed: {e}")
         return {"error": str(e)}
+
+
+# ─── Bulk backfill helpers (historical events → Meta) ──────────────────────
+def _parse_iso_to_epoch(iso_str: str) -> int:
+    """Convert an ISO datetime string to unix epoch seconds. Falls back to now."""
+    if not iso_str:
+        return int(time.time())
+    try:
+        s = iso_str.replace("Z", "+00:00") if isinstance(iso_str, str) else str(iso_str)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return int(time.time())
+
+
+def _clamp_event_time(iso_str: str) -> int:
+    """Meta CAPI rejects events older than 7 days. Clamp older event_times to
+    ~6 days ago so historical backfills are accepted (they still help train
+    lookalike audiences even if not used for direct ad attribution)."""
+    ts = _parse_iso_to_epoch(iso_str)
+    now = int(time.time())
+    six_days_ago = now - (6 * 24 * 3600)
+    if ts < six_days_ago:
+        return six_days_ago
+    if ts > now + 60:  # future timestamps also rejected
+        return now
+    return ts
+
+
+def _build_lead_event_dict(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Same shape as fire_lead_event's event, but with historical event_time."""
+    user_data = _build_user_data(
+        email=lead.get("email") or "",
+        phone=lead.get("phone_number") or lead.get("phone") or "",
+        name=lead.get("name") or "",
+        city=lead.get("customer_city") or lead.get("city") or "",
+        state=lead.get("customer_state") or lead.get("state") or "",
+        zip_code=lead.get("customer_pincode") or lead.get("pincode") or "",
+        country="IN",
+    )
+    return {
+        "event_name": "Lead",
+        "event_time": _clamp_event_time(lead.get("created_at") or ""),
+        "event_id": f"lead-{lead.get('id')}",
+        "action_source": "system_generated",
+        "user_data": user_data,
+        "custom_data": {
+            "lead_id": lead.get("id"),
+            "content_name": lead.get("product_interest") or "general",
+            "lead_source": lead.get("source") or "crm_manual",
+            "content_category": "lead",
+        },
+    }
+
+
+def _item_id(it: Dict[str, Any], fallback: str) -> str:
+    """Return a stable non-empty product ID for Meta contents. Falls back to a
+    slug of product_name/name if product_id is missing (many older CRM orders
+    saved items without a product_id)."""
+    pid = str(it.get("product_id") or it.get("id") or "").strip()
+    if pid:
+        return pid
+    name = str(it.get("product_name") or it.get("name") or "").strip().lower()
+    if name:
+        slug = re.sub(r"[^a-z0-9]+", "-", name).strip("-")
+        return slug or fallback
+    return fallback
+
+
+def _build_purchase_event_dict(order: Dict[str, Any]) -> Dict[str, Any]:
+    user_data = _build_user_data(
+        email=order.get("customer_email") or "",
+        phone=order.get("customer_phone") or "",
+        name=order.get("customer_name") or "",
+        city=order.get("customer_city") or "",
+        state=order.get("customer_state") or "",
+        zip_code=order.get("customer_pincode") or "",
+        country="IN",
+    )
+    order_id = str(order.get("id") or "unknown")
+    items = order.get("items") or []
+    contents = []
+    content_ids: List[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        item_id = _item_id(it, fallback=f"{order_id}-item")
+        qty = int(it.get("quantity") or 1)
+        try:
+            price = float(it.get("price") or it.get("unit_price") or 0)
+        except Exception:
+            price = 0.0
+        if price <= 0:
+            # Distribute total_amount evenly if we have no per-item price.
+            try:
+                price = float(order.get("total_amount") or 0) / max(len(items), 1)
+            except Exception:
+                price = 0.0
+        contents.append({"id": item_id, "quantity": qty, "item_price": round(price, 2)})
+        content_ids.append(item_id)
+
+    custom_data: Dict[str, Any] = {
+        "currency": "INR",
+        "value": float(order.get("total_amount") or 0),
+        "order_id": order_id,
+        "content_type": "product",
+        "num_items": sum(int(it.get("quantity") or 1) for it in items) or 1,
+        "payment_method": (order.get("payment_type") or "cod").lower(),
+    }
+    # content_ids is REQUIRED for Purchase attribution; fall back to order_id.
+    custom_data["content_ids"] = content_ids or [order_id]
+    # contents is OPTIONAL — only send when we actually have items with real IDs.
+    if contents:
+        custom_data["contents"] = contents
+
+    return {
+        "event_name": "Purchase",
+        "event_time": _clamp_event_time(order.get("created_at") or ""),
+        "event_id": f"purchase-{order_id}",
+        "action_source": "system_generated",
+        "user_data": user_data,
+        "custom_data": custom_data,
+    }
+
+
+async def backfill_events(kind: str, since_days: Optional[int] = None, limit: int = 5000, skip_already_sent: bool = True) -> Dict[str, Any]:
+    """Backfill historical Lead or Purchase events to Meta in batches of 100.
+    kind: 'leads' or 'orders'
+    since_days: only send records created within the last N days (None = all)
+    limit: hard cap on records to send this run (safety)
+    skip_already_sent: skip event_ids that were already successfully accepted
+                      by Meta (dedup against meta_events collection).
+    """
+    if not is_configured():
+        return {"error": "meta_not_configured"}
+    if _db is None:
+        return {"error": "db_not_ready"}
+    coll_name = "leads" if kind == "leads" else "orders"
+    build_fn = _build_lead_event_dict if kind == "leads" else _build_purchase_event_dict
+    ev_name = "Lead" if kind == "leads" else "Purchase"
+    id_prefix = "lead-" if kind == "leads" else "purchase-"
+
+    q: Dict[str, Any] = {}
+    if since_days is not None:
+        cutoff = (datetime.now(timezone.utc) - _td(days=since_days)).isoformat()
+        q = {"created_at": {"$gte": cutoff}}
+    cursor = _db[coll_name].find(q, {"_id": 0}).sort("created_at", 1).limit(limit)
+    records = await cursor.to_list(limit)
+
+    # Pre-fetch already-sent event_ids for dedup
+    already_ok: set = set()
+    if skip_already_sent and records:
+        wanted_ids = [f"{id_prefix}{r.get('id')}" for r in records if r.get("id")]
+        async for e in _db.meta_events.find(
+            {"event_id": {"$in": wanted_ids}, "ok": True},
+            {"_id": 0, "event_id": 1},
+        ):
+            already_ok.add(e["event_id"])
+
+    batch: List[Dict[str, Any]] = []
+    total_sent = 0
+    total_ok = 0
+    total_failed = 0
+    total_skipped = 0
+    errors: List[str] = []
+    BATCH_SIZE = 100
+
+    async def _flush():
+        nonlocal batch, total_sent, total_ok, total_failed
+        if not batch:
+            return
+        try:
+            result = await _post_events(batch)
+            ok = result["status"] < 400
+            received = int(result.get("body", {}).get("events_received") or 0) if ok else 0
+            total_sent += len(batch)
+            if ok:
+                total_ok += received or len(batch)
+            else:
+                total_failed += len(batch)
+                errors.append(str(result.get("body"))[:200])
+            for ev in batch:
+                await _log_event(ev["event_id"], ev["event_name"], ev, result, ok)
+        except Exception as e:
+            total_failed += len(batch)
+            errors.append(str(e)[:200])
+        batch = []
+
+    for r in records:
+        try:
+            ev = build_fn(r)
+            if ev["event_id"] in already_ok:
+                total_skipped += 1
+                continue
+            batch.append(ev)
+            if len(batch) >= BATCH_SIZE:
+                await _flush()
+                await asyncio.sleep(0.2)
+        except Exception as e:
+            errors.append(f"build_err: {e}")
+    await _flush()
+
+    return {
+        "kind": kind,
+        "event_name": ev_name,
+        "queried": len(records),
+        "skipped_already_sent": total_skipped,
+        "sent": total_sent,
+        "accepted": total_ok,
+        "failed": total_failed,
+        "errors": errors[:5],
+        "since_days": since_days,
+    }
+
+
+# Alias so we can `from datetime import timedelta` cleanly at top later
+from datetime import timedelta as _td
 
 
 # ─── Small helpers ───────────────────────────────────────────────────────────
@@ -375,5 +562,51 @@ def register(api_router, database, get_current_user):
             return {"events": docs}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @api_router.post("/meta/backfill")
+    async def meta_backfill(data: dict, current_user: dict = Depends(_admin_only)):
+        """One-time bulk send of historical leads/orders to Meta.
+        Body: {"kind": "leads" | "orders" | "both", "since_days": <int|null>, "limit": <int>}
+        Notes:
+          - since_days=null sends ALL historical records (careful — Meta only
+            uses events from the last 7 days for ad attribution; older events
+            still help build lookalike audiences).
+          - limit is a hard safety cap per run (default 5000).
+        Runs synchronously; response includes counts. For very large sets, call
+        this multiple times with smaller `limit` chunks."""
+        if not is_configured():
+            raise HTTPException(status_code=400, detail="Meta integration not configured")
+        kind = (data.get("kind") or "both").lower()
+        since_days = data.get("since_days")
+        if since_days is not None:
+            try:
+                since_days = int(since_days)
+            except Exception:
+                since_days = None
+        limit = int(data.get("limit") or 5000)
+        limit = max(1, min(limit, 20000))
+
+        results: Dict[str, Any] = {}
+        if kind in ("leads", "both"):
+            results["leads"] = await backfill_events("leads", since_days=since_days, limit=limit)
+        if kind in ("orders", "both"):
+            results["orders"] = await backfill_events("orders", since_days=since_days, limit=limit)
+        return results
+
+    @api_router.get("/meta/backfill/preview")
+    async def meta_backfill_preview(since_days: Optional[int] = None, current_user: dict = Depends(_admin_only)):
+        """Return counts of records that WOULD be sent for a given since_days window.
+        Lets the admin see how much data will hit Meta before firing backfill."""
+        q: Dict[str, Any] = {}
+        if since_days is not None:
+            cutoff = (datetime.now(timezone.utc) - _td(days=int(since_days))).isoformat()
+            q = {"created_at": {"$gte": cutoff}}
+        try:
+            leads_count = await _db.leads.count_documents(q)
+            orders_count = await _db.orders.count_documents(q)
+        except Exception:
+            leads_count = 0
+            orders_count = 0
+        return {"since_days": since_days, "leads": leads_count, "orders": orders_count}
 
     logger.info("Meta CAPI routes registered (/meta/status, /meta/test, /meta/events)")
