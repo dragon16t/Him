@@ -460,3 +460,28 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 **⚠️ Redeploy production** to ship these backend fixes. The Cloudflare 520s should now be dramatically less frequent (or gone entirely, depending on how often you hit the affected code paths).
 
 
+
+### Iteration 78 (2026-02-17) — Meta Conversions API (CAPI) v25.0 Integration
+- **Goal**: Push CRM data → Meta so Facebook/Instagram ad campaigns optimize for real, high-intent customers. NO lead pulling FROM Facebook (user's leads are added manually in the CRM).
+- **Events wired**:
+  - `Lead` — fires when TC/agent adds a new lead (any source)
+  - `Purchase` — fires when an order is created (COD or UPI or Razorpay), with total_amount, product IDs, and payment method
+- **PII handling**: Full SHA-256 hashing per Meta spec — `em`, `ph` (with India country code auto-prepend), `fn`, `ln`, `ct`, `st`, `zp`, `country`. Advanced matching also includes `client_ip_address` + `client_user_agent`.
+- **Architecture**:
+  - New module `/app/backend/meta_module.py` — `fire_lead_event()`, `fire_purchase_event()`, thread-safe `_post_events(test_event_code_override=)`, hashing helpers, admin routes.
+  - `create_lead` (line 1682) and `create_order` (line 1914) endpoints wired with `asyncio.create_task(fire_*_event(...))` — fire-and-forget so Meta latency NEVER blocks the CRM response.
+  - `create_lead` now persists `email`, `customer_city`, `customer_state`, `customer_pincode` for higher Meta match quality.
+  - Admin API: `GET /api/meta/status`, `POST /api/meta/test`, `GET /api/meta/events`.
+- **Admin UI**: New "🔗 Data Connections" tab in AdminCRMPanel (`/app/frontend/src/components/DataConnectionsPanel.jsx`). Shows:
+  - Connection health badge (Connected / Not configured)
+  - Masked pixel ID + access token
+  - Totals (sent / accepted / rejected)
+  - Test event fire form (with optional test_event_code override)
+  - Recent events log (last 20 with Meta status + fbtrace_id)
+  - "How it works" explainer
+- **Env vars added** to `/app/backend/.env`: `META_ENABLED=1`, `META_PIXEL_ID=690863659974240`, `META_ACCESS_TOKEN=EAAOeB...`, `META_GRAPH_VERSION=v25.0`, `META_TEST_EVENT_CODE=` (blank = live).
+- **Live verified**: Real events accepted by Meta (`events_received: 1`, `fbtrace_id` returned). Both COD and UPI orders correctly fire Purchase. Lead events include full hashed PII + client IP/UA. Iteration 62 testing: 100% pass on 9 backend + full frontend flows.
+- **User action**: (1) Rotate the access token in Meta Business Manager (token was shared in chat). (2) Redeploy production to ship this feature. (3) Verify events in Events Manager → your Pixel → Overview.
+- Files touched: `/app/backend/meta_module.py` (new), `/app/backend/server.py` (create_lead + create_order hooks + request param + module register), `/app/backend/.env`, `/app/frontend/src/components/DataConnectionsPanel.jsx` (new), `/app/frontend/src/pages/AdminCRMPanel.js`.
+
+

@@ -142,12 +142,13 @@ def _build_user_data(
 
 
 # ─── Low-level CAPI post ─────────────────────────────────────────────────────
-async def _post_events(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def _post_events(events: List[Dict[str, Any]], test_event_code_override: Optional[str] = None) -> Dict[str, Any]:
     """POST a batch of events to Meta Conversions API. Returns Meta's JSON."""
     url = f"https://graph.facebook.com/{_GRAPH_VERSION}/{_PIXEL_ID}/events"
     body: Dict[str, Any] = {"data": events, "access_token": _ACCESS_TOKEN}
-    if _TEST_EVENT_CODE:
-        body["test_event_code"] = _TEST_EVENT_CODE
+    tec = test_event_code_override if test_event_code_override is not None else _TEST_EVENT_CODE
+    if tec:
+        body["test_event_code"] = tec
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as sess:
         async with sess.post(url, json=body) as resp:
@@ -180,7 +181,7 @@ async def _log_event(event_id: str, event_name: str, event: Dict[str, Any], resu
 
 
 # ─── High-level fire functions (called from lead/order create) ───────────────
-async def fire_lead_event(lead: Dict[str, Any], request: Optional[Request] = None) -> Dict[str, Any]:
+async def fire_lead_event(lead: Dict[str, Any], request: Optional[Request] = None, test_event_code: Optional[str] = None) -> Dict[str, Any]:
     """Fire a Meta 'Lead' event for a newly created CRM lead. Fails silently."""
     if not is_configured():
         return {"skipped": "meta_not_configured"}
@@ -211,7 +212,7 @@ async def fire_lead_event(lead: Dict[str, Any], request: Optional[Request] = Non
                 "content_category": "lead",
             },
         }
-        result = await _post_events([event])
+        result = await _post_events([event], test_event_code_override=test_event_code)
         ok = result["status"] < 400
         await _log_event(event_id, "Lead", event, result, ok)
         if not ok:
@@ -222,7 +223,7 @@ async def fire_lead_event(lead: Dict[str, Any], request: Optional[Request] = Non
         return {"error": str(e)}
 
 
-async def fire_purchase_event(order: Dict[str, Any], request: Optional[Request] = None) -> Dict[str, Any]:
+async def fire_purchase_event(order: Dict[str, Any], request: Optional[Request] = None, test_event_code: Optional[str] = None) -> Dict[str, Any]:
     """Fire a Meta 'Purchase' event for a newly created CRM order. Fails silently."""
     if not is_configured():
         return {"skipped": "meta_not_configured"}
@@ -268,7 +269,7 @@ async def fire_purchase_event(order: Dict[str, Any], request: Optional[Request] 
                 "payment_method": payment_type,  # cod / upi / razorpay etc.
             },
         }
-        result = await _post_events([event])
+        result = await _post_events([event], test_event_code_override=test_event_code)
         ok = result["status"] < 400
         await _log_event(event_id, "Purchase", event, result, ok)
         if not ok:
@@ -362,14 +363,7 @@ def register(api_router, database, get_current_user):
             "items": [{"product_id": "test-sku", "quantity": 1, "price": 999}],
         }
         # Temporarily override test event code for this single call
-        global _TEST_EVENT_CODE
-        prev = _TEST_EVENT_CODE
-        if test_code:
-            _TEST_EVENT_CODE = test_code
-        try:
-            result = await fire_purchase_event(fake_order, request=None)
-        finally:
-            _TEST_EVENT_CODE = prev
+        result = await fire_purchase_event(fake_order, request=None, test_event_code=test_code or None)
         return {"result": result}
 
     @api_router.get("/meta/events")

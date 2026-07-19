@@ -1680,7 +1680,7 @@ async def _notify_new_leads_assigned(tc_id: str, count: int, sample_phones: list
 
 
 @api_router.post("/leads")
-async def create_lead(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+async def create_lead(data: dict, background_tasks: BackgroundTasks, request: Request, current_user: dict = Depends(get_current_user)):
     phone = (data.get("phone_number") or data.get("phone") or "").strip()
     if not phone:
         raise HTTPException(status_code=400, detail="Phone number is required")
@@ -1739,6 +1739,12 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
         "next_follow_up_time": data.get("next_follow_up_time", ""),
         "next_relationship_date": "", "next_repeat_order_date": "",
         "last_order_date": "", "call_logs": [],
+        # Optional customer fields — captured whenever the caller supplies them.
+        # Used by Meta CAPI Lead events for higher match quality (em/ct/st/zp).
+        "email": data.get("email", ""),
+        "customer_city": data.get("customer_city", "") or data.get("city", ""),
+        "customer_state": data.get("customer_state", "") or data.get("state", ""),
+        "customer_pincode": data.get("customer_pincode", "") or data.get("pincode", ""),
         "created_by": current_user['id'], "created_by_name": current_user.get('name',''),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
@@ -1749,9 +1755,7 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
     # Fire-and-forget so we never block the response on a slow Meta call.
     try:
         from meta_module import fire_lead_event as _fire_lead
-        # request is available via BackgroundTasks context; safer to pass None here
-        # so client IP/UA come from headers only if we build a wrapper. For now, no request.
-        asyncio.create_task(_fire_lead(lead, None))
+        asyncio.create_task(_fire_lead(lead, request))
     except Exception:
         pass
     # Notify TC (and their manager) that a new lead landed on their dashboard.
@@ -1921,7 +1925,7 @@ async def get_pending_orders(current_user: dict = Depends(get_current_user)):
     return {"orders": await db.orders.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(5000)}
 
 @api_router.post("/orders")
-async def create_order(data: dict, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+async def create_order(data: dict, background_tasks: BackgroundTasks, request: Request, current_user: dict = Depends(get_current_user)):
     address = (data.get("customer_address") or "").strip()
     if not address:
         raise HTTPException(status_code=400, detail="Customer address is required")
@@ -1957,7 +1961,7 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     # for high-intent audiences. Fire-and-forget — never block the response.
     try:
         from meta_module import fire_purchase_event as _fire_purchase
-        asyncio.create_task(_fire_purchase(order, None))
+        asyncio.create_task(_fire_purchase(order, request))
     except Exception:
         pass
     # ── Auto-deduct master stock for each product on the order (never below 0) ──
