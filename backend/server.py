@@ -1745,6 +1745,15 @@ async def create_lead(data: dict, background_tasks: BackgroundTasks, current_use
     }
     await db.leads.insert_one(lead)
     lead.pop("_id", None)
+    # ── Meta CAPI: fire a Lead event to Meta so ad campaigns can optimize.
+    # Fire-and-forget so we never block the response on a slow Meta call.
+    try:
+        from meta_module import fire_lead_event as _fire_lead
+        # request is available via BackgroundTasks context; safer to pass None here
+        # so client IP/UA come from headers only if we build a wrapper. For now, no request.
+        asyncio.create_task(_fire_lead(lead, None))
+    except Exception:
+        pass
     # Notify TC (and their manager) that a new lead landed on their dashboard.
     # Only for leads assigned to someone OTHER than the creator (i.e. distributed leads).
     if assigned_to and assigned_to != current_user['id']:
@@ -1944,6 +1953,13 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, current_us
     }
     await db.orders.insert_one(order)
     order.pop("_id", None)
+    # ── Meta CAPI: fire a Purchase event so ad campaigns can optimize
+    # for high-intent audiences. Fire-and-forget — never block the response.
+    try:
+        from meta_module import fire_purchase_event as _fire_purchase
+        asyncio.create_task(_fire_purchase(order, None))
+    except Exception:
+        pass
     # ── Auto-deduct master stock for each product on the order (never below 0) ──
     now_iso2 = datetime.now(timezone.utc).isoformat()
     for it in (data.get("items") or []):
@@ -9884,6 +9900,13 @@ try:
     logger.info("today-activity routes registered")
 except Exception as _ta:
     logger.error(f"today-activity registration failed: {_ta}")
+
+# ── META CONVERSIONS API (CAPI) — send Lead/Purchase events to Meta ────
+try:
+    from meta_module import register as _meta_register
+    _meta_register(api_router, db, get_current_user)
+except Exception as _mx:
+    logger.error(f"meta module registration failed: {_mx}")
 
 app.include_router(api_router)
 
