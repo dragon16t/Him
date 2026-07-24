@@ -21,6 +21,7 @@ import PostOfficePanel from "../components/PostOfficePanel";
 import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
 import StockAllocationPanel from "../components/StockAllocationPanel";
 import PendingCreditsPanel from "../components/PendingCreditsPanel";
+import AmazonPickupExportPanel from "../components/AmazonPickupExportPanel";
 import DarkModeToggle from "../components/DarkModeToggle";
 
 const API = "/api";
@@ -327,6 +328,7 @@ export default function InventoryManagerDashboard() {
             <TabsTrigger value="allocation" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-allocation">👥 Stock Allocation</TabsTrigger>
             <TabsTrigger value="credits" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-credits">💰 Pending Credits</TabsTrigger>
             <TabsTrigger value="mysheet" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-mysheet">My Sheet</TabsTrigger>
+            <TabsTrigger value="amazon" className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white" data-testid="inv-tab-amazon">📦 Amazon Sheet</TabsTrigger>
           </TabsList>
 
           {/* PIPELINE */}
@@ -498,6 +500,7 @@ export default function InventoryManagerDashboard() {
             </div>
           </TabsContent>
           <TabsContent value="mysheet" className="animate-fade-in"><DailyTaskSheet titleSuffix="Inventory Manager" /></TabsContent>
+          <TabsContent value="amazon" className="animate-fade-in"><AmazonPickupExportPanel /></TabsContent>
           <TabsContent value="post" className="animate-fade-in"><PostOfficePanel role="inventory_manager" /></TabsContent>
 
           <TabsContent value="tcreturns" className="animate-fade-in"><TelecallerReturnsPanel /></TabsContent>

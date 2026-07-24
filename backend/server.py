@@ -9912,6 +9912,13 @@ try:
 except Exception as _mx:
     logger.error(f"meta module registration failed: {_mx}")
 
+# ── AMAZON BULK PICKUP EXPORTER (Inventory Manager) ────────────────────
+try:
+    from amazon_pickup_module import register as _amz_register
+    _amz_register(api_router, db, get_current_user)
+except Exception as _ax:
+    logger.error(f"amazon pickup module registration failed: {_ax}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

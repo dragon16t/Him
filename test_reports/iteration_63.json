@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 63 — Amazon India Bulk Pickup Sheet feature validated end-to-end. Backend: 14/14 pytest cases passing (preview + export endpoints, filters, role guards, 44-column workbook, autofill values, COD/prepaid CollectOnDelivery flag, DD-MM-YYYY invoice date, phone/state normalization, empty-result 404). Frontend: IM login lands on /inventory; '📦 Amazon Sheet' tab loads AmazonPickupExportPanel; filter changes update match count (all=60, cod=0/prepaid=0 on default today's date, all-dates+all=60); .xlsx download triggered with correct filename; weight/dimension inputs editable and applied. Meta CAPI regression smoke passed.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Amazon Sheet tab", "issues": ["Order date defaults to today (2026-07-24) so initial count = 0; clearing the date box works but is not obvious. Consider defaulting to blank/'all dates' or adding an explicit 'All dates' toggle."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_63_amazon_pickup.py",
+    "/app/test_reports/pytest/iter63.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "amazon_pickup_module.py payment_type='prepaid' filter uses {$nin: ['cod','COD']} — this correctly classifies free-influencer/UPI/razorpay orders as prepaid; verified via UI (FREE_INFLUENCER row appears with CollectOnDelivery=N when 'prepaid' selected). Fine.",
+    "order_date filter uses UTC day boundary; if users are in IST, midnight IST orders can fall into adjacent UTC day. Non-blocking but worth documenting.",
+    "AmazonPickupExportPanel.jsx: weight/dim inputs use raw e.target.value (string) — accepted by backend Query(float=…), but consider Number(e.target.value) for cleanliness.",
+    "Ship-From/Return-To are blank when company_settings has no warehouse — intentional per spec, but IM has no UI to edit them; a small hint would help."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_63_amazon_pickup.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100%"},
+  "test_credentials": "IM inventory@celestaglow.com/inv123, Admin admin@celestaglow.com/admin123, TC telecaller1@celestaglow.com/tc123 — all working",
+  "seed_data_creation": "None — used existing 60 orders in DB",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Amazon pickup routes at /api/inventory/amazon-pickup/{preview,export}. Regression file test_iteration_63_amazon_pickup.py verifies workbook shape (44 cols, sheet name 'IN Schedule Pickup V2', notes sheet), autofill defaults, and role guard. openpyxl 3.1.5 installed. 60 orders in DB — most COD to Kerala. Default order_date is today so panel shows 0 until user clears date."
+}
