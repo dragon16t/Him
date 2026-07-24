@@ -228,7 +228,7 @@ async def _build_row(order: Dict[str, Any], pickup_date_ddmmyyyy: str,
         0,                              # T CGST Value (already included in Product Value)
         0,                              # U SGST Value
         0,                              # V IGST Value
-        "Y" if is_cod else "N",         # W CollectOnDelivery
+        "YES" if is_cod else "NO",      # W CollectOnDelivery (per Amazon spec: YES/NO)
         "STANDARD",                     # X Shipping Service
         pickup_date_ddmmyyyy,           # Y Pickup Date
         pickup_time,                    # Z Pickup Time
@@ -400,11 +400,11 @@ def register(api_router, database, get_current_user):
         payment_type: str = Query("all"),
         status: str = Query("all"),
         pickup_date: Optional[str] = Query(None, description="DD-MM-YYYY (defaults to tomorrow)"),
-        pickup_time: str = Query("11:00 - 14:00"),
+        pickup_time: str = Query("11:00", description="HH:MM (Amazon spec)"),
         weight_kg: float = Query(0.25, ge=0.01, le=18),
-        length_cm: float = Query(9, gt=0),
-        width_cm: float = Query(6, gt=0),
-        height_cm: float = Query(3, gt=0),
+        length_cm: float = Query(9, gt=0, le=70),
+        width_cm: float = Query(6, gt=0, le=70),
+        height_cm: float = Query(3, gt=0, le=45),
         current_user: dict = Depends(_im_or_admin),
     ):
         statuses: List[str] = []
@@ -420,7 +420,11 @@ def register(api_router, database, get_current_user):
         ship_from = await _load_ship_from()
 
         rows = []
+        over_cap = []  # orders that exceed Amazon's ₹50000 (Product+GST) limit
         for o in orders:
+            total = float(o.get("total_amount") or 0)
+            if total > 50000:
+                over_cap.append(o.get("id"))
             rows.append(await _build_row(
                 o, pickup_date, pickup_time,
                 weight_kg, length_cm, width_cm, height_cm,
@@ -429,13 +433,17 @@ def register(api_router, database, get_current_user):
 
         payload = _make_workbook(rows)
         fname = f"Amazon_Pickup_{order_date or 'all'}_{payment_type}.xlsx"
+        headers = {
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "X-Row-Count": str(len(rows)),
+        }
+        if over_cap:
+            headers["X-Over-Cap-Count"] = str(len(over_cap))
+            headers["X-Over-Cap-Ids"] = ",".join(over_cap[:10])
         return StreamingResponse(
             io.BytesIO(payload),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f'attachment; filename="{fname}"',
-                "X-Row-Count": str(len(rows)),
-            },
+            headers=headers,
         )
 
     logger.info("Amazon pickup export routes registered")

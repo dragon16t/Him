@@ -532,3 +532,15 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - Files: `/app/backend/amazon_pickup_module.py` (new), `/app/backend/server.py` (register), `/app/frontend/src/components/AmazonPickupExportPanel.jsx` (new), `/app/frontend/src/pages/InventoryManagerDashboard.js`, `/app/memory/test_credentials.md` (added IM creds), `/app/backend/tests/test_iteration_63_amazon_pickup.py` (regression).
 
 
+
+### Iteration 81 (2026-02-17) — Amazon Pickup Sheet Corrections (per Definitions doc)
+- User shared Amazon's official Definitions doc; found 4 spec deviations in Iter 80:
+  1. **CollectOnDelivery** — Amazon example says `YES`/`NO`, I was writing `Y`/`N`. Fixed.
+  2. **Pickup Time** — Amazon spec is HH:MM (e.g. `11:00`), I was using slot range `11:00 - 14:00`. Fixed. UI now shows HH:MM dropdown with 10:00-16:00.
+  3. **Dimension caps** — Amazon rejects L>70, W>70, H>45. Added Pydantic `le=70/le=45` validators + UI labels showing the caps.
+  4. **Product Value + tax ≤ ₹50,000** — Amazon rejects orders above ₹50k. Added `X-Over-Cap-Count` / `X-Over-Cap-Ids` response headers + amber toast warning listing offending order IDs so IM can split those orders manually.
+- Ship To: **Delivery Note** column is listed in Definitions doc but NOT present in the actual data-entry sheet the user provided — kept 44-col layout matching the real uploader (Amazon rejects extra columns).
+- Files touched: `/app/backend/amazon_pickup_module.py`, `/app/frontend/src/components/AmazonPickupExportPanel.jsx`.
+- Verified: COD → YES, Prepaid → NO, PickupTime=11:00, L=90 rejected (422), all 44 cols intact.
+
+

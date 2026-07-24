@@ -20,7 +20,7 @@ export default function AmazonPickupExportPanel() {
   const [paymentType, setPaymentType] = useState("all"); // all | cod | prepaid
   const [status, setStatus] = useState("all");
   const [pickupDate, setPickupDate] = useState(tomorrow); // YYYY-MM-DD
-  const [pickupTime, setPickupTime] = useState("11:00 - 14:00");
+  const [pickupTime, setPickupTime] = useState("11:00"); // Amazon spec: HH:MM format
   const [weightKg, setWeightKg] = useState(0.25);
   const [dimL, setDimL] = useState(9);
   const [dimW, setDimW] = useState(6);
@@ -89,6 +89,14 @@ export default function AmazonPickupExportPanel() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      const overCap = Number(resp.headers?.["x-over-cap-count"] || 0);
+      const overCapIds = resp.headers?.["x-over-cap-ids"] || "";
+      if (overCap > 0) {
+        toast.warning(
+          `${overCap} order${overCap > 1 ? "s" : ""} exceed ₹50,000 (Amazon's limit): ${overCapIds}. Consider splitting.`,
+          { duration: 8000 }
+        );
+      }
       toast.success(`Downloaded ${preview.count} orders as Amazon pickup sheet`);
     } catch (e) {
       const msg = e.response?.data instanceof Blob
@@ -209,16 +217,16 @@ export default function AmazonPickupExportPanel() {
             />
           </div>
           <div>
-            <Label className="text-[11px]">Length (cm)</Label>
-            <Input type="number" value={dimL} onChange={(e) => setDimL(e.target.value)} data-testid="amz-length" />
+            <Label className="text-[11px]">Length (cm) <span className="text-[#59615D]">≤ 70</span></Label>
+            <Input type="number" max="70" step="0.1" value={dimL} onChange={(e) => setDimL(e.target.value)} data-testid="amz-length" />
           </div>
           <div>
-            <Label className="text-[11px]">Width (cm)</Label>
-            <Input type="number" value={dimW} onChange={(e) => setDimW(e.target.value)} data-testid="amz-width" />
+            <Label className="text-[11px]">Width (cm) <span className="text-[#59615D]">≤ 70</span></Label>
+            <Input type="number" max="70" step="0.1" value={dimW} onChange={(e) => setDimW(e.target.value)} data-testid="amz-width" />
           </div>
           <div>
-            <Label className="text-[11px]">Height (cm)</Label>
-            <Input type="number" value={dimH} onChange={(e) => setDimH(e.target.value)} data-testid="amz-height" />
+            <Label className="text-[11px]">Height (cm) <span className="text-[#59615D]">≤ 45</span></Label>
+            <Input type="number" max="45" step="0.1" value={dimH} onChange={(e) => setDimH(e.target.value)} data-testid="amz-height" />
           </div>
           <div>
             <Label className="text-[11px]">
@@ -233,15 +241,20 @@ export default function AmazonPickupExportPanel() {
             />
           </div>
           <div>
-            <Label className="text-[11px]">Pickup slot</Label>
+            <Label className="text-[11px]">Pickup slot (HH:MM)</Label>
             <select
               value={pickupTime}
               onChange={(e) => setPickupTime(e.target.value)}
               className="w-full h-10 rounded-md border border-[#E5E3DB] px-3 text-sm bg-white"
               data-testid="amz-pickup-slot"
             >
-              <option value="11:00 - 14:00">11:00 - 14:00</option>
-              <option value="14:00 - 16:15">14:00 - 16:15</option>
+              <option value="10:00">10:00</option>
+              <option value="11:00">11:00</option>
+              <option value="12:00">12:00</option>
+              <option value="13:00">13:00</option>
+              <option value="14:00">14:00</option>
+              <option value="15:00">15:00</option>
+              <option value="16:00">16:00</option>
             </select>
           </div>
         </div>
