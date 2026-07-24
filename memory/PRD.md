@@ -504,3 +504,31 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - **User action**: Redeploy production and click "Send to Meta now" in Data Connections → historical data will start populating Meta Events Manager within seconds.
 
 
+
+### Iteration 80 (2026-02-17) — Amazon Bulk Pickup Sheet Exporter (Inventory Manager)
+- **Goal**: One-click download of a filled Amazon "IN Schedule Pickup V2" .xlsx from CRM orders so IM doesn't have to hand-fill 44 columns per order.
+- **User's spec (auto-fill defaults)**:
+  - Weight: **0.25 KG** (250g)
+  - Dimensions: **9 × 6 × 3 cm** (L × W × H) — matches template's "largest dimension = length" rule
+  - Product Value: **order.total_amount** (already includes GST — user spec)
+  - CGST/SGST/IGST: **0** (avoid double-taxing on COD collection)
+  - CollectOnDelivery: **Y** for COD orders, **N** for prepaid / UPI / Razorpay
+  - Product Type: **Beauty Product**, Shipping Service: **STANDARD**
+  - Pickup Date: user-selected (defaults tomorrow), Pickup Slot: 11:00-14:00 or 14:00-16:15
+- **Backend** (`amazon_pickup_module.py`):
+  - Parsed the exact 44-column schema from user's uploaded template (`IN Schedule Pickup V2` sheet).
+  - Helpers: `_norm_state()` (converts state to Amazon's UPPERCASE + handles common short forms), `_clean_phone()` (strips +91/0 to bare 10-digit), `_split_address()` (splits long addresses into line1/line2 at word boundaries with 60-char cap), `_fmt_date_ddmmyyyy()`, `_product_description()` (joins item names, 100-char cap), `_load_ship_from()` (reads seller warehouse from company_settings, blank if unset so Amazon's Shipper Central default is used).
+  - `_make_workbook()` — openpyxl-generated .xlsx with branded header row (Celesta green), frozen panes, auto column widths, plus a "Notes" sheet with instructions.
+  - Endpoints: `GET /api/inventory/amazon-pickup/preview` (count + 20-sample) and `GET /api/inventory/amazon-pickup/export` (streams .xlsx).
+  - Role-guarded: only `inventory_manager` and `admin` roles.
+  - Filters: `order_date=YYYY-MM-DD`, `payment_type=all|cod|prepaid`, `status=all|<comma-sep list>`, `pickup_date`, `pickup_time`, and weight/dims overridable.
+- **Frontend** (`AmazonPickupExportPanel.jsx`): new 📦 **Amazon Sheet** tab in Inventory Manager dashboard with:
+  - Filter card: order date (with All-dates/Today/Yesterday preset chips), payment mode (COD/Prepaid/All), status, live match count.
+  - Package details card: editable weight, L/W/H, pickup date, pickup slot.
+  - Preview table (20-row live preview with color-coded payment badges).
+  - Big "Download Amazon sheet (N)" button → Blob-based .xlsx download.
+- **Testing (iteration_63.json)**: 100% pass — 14/14 backend pytest cases including workbook shape, autofill defaults, COD flag, role guard, empty-result 404. Frontend UI + download flow verified.
+- **Post-review polish**: Default date changed from "today" to "All dates" (60 orders visible immediately) after reviewer flagged that new IM users saw a zero-count panel.
+- Files: `/app/backend/amazon_pickup_module.py` (new), `/app/backend/server.py` (register), `/app/frontend/src/components/AmazonPickupExportPanel.jsx` (new), `/app/frontend/src/pages/InventoryManagerDashboard.js`, `/app/memory/test_credentials.md` (added IM creds), `/app/backend/tests/test_iteration_63_amazon_pickup.py` (regression).
+
+

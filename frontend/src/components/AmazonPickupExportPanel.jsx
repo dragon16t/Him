@@ -16,7 +16,7 @@ export default function AmazonPickupExportPanel() {
   const today = new Date().toISOString().slice(0, 10);
   const tomorrow = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
 
-  const [orderDate, setOrderDate] = useState(today); // YYYY-MM-DD (order created)
+  const [orderDate, setOrderDate] = useState(""); // "" = all dates by default
   const [paymentType, setPaymentType] = useState("all"); // all | cod | prepaid
   const [status, setStatus] = useState("all");
   const [pickupDate, setPickupDate] = useState(tomorrow); // YYYY-MM-DD
@@ -49,8 +49,6 @@ export default function AmazonPickupExportPanel() {
 
   useEffect(() => {
     fetchPreview();
-    // Intentionally not depending on fetchPreview to avoid re-render loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderDate, paymentType, status]);
 
   const ddmmyyyy = useMemo(() => {
@@ -134,7 +132,26 @@ export default function AmazonPickupExportPanel() {
               onChange={(e) => setOrderDate(e.target.value)}
               data-testid="amz-order-date"
             />
-            <p className="text-[9px] text-[#59615D] mt-1">Blank = all dates</p>
+            <div className="flex gap-1 mt-1 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setOrderDate("")}
+                className={`text-[10px] px-2 py-0.5 rounded-full border transition ${orderDate === "" ? "bg-[#3B5249] text-white border-[#3B5249]" : "bg-white text-[#3B5249] border-[#E5E3DB] hover:bg-[#F9F8F6]"}`}
+                data-testid="amz-preset-all"
+              >All dates</button>
+              <button
+                type="button"
+                onClick={() => setOrderDate(today)}
+                className={`text-[10px] px-2 py-0.5 rounded-full border transition ${orderDate === today ? "bg-[#3B5249] text-white border-[#3B5249]" : "bg-white text-[#3B5249] border-[#E5E3DB] hover:bg-[#F9F8F6]"}`}
+                data-testid="amz-preset-today"
+              >Today</button>
+              <button
+                type="button"
+                onClick={() => setOrderDate(new Date(Date.now() - 86400_000).toISOString().slice(0, 10))}
+                className="text-[10px] px-2 py-0.5 rounded-full border bg-white text-[#3B5249] border-[#E5E3DB] hover:bg-[#F9F8F6]"
+                data-testid="amz-preset-yesterday"
+              >Yesterday</button>
+            </div>
           </div>
           <div>
             <Label className="text-[11px]">Payment mode</Label>
