@@ -544,3 +544,27 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - Verified: COD → YES, Prepaid → NO, PickupTime=11:00, L=90 rejected (422), all 44 cols intact.
 
 
+
+### Iteration 82 (2026-02-17) — Salons Tracker + Daily P&L + GST=0 Fix
+- **SM Salons/Stores tracker** (`salons_module.py` + `SalonsPanel.jsx`):
+  - Full CRUD scoped per-SM (admin sees all).
+  - Status pipeline: `visited → interested → onboarded → converted` (+ `not_interested` bucket) with immutable `status_history` audit trail.
+  - Each list response embeds `month_orders` + `month_revenue` per salon via a Mongo aggregate on `orders.salon_id`.
+  - `create_order` now accepts optional `salon_id` so an order can be attributed to a salon → shows up in that salon's monthly drawer.
+  - UI card layout: Call button (`tel:+91…`), WhatsApp button (`https://wa.me/91…`), Orders drawer, status dropdown, delete. Filters: All / Visited / Interested / Onboarded / Converted / Not Interested + fuzzy search across name/owner/phone/area/city/district.
+  - Duplicate protection: same SM can't add same phone twice (409).
+- **Manual Invoice GST=0 bug fix** (`phase2.py:404`):
+  - Old code: `float(it.get("gst_pct", 18) or 18)` — Python's `0 or 18` = 18 (truthy trap), so explicit 0 silently became 18%.
+  - New code respects explicit 0 while still falling back to 18 for missing/blank values.
+  - Added **"Without GST" checkbox** in `ManualInvoiceCreator.jsx` header (data-testid `mi-no-gst-toggle`) — flips all line GST% to 0 and hides the GST row from totals.
+- **Finance Manager Daily Sales & P&L** (`finance_daily_module.py` + `DailySalesPnlPanel.jsx`):
+  - GET `/api/finance/daily-sales?day=YYYY-MM-DD` — aggregates every order by `created_by_role`, returns totals + `by_role[]`.
+  - P&L formula: Revenue − COGS = Gross; Gross − Shipping (₹65/order) − Gateway (2.36% for non-COD) = Net Profit; net_margin_pct = net / revenue.
+  - COGS uses `products.cost_price` if set, else `DEFAULT_COST_RATIO` (0.40 × sale price).
+  - UI shows 4 KPI cards, P&L breakdown table, "Sales by Team" table with per-role P&L, and an assumptions footer.
+  - Range endpoint `/api/finance/daily-sales/range?start=…&end=…` powers future trend chart (capped at 90 days).
+- **Verified live**: On 2026-07-08 → 13 orders, ₹4,198 revenue, ₹2,638.4 gross, ₹1,743.84 net (41.54% margin) — TC contributed 9 orders, SM 1 order, admin 3 orders. Wrong-password 403 guards verified for TC on both `/salons` and `/finance/daily-sales`.
+- **Testing**: iter 64 → 15/15 backend pytest cases + all frontend flows.
+- Files: `salons_module.py` (new), `finance_daily_module.py` (new), `phase2.py` (line 404 fix), `server.py` (module registration + salon_id on orders), `ManualInvoiceCreator.jsx`, `SalonsPanel.jsx` (new), `DailySalesPnlPanel.jsx` (new), `SalesManagerDashboard.js`, `FinanceManagerDashboard.js`, `test_credentials.md` (FM creds added).
+
+

@@ -22,6 +22,7 @@ import GlobalSearch from "../components/GlobalSearch";
 import TeamActivityPanel from "../components/TeamActivityPanel";
 import TeamGroupsPanel from "../components/TeamGroupsPanel";
 import ManualInvoiceCreator from "../components/ManualInvoiceCreator";
+import SalonsPanel from "../components/SalonsPanel";
 import CustomerPhotosPanel from "../components/CustomerPhotosPanel";
 import TodayStatsCards from "../components/TodayStatsCards";
 import TelecallerPerformanceCards from "../components/TelecallerPerformanceCards";
@@ -289,7 +290,7 @@ export default function SalesManagerDashboard() {
         <Tabs defaultValue="telecallers" className="space-y-6">
           <TodayStatsCards/>
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap">
-            {[{v:"telecallers",l:"Telecallers"},{v:"tcperf",l:"📊 TC Performance"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"coverage",l:"📞 Call Coverage"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"stock",l:"📦 Stock & Offline Sales"},{v:"agentsales",l:"🌟 Agent Sales"},{v:"leads",l:"📋 Leads"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"manualinvoice",l:"Manual Invoice"},{v:"customerphotos",l:"📸 Customer Photos"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"telecallers",l:"Telecallers"},{v:"tcperf",l:"📊 TC Performance"},{v:"leaderboard",l:"🏆 Leaderboard"},{v:"coverage",l:"📞 Call Coverage"},{v:"contactactivity",l:"📞 Contact Activity"},{v:"distribute",l:"🎯 Allocate Leads"},{v:"stock",l:"📦 Stock & Offline Sales"},{v:"salons",l:"🏪 Salons"},{v:"agentsales",l:"🌟 Agent Sales"},{v:"leads",l:"📋 Leads"},{v:"activity",l:"Activity"},{v:"groups",l:"Groups"},{v:"repeat",l:`Repeat (${followUps.total_repeat})`},{v:"relationship",l:`Relation (${followUps.total_relationship})`},{v:"hiring",l:`Hiring (${tcCandidates.length})`},{v:"calllogs",l:`Call Logs (${filteredCallLogs.length})`},{v:"salescollab",l:"📇 Sales Collab"},{v:"tasks",l:"Tasks"},{v:"instructions",l:"Instructions"},{v:"orders",l:"Orders"},{v:"manualinvoice",l:"Manual Invoice"},{v:"customerphotos",l:"📸 Customer Photos"},{v:"commissions",l:"Commissions"},{v:"contacts",l:"Contacts"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-3" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -587,6 +588,7 @@ export default function SalesManagerDashboard() {
             <OrdersPanel role="sales_manager" showCreateButton onCreateOrder={() => { setOrderForm({ customer_name:"", customer_phone:"", customer_address:"", customer_city:"", customer_pincode:"", payment_type:"cod", product_name:"", quantity:1, price:0 }); setShowCreateOrder(true); }} />
           </TabsContent>
           <TabsContent value="manualinvoice" className="animate-fade-in"><ManualInvoiceCreator /></TabsContent>
+          <TabsContent value="salons" className="animate-fade-in"><SalonsPanel /></TabsContent>
           <TabsContent value="customerphotos" className="animate-fade-in"><CustomerPhotosPanel /></TabsContent>
           <TabsContent value="commissions" className="animate-fade-in"><div className="bg-white rounded-2xl border border-[#E5E3DB] overflow-x-auto"><div className="p-5 border-b border-[#E5E3DB]"><h3 className="font-heading text-lg font-medium">Commissions</h3></div>
             <table className="w-full"><thead><tr className="border-b bg-[#F9F8F6]">{["Date","User","Order","Commission","Status","Action"].map(h=><th key={h} className="text-left p-4 text-xs uppercase text-[#59615D]">{h}</th>)}</tr></thead>

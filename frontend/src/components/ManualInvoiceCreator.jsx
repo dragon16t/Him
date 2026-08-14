@@ -36,17 +36,27 @@ export default function ManualInvoiceCreator() {
   const [paymentTerms, setPaymentTerms] = useState("Cash / UPI on delivery");
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState([]);
+  // No-GST mode: force every line to 0% and hide the GST column.
+  const [noGst, setNoGst] = useState(false);
 
   const setCust = (k, v) => setCustomer((c) => ({ ...c, [k]: v }));
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, idx) => idx === i ? { ...it, [k]: v } : it));
-  const addItem = () => setItems((arr) => [...arr, { ...EMPTY_ITEM }]);
+  const addItem = () => setItems((arr) => [...arr, { ...EMPTY_ITEM, gst_pct: noGst ? 0 : 18 }]);
   const removeItem = (i) => setItems((arr) => arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr);
 
   const lineTotal = (it) => Number(it.qty || 0) * Number(it.price || 0);
-  const lineGst = (it) => lineTotal(it) * (Number(it.gst_pct || 0) / 100);
+  const lineGst = (it) => noGst ? 0 : lineTotal(it) * (Number(it.gst_pct || 0) / 100);
   const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const gstTotal = items.reduce((s, it) => s + lineGst(it), 0);
+  const gstTotal = noGst ? 0 : items.reduce((s, it) => s + lineGst(it), 0);
   const grandTotal = subtotal + gstTotal;
+
+  // When user toggles "No GST", force all lines to 0% so the backend PDF
+  // renders truly zero GST (fixes the old `0 || 18` bug).
+  const toggleNoGst = (next) => {
+    setNoGst(next);
+    if (next) setItems((arr) => arr.map((it) => ({ ...it, gst_pct: 0 })));
+    else setItems((arr) => arr.map((it) => ({ ...it, gst_pct: it.gst_pct || 18 })));
+  };
 
   const fetchHistory = async () => {
     try {
@@ -95,6 +105,15 @@ export default function ManualInvoiceCreator() {
           <h3 className="font-heading text-lg text-[#2C3531]">Manual GST Invoice</h3>
           <p className="text-[11px] text-[#7B6D5A]">For B2B / walk-in shop sales — enter shop details, line items, and GST manually. PDF is auto-generated.</p>
         </div>
+        <label className="flex items-center gap-2 cursor-pointer" data-testid="mi-no-gst-toggle">
+          <input
+            type="checkbox"
+            checked={noGst}
+            onChange={(e) => toggleNoGst(e.target.checked)}
+            className="w-4 h-4 accent-[#3B5249]"
+          />
+          <span className="text-[12px] text-[#2C3531]">Without GST</span>
+        </label>
       </div>
 
       {/* CUSTOMER BLOCK */}

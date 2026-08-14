@@ -401,7 +401,9 @@ def _manual_invoice_pdf(inv: dict) -> bytes:
     for i, it in enumerate(inv.get("items", []), 1):
         qty = float(it.get("qty", 1) or 1)
         price = float(it.get("price", 0) or 0)
-        gst_pct = float(it.get("gst_pct", 18) or 18)
+        # Respect explicit 0 (no-GST invoices). `x or 18` collapses 0 → 18.
+        gst_raw = it.get("gst_pct")
+        gst_pct = float(gst_raw) if gst_raw is not None and str(gst_raw).strip() != "" else 18.0
         line = qty * price
         line_gst = line * gst_pct / 100
         sub += line

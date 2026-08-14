@@ -1949,6 +1949,9 @@ async def create_order(data: dict, background_tasks: BackgroundTasks, request: R
         "payment_type": data.get("payment_type", "cod"),
         "payment_proof_url": data.get("payment_proof_url", ""), "payment_proof_path": data.get("payment_proof_path", ""),
         "status": "pending", "lead_id": data.get("lead_id", ""),
+        # Optional link to a Sales Manager's Salon/Store — enables monthly
+        # per-shop revenue tracking in the Salons dashboard tab.
+        "salon_id": data.get("salon_id", ""),
         "tracking_link": "", "courier_name": "", "tracking_number": "",
         "created_by": creator_id, "created_by_role": creator_role,
         "created_by_name": creator_name,
@@ -9918,6 +9921,20 @@ try:
     _amz_register(api_router, db, get_current_user)
 except Exception as _ax:
     logger.error(f"amazon pickup module registration failed: {_ax}")
+
+# ── SALONS / STORES TRACKER (Sales Manager pipeline) ───────────────────
+try:
+    from salons_module import register as _salons_register
+    _salons_register(api_router, db, get_current_user)
+except Exception as _sx:
+    logger.error(f"salons module registration failed: {_sx}")
+
+# ── FINANCE DAILY SALES + P&L (Finance Manager) ────────────────────────
+try:
+    from finance_daily_module import register as _fd_register
+    _fd_register(api_router, db, get_current_user)
+except Exception as _fx:
+    logger.error(f"finance daily module registration failed: {_fx}")
 
 app.include_router(api_router)
 

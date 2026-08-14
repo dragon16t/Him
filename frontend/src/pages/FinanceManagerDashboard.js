@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogOut, IndianRupee, ClipboardList, Check, X, Loader2, CreditCard, BarChart3, Image, ExternalLink, Plus } from "lucide-react";
 import RoleGuidelines from "../components/RoleGuidelines";
 import FinanceProofsPanel from "../components/FinanceProofsPanel";
+import DailySalesPnlPanel from "../components/DailySalesPnlPanel";
 import BudgetingCalendar from "../components/BudgetingCalendar";
 import ExpenseGroupingPanel from "../components/ExpenseGroupingPanel";
 import ExpenseAutoCategorize from "../components/ExpenseAutoCategorize";
@@ -222,7 +223,7 @@ export default function FinanceManagerDashboard() {
         )}
         <Tabs defaultValue="expenses" className="space-y-6">
           <TabsList className="bg-white border border-[#E5E3DB] rounded-full p-1 h-auto flex-wrap gap-0.5">
-            {[{v:"expenses",l:"Expenses"},{v:"grouping",l:"📊 Grouping"},{v:"proofs",l:"📄 Proofs"},{v:"budgeting",l:"📅 Budgeting"},{v:"pnl",l:"P&L"},{v:"investments",l:`Investments (${investments.length})`},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
+            {[{v:"expenses",l:"Expenses"},{v:"daily",l:"💹 Daily Sales / P&L"},{v:"grouping",l:"📊 Grouping"},{v:"proofs",l:"📄 Proofs"},{v:"budgeting",l:"📅 Budgeting"},{v:"pnl",l:"P&L"},{v:"investments",l:`Investments (${investments.length})`},{v:"funds",l:`Fund Req (${fundRequests.filter(f=>f.status==="pending").length})`},{v:"payroll",l:"Payroll"},{v:"cashholders",l:"Cash Holders"},{v:"commissions",l:"Commissions"},{v:"transactions",l:"Transactions"},{v:"gst",l:"GST"},{v:"vendors",l:"Vendors"},{v:"recurring",l:"Recurring"},{v:"clv",l:"CLV"},{v:"mysheet",l:"My Sheet"}].map(t=>(
               <TabsTrigger key={t.v} value={t.v} className="rounded-full text-xs data-[state=active]:bg-[#3B5249] data-[state=active]:text-white px-4" data-testid={`tab-${t.v}`}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
@@ -233,6 +234,7 @@ export default function FinanceManagerDashboard() {
 
           {/* PROOFS TAB */}
           <TabsContent value="proofs" className="animate-fade-in"><FinanceProofsPanel /></TabsContent>
+          <TabsContent value="daily" className="animate-fade-in"><DailySalesPnlPanel /></TabsContent>
 
           {/* GROUPING — auto-buckets every expense into fixed/variable/asset baskets */}
           <TabsContent value="grouping" className="animate-fade-in">
