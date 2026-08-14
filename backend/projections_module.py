@@ -190,39 +190,73 @@ def register(api_router, database, get_current_user):
         docs = await cursor.to_list(500)
         return {"projections": docs, "count": len(docs)}
 
+    @api_router.get("/finance/projections/config")
+    async def get_projections_config(current_user: dict = Depends(_fm_or_admin)):
+        """Return { year_start_month: {1:1, 2:1, 3:1} } — calendar month each
+        projection year starts. Defaults to 1 (January) if unset."""
+        cfg = await _db.projection_config.find_one({"key": "year_start_months"}, {"_id": 0}) or {}
+        vals = cfg.get("values") or {}
+        return {"year_start_month": {str(y): int(vals.get(str(y), 1)) for y in (1, 2, 3)}}
+
+    @api_router.post("/finance/projections/config")
+    async def set_projections_config(data: dict, current_user: dict = Depends(_fm_or_admin)):
+        """Body: { year_start_month: {"1": 6, "2": 4, "3": 4} } — month 1-12."""
+        vals = data.get("year_start_month") or {}
+        clean: Dict[str, int] = {}
+        for y in (1, 2, 3):
+            v = vals.get(str(y), 1)
+            try:
+                mi = int(v)
+            except Exception:
+                mi = 1
+            clean[str(y)] = max(1, min(12, mi))
+        await _db.projection_config.update_one(
+            {"key": "year_start_months"},
+            {"$set": {"key": "year_start_months", "values": clean,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+        return {"year_start_month": clean}
+
     @api_router.get("/finance/projections/vs-actual")
     async def projections_vs_actual(
         year: int = Query(1, ge=1, le=3, description="Projection year 1, 2, or 3"),
         current_user: dict = Depends(_fm_or_admin),
     ):
-        """Return per-month projected vs actual revenue/expenses/net income.
-        Actuals aggregated from `orders` collection by created_at month."""
+        """Projected vs actual monthly P&L, honouring per-year start_month offset."""
         proj_cursor = _db.projections.find({"year": year}, {"_id": 0}).sort("month_index", 1)
         projections = await proj_cursor.to_list(50)
 
-        # Aggregate actual revenue by (year, month) — CURRENT calendar year assumed.
-        current_year = date.today().year
-        pipeline = [
-            {"$match": {"created_at": {"$gte": f"{current_year}-01-01"}}},
-            {"$addFields": {"_mo": {"$substr": ["$created_at", 5, 2]}}},
-            {"$group": {
-                "_id": "$_mo",
-                "revenue": {"$sum": "$total_amount"},
-                "orders": {"$sum": 1},
-            }},
-        ]
-        actuals: Dict[int, Dict[str, float]] = {}
-        async for row in _db.orders.aggregate(pipeline):
-            mi = int(row["_id"])
-            actuals[mi] = {"revenue": row["revenue"], "orders": row["orders"]}
+        cfg = await _db.projection_config.find_one({"key": "year_start_months"}, {"_id": 0}) or {}
+        starts = cfg.get("values") or {}
+        start_month = int(starts.get(str(year), 1))
+        today = date.today()
+        # Year-1 anchor: if start_month is later this year, Year-1 began last cal year.
+        base_year = today.year if start_month <= today.month else today.year - 1
+        offset_year = base_year + (year - 1)
 
-        # Merge
+        def _cal_key(mi_sheet: int):
+            offset = (mi_sheet - start_month) % 12
+            cal_month = ((start_month - 1 + offset) % 12) + 1
+            cal_year = offset_year + ((start_month - 1 + offset) // 12)
+            return cal_year, cal_month
+
+        window_start = f"{offset_year}-{start_month:02d}-01"
+        pipeline = [
+            {"$match": {"created_at": {"$gte": window_start}}},
+            {"$addFields": {"_ym": {"$substr": ["$created_at", 0, 7]}}},
+            {"$group": {"_id": "$_ym", "revenue": {"$sum": "$total_amount"}, "orders": {"$sum": 1}}},
+        ]
+        actuals: Dict[str, Dict[str, float]] = {}
+        async for row in _db.orders.aggregate(pipeline):
+            actuals[row["_id"]] = {"revenue": row["revenue"], "orders": row["orders"]}
+
         rows: List[Dict[str, Any]] = []
         for p in projections:
-            mi = p["month_index"]
-            actual_rev = actuals.get(mi, {}).get("revenue", 0)
-            actual_orders = actuals.get(mi, {}).get("orders", 0)
-            # Estimated actual net: revenue - 40% COGS - fixed opex
+            cy, cm = _cal_key(p["month_index"])
+            key = f"{cy:04d}-{cm:02d}"
+            actual_rev = actuals.get(key, {}).get("revenue", 0)
+            actual_orders = actuals.get(key, {}).get("orders", 0)
             fixed_opex = p.get("marketing", 0) + p.get("employee", 0) + p.get("tech", 0) + p.get("depreciation", 0)
             actual_net = actual_rev - actual_rev * 0.40 - fixed_opex
             rows.append({
@@ -232,6 +266,8 @@ def register(api_router, database, get_current_user):
                 "actual_net_income": round(actual_net, 2),
                 "variance_revenue": round(actual_rev - p.get("sales", 0), 2),
                 "variance_net": round(actual_net - p.get("net_income", 0), 2),
+                "calendar_year": cy,
+                "calendar_month": cm,
             })
 
         totals = {
@@ -243,6 +279,25 @@ def register(api_router, database, get_current_user):
         totals["variance_revenue"] = round(totals["actual_revenue"] - totals["projected_revenue"], 2)
         totals["variance_net"] = round(totals["actual_net"] - totals["projected_net"], 2)
 
-        return {"year": year, "rows": rows, "totals": totals}
+        return {"year": year, "start_month": start_month, "calendar_year": offset_year,
+                "rows": rows, "totals": totals}
+
+    @api_router.get("/finance/balance-sheet")
+    async def balance_sheet(current_user: dict = Depends(_fm_or_admin)):
+        """Multi-year Balance Sheet from the projection workbooks."""
+        cursor = _db.projections.find({}, {"_id": 0}).sort([("year", 1), ("month_index", 1)])
+        docs = await cursor.to_list(500)
+        by_year: Dict[int, List[Dict[str, Any]]] = {}
+        for d in docs:
+            by_year.setdefault(d["year"], []).append({
+                "month": d["month"],
+                "month_index": d["month_index"],
+                "cash": d.get("cash", 0),
+                "debtors": d.get("debtors", 0),
+                "inventory": d.get("inventory", 0),
+                "furniture_net": d.get("furniture_net", 0),
+                "total_current_assets": d.get("total_current_assets", 0),
+            })
+        return {"balance_sheet": by_year}
 
     logger.info("Projections routes registered")

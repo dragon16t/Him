@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Store, Plus, Phone, MessageCircle, MapPin, Search, TrendingUp, Trash2, Loader2, ShoppingCart, FileText } from "lucide-react";
+import { Store, Plus, Phone, MessageCircle, MapPin, Search, TrendingUp, Trash2, Loader2, ShoppingCart, FileText, X } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
 
@@ -41,6 +41,52 @@ export default function SalonsPanel() {
   const [detail, setDetail] = useState(null); // { salon, orders, monthCount, monthRevenue }
   const [monthCursor, setMonthCursor] = useState(new Date().toISOString().slice(0, 7));
   const [districtFilter, setDistrictFilter] = useState("all");
+
+  // Quick-order dialog state (opened via "Create Order" button on a salon card).
+  const [orderSalon, setOrderSalon] = useState(null);
+  const [orderItems, setOrderItems] = useState([{ product_name: "", quantity: 1, price: 0 }]);
+  const [orderPayment, setOrderPayment] = useState("cod");
+  const [orderSaving, setOrderSaving] = useState(false);
+
+  const openOrderDialog = (s) => {
+    setOrderSalon(s);
+    setOrderItems([{ product_name: "", quantity: 1, price: 0 }]);
+    setOrderPayment("cod");
+  };
+  const orderTotal = orderItems.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.price) || 0), 0);
+
+  const submitOrder = async () => {
+    if (!orderSalon) return;
+    const cleanItems = orderItems.filter((it) => (it.product_name || "").trim() && Number(it.price) > 0);
+    if (!cleanItems.length) { toast.error("Add at least one line item with name and price"); return; }
+    setOrderSaving(true);
+    try {
+      const payload = {
+        salon_id: orderSalon.id,
+        customer_name: orderSalon.name,
+        customer_phone: orderSalon.phone,
+        customer_address: orderSalon.address || `${orderSalon.area || ""} ${orderSalon.city || ""}`.trim(),
+        customer_city: orderSalon.city,
+        customer_pincode: orderSalon.pincode,
+        customer_state: orderSalon.state,
+        items: cleanItems.map((it) => ({
+          product_name: it.product_name,
+          quantity: Number(it.quantity) || 1,
+          price: Number(it.price) || 0,
+        })),
+        total_amount: orderTotal,
+        payment_type: orderPayment,
+      };
+      await axios.post(`${API}/orders`, payload);
+      toast.success(`Order created for ${orderSalon.name} (₹${orderTotal})`);
+      setOrderSalon(null);
+      fetchSalons();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Order create failed");
+    } finally {
+      setOrderSaving(false);
+    }
+  };
 
   // Distinct districts from loaded salons
   const districts = useMemo(() => {
@@ -253,13 +299,7 @@ export default function SalonsPanel() {
                 {(s.status === "onboarded" || s.status === "converted") && (
                   <div className="flex gap-1.5 mt-1.5">
                     <button
-                      onClick={() => {
-                        // Prefill payload and switch to Manual Invoice tab.
-                        // We hop over to the tab and stash salon so the invoice/order
-                        // form can pick it up.
-                        window.dispatchEvent(new CustomEvent("crm:create-order-for-salon", { detail: s }));
-                        toast.success(`Ready to create an order for ${s.name}`);
-                      }}
+                      onClick={() => openOrderDialog(s)}
                       className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-md bg-amber-500 text-white hover:bg-amber-600"
                       data-testid={`salon-create-order-${s.id}`}>
                       <ShoppingCart className="w-3 h-3" />Create Order
@@ -407,6 +447,77 @@ export default function SalonsPanel() {
                   </tbody>
                 </table>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      {/* Quick Order dialog — creates an order pre-linked to this salon */}
+      <Dialog open={!!orderSalon} onOpenChange={(o) => !o && setOrderSalon(null)}>
+        <DialogContent className="max-w-2xl" data-testid="salon-order-dialog">
+          <DialogHeader>
+            <DialogTitle>Create order for {orderSalon?.name}</DialogTitle>
+          </DialogHeader>
+          {orderSalon && (
+            <div className="space-y-3 pt-2">
+              <div className="text-[11px] text-[#59615D] bg-[#F9F8F6] rounded-md px-3 py-2">
+                Ships to: <b>{orderSalon.name}</b> · {orderSalon.city || "—"} · {orderSalon.pincode || "—"} · {orderSalon.phone}
+              </div>
+
+              <div>
+                <div className="grid grid-cols-12 gap-2 text-[10px] uppercase text-[#59615D] mb-1 px-1">
+                  <div className="col-span-6">Product</div>
+                  <div className="col-span-2 text-center">Qty</div>
+                  <div className="col-span-3 text-right">Price (₹)</div>
+                  <div className="col-span-1"></div>
+                </div>
+                {orderItems.map((it, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2 mb-1">
+                    <Input className="col-span-6" placeholder="Product name" value={it.product_name}
+                      onChange={(e) => setOrderItems((arr) => arr.map((x, idx) => idx === i ? { ...x, product_name: e.target.value } : x))}
+                      data-testid={`salon-order-item-name-${i}`} />
+                    <Input type="number" className="col-span-2 text-center" value={it.quantity}
+                      onChange={(e) => setOrderItems((arr) => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} />
+                    <Input type="number" className="col-span-3 text-right" value={it.price}
+                      onChange={(e) => setOrderItems((arr) => arr.map((x, idx) => idx === i ? { ...x, price: e.target.value } : x))} />
+                    <button className="col-span-1 text-red-500 hover:text-red-700"
+                            onClick={() => setOrderItems((arr) => arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr)}>
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <button onClick={() => setOrderItems((arr) => [...arr, { product_name: "", quantity: 1, price: 0 }])}
+                        className="text-[11px] text-[#3B5249] hover:underline mt-1"
+                        data-testid="salon-order-add-item">
+                  + Add another item
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between bg-[#F9F8F6] rounded-md px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <Label className="text-[11px]">Payment</Label>
+                  <select value={orderPayment} onChange={(e) => setOrderPayment(e.target.value)}
+                          className="h-8 rounded-md border border-[#E5E3DB] px-2 text-xs bg-white"
+                          data-testid="salon-order-payment">
+                    <option value="cod">COD</option>
+                    <option value="upi">UPI</option>
+                    <option value="razorpay">Razorpay link</option>
+                    <option value="bank_transfer">Bank transfer</option>
+                  </select>
+                </div>
+                <div className="text-sm">
+                  Total: <b>₹{orderTotal.toLocaleString("en-IN")}</b>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" onClick={() => setOrderSalon(null)} className="rounded-full">Cancel</Button>
+                <Button onClick={submitOrder} disabled={orderSaving}
+                        className="rounded-full bg-amber-500 hover:bg-amber-600 text-white"
+                        data-testid="salon-order-submit">
+                  {orderSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <ShoppingCart className="w-3.5 h-3.5 mr-1.5" />}
+                  Create order
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

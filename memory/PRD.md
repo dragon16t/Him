@@ -588,3 +588,21 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - Tested: iter 67 → 7/7 backend pytest + 100% frontend flows.
 
 
+
+### Iteration 84 (2026-02-17) — Year-Start Config + Balance Sheet + Quick-Order-For-Salon
+- **Year Start Month Config** (projections_module.py):
+  - New `projection_config` collection storing `year_start_months: {"1":6,"2":4,"3":4}`.
+  - Endpoints: `GET/POST /api/finance/projections/config`.
+  - `vs-actual` now uses the offset when matching actual orders: given Year=1 with `start_month=6`, projection month `Jul` → calendar month `2026-07`, `Jan` → `2027-01`. Response now includes `start_month`, `calendar_year`, and per-row `calendar_year`/`calendar_month` fields.
+  - UI: "Year-start config" toggle in Projections panel with 3 dropdowns + Save & Refresh button.
+- **Balance Sheet Tab** (`BalanceSheetPanel.jsx` + `/api/finance/balance-sheet`):
+  - Returns all 3 years grouped, one row per month with Cash / Debtors / Inventory / Furniture / Total Current Assets.
+  - New 🧾 Balance Sheet tab in Finance Manager dashboard.
+  - Verified live: Year 1 Cash trend ₹34K → ₹5.1L → ₹8.1L across Jan-Mar; Year 3 hits ₹4.3Cr in Jan.
+- **Quick Order dialog inside Salons panel** (`SalonsPanel.jsx`):
+  - "Create Order" button on onboarded/converted salon cards now opens a modal that pre-fills customer_name / phone / address / city / pincode / state from the salon.
+  - SM enters product name + qty + price rows, picks payment (COD/UPI/Razorpay/Bank Transfer), sees live Total, clicks Create.
+  - Order is submitted to `POST /api/orders` with `salon_id` auto-set → order shows up on that salon's month counter immediately. Verified: created a ₹3000 order for "Elegance Salon MG Road", card now displays "1 order · ₹3000".
+- Files touched: `projections_module.py`, `ProjectionsPanel.jsx`, `BalanceSheetPanel.jsx` (new), `SalonsPanel.jsx`, `FinanceManagerDashboard.js`.
+
+

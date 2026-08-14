@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // ── Projected vs Actual dashboard (Year 1 / 2 / 3 projections)
 // Reads the 3 uploaded projection sheets from MongoDB and compares them
@@ -14,6 +15,31 @@ export default function ProjectionsPanel() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reseeding, setReseeding] = useState(false);
+  const [startMonths, setStartMonths] = useState({ 1: 1, 2: 1, 3: 1 });
+  const [showConfig, setShowConfig] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  const loadConfig = async () => {
+    try {
+      const { data } = await axios.get(`${API}/finance/projections/config`);
+      setStartMonths(data.year_start_month || { 1: 1, 2: 1, 3: 1 });
+    } catch (_) { /* silent — config may not exist yet */ }
+  };
+  useEffect(() => { loadConfig(); }, []);
+
+  const saveConfig = async () => {
+    setSavingConfig(true);
+    try {
+      await axios.post(`${API}/finance/projections/config`, { year_start_month: startMonths });
+      toast.success("Year-start months saved. Refreshing view…");
+      setShowConfig(false);
+      load(year);
+    } catch (e) {
+      toast.error("Save failed");
+    } finally {
+      setSavingConfig(false);
+    }
+  };
 
   const load = async (y) => {
     setLoading(true);
@@ -61,6 +87,9 @@ export default function ProjectionsPanel() {
                 Year {y}
               </button>
             ))}
+            <Button size="sm" variant="outline" onClick={() => setShowConfig((v) => !v)} className="rounded-full text-xs" data-testid="proj-config-toggle">
+              {showConfig ? "Hide config" : "Year-start config"}
+            </Button>
             <Button size="sm" variant="outline" onClick={reseed} disabled={reseeding} className="rounded-full text-xs">
               <RefreshCw className={`w-3 h-3 mr-1 ${reseeding ? "animate-spin" : ""}`} />
               Reload from sheets
@@ -70,7 +99,38 @@ export default function ProjectionsPanel() {
         <p className="text-[11px] text-[#59615D]">
           Compares the projected monthly Sales, COGS, marketing, salary, tech and depreciation from the uploaded Year-{year} sheet against real orders aggregated from the CRM.
           Variance = Actual − Projected (positive means we beat plan).
+          {data?.start_month && data?.calendar_year && (
+            <span className="ml-1 opacity-80">
+              — Aligned to calendar month <b>{MONTHS[data.start_month - 1]} {data.calendar_year}</b>.
+            </span>
+          )}
         </p>
+        {showConfig && (
+          <div className="mt-3 bg-[#F9F8F6] rounded-lg border border-[#E5E3DB] p-3" data-testid="proj-config-panel">
+            <div className="text-[11px] text-[#59615D] mb-2">
+              Tell the system which real calendar month each projection year began. Example: if Year 1 in your sheet is <span className="font-mono">Jun→Mar</span>, set Year 1 = June.
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {[1, 2, 3].map((y) => (
+                <div key={y}>
+                  <label className="text-[11px] text-[#59615D]">Year {y} starts in</label>
+                  <select
+                    value={startMonths[y] || startMonths[String(y)] || 1}
+                    onChange={(e) => setStartMonths((v) => ({ ...v, [y]: Number(e.target.value) }))}
+                    className="w-full h-9 rounded-md border border-[#E5E3DB] px-2 text-sm bg-white"
+                    data-testid={`proj-start-year-${y}`}>
+                    {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-2">
+              <Button size="sm" onClick={saveConfig} disabled={savingConfig} className="rounded-full bg-[#3B5249] hover:bg-[#2C3531] text-white text-xs" data-testid="proj-save-config">
+                {savingConfig ? "Saving..." : "Save & refresh"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Totals */}
