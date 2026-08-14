@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Store, Plus, Phone, MessageCircle, MapPin, Search, TrendingUp, Trash2, Loader2 } from "lucide-react";
+import { Store, Plus, Phone, MessageCircle, MapPin, Search, TrendingUp, Trash2, Loader2, ShoppingCart, FileText } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
 
@@ -40,6 +40,14 @@ export default function SalonsPanel() {
 
   const [detail, setDetail] = useState(null); // { salon, orders, monthCount, monthRevenue }
   const [monthCursor, setMonthCursor] = useState(new Date().toISOString().slice(0, 7));
+  const [districtFilter, setDistrictFilter] = useState("all");
+
+  // Distinct districts from loaded salons
+  const districts = useMemo(() => {
+    const s = new Set();
+    salons.forEach((x) => { if (x.district) s.add(x.district); });
+    return ["all", ...Array.from(s).sort()];
+  }, [salons]);
 
   const fetchSalons = async () => {
     setLoading(true);
@@ -60,7 +68,10 @@ export default function SalonsPanel() {
   useEffect(() => { fetchSalons(); }, [statusFilter]);
   useEffect(() => { const t = setTimeout(fetchSalons, 400); return () => clearTimeout(t); }, [q]);
 
-  const filtered = useMemo(() => salons, [salons]);
+  const filtered = useMemo(() => {
+    if (districtFilter === "all") return salons;
+    return salons.filter((s) => (s.district || "").toLowerCase() === districtFilter.toLowerCase());
+  }, [salons, districtFilter]);
 
   const submitAdd = async () => {
     if (!form.name.trim() || !form.phone.trim()) {
@@ -154,16 +165,28 @@ export default function SalonsPanel() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#59615D]" />
-        <Input
-          placeholder="Search name, owner, phone, area, city…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="pl-10"
-          data-testid="salon-search"
-        />
+      {/* Search + District filter */}
+      <div className="flex gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#59615D]" />
+          <Input
+            placeholder="Search name, owner, phone, area, city…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-10"
+            data-testid="salon-search"
+          />
+        </div>
+        <select
+          value={districtFilter}
+          onChange={(e) => setDistrictFilter(e.target.value)}
+          className="h-10 rounded-md border border-[#E5E3DB] px-3 text-sm bg-white min-w-[180px]"
+          data-testid="salon-district-filter"
+        >
+          {districts.map((d) => (
+            <option key={d} value={d}>{d === "all" ? "All Districts" : d}</option>
+          ))}
+        </select>
       </div>
 
       {/* Salon cards */}
@@ -225,6 +248,33 @@ export default function SalonsPanel() {
                     <TrendingUp className="w-3 h-3" />Orders
                   </button>
                 </div>
+
+                {/* Order & Invoice quick-actions (only for onboarded/converted salons) */}
+                {(s.status === "onboarded" || s.status === "converted") && (
+                  <div className="flex gap-1.5 mt-1.5">
+                    <button
+                      onClick={() => {
+                        // Prefill payload and switch to Manual Invoice tab.
+                        // We hop over to the tab and stash salon so the invoice/order
+                        // form can pick it up.
+                        window.dispatchEvent(new CustomEvent("crm:create-order-for-salon", { detail: s }));
+                        toast.success(`Ready to create an order for ${s.name}`);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-md bg-amber-500 text-white hover:bg-amber-600"
+                      data-testid={`salon-create-order-${s.id}`}>
+                      <ShoppingCart className="w-3 h-3" />Create Order
+                    </button>
+                    <button
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent("crm:invoice-for-salon", { detail: s }));
+                        toast.success(`Ready to invoice ${s.name}`);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-md bg-slate-700 text-white hover:bg-slate-800"
+                      data-testid={`salon-invoice-${s.id}`}>
+                      <FileText className="w-3 h-3" />Invoice
+                    </button>
+                  </div>
+                )}
 
                 {/* Status update dropdown */}
                 <div className="mt-2 flex items-center gap-2">
@@ -328,6 +378,7 @@ export default function SalonsPanel() {
                       <th className="py-2 pr-2">Items</th>
                       <th className="py-2 pr-2 text-right">Amount</th>
                       <th className="py-2 pr-2">Payment</th>
+                      <th className="py-2 pr-2">Credit Status</th>
                       <th className="py-2 pr-2">Status</th>
                     </tr>
                   </thead>
@@ -339,6 +390,17 @@ export default function SalonsPanel() {
                         <td className="py-1.5 pr-2">{(o.items || []).map(i => i.product_name || i.name || "").filter(Boolean).join(", ") || "—"}</td>
                         <td className="py-1.5 pr-2 text-right font-medium">₹{o.total_amount}</td>
                         <td className="py-1.5 pr-2 uppercase text-[9px]">{o.payment_type}</td>
+                        <td className="py-1.5 pr-2">
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
+                            o.payment_status === "paid" || o.payment_status === "captured"
+                              ? "bg-green-50 text-green-700 border border-green-200"
+                              : (o.payment_type || "").toLowerCase() === "cod"
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-slate-50 text-slate-700 border border-slate-200"
+                          }`}>
+                            {o.payment_status || ((o.payment_type || "").toLowerCase() === "cod" ? "COD due" : "unpaid")}
+                          </span>
+                        </td>
                         <td className="py-1.5 pr-2">{o.status}</td>
                       </tr>
                     ))}

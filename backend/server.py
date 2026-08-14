@@ -9936,6 +9936,16 @@ try:
 except Exception as _fx:
     logger.error(f"finance daily module registration failed: {_fx}")
 
+# ── FINANCIAL PROJECTIONS (3-year projected P&L / BS from uploaded sheets) ──
+try:
+    from projections_module import register as _proj_register, seed_projections_if_present
+    _proj_register(api_router, db, get_current_user)
+    # Auto-seed at startup (idempotent). Fire-and-forget so slow parse never
+    # blocks the health check.
+    asyncio.create_task(seed_projections_if_present())
+except Exception as _px:
+    logger.error(f"projections module registration failed: {_px}")
+
 app.include_router(api_router)
 
 @app.websocket("/api/ws/notifications")

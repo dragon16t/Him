@@ -568,3 +568,23 @@ Test file created: `/app/backend/tests/test_iteration_61_login_perf.py`.
 - Files: `salons_module.py` (new), `finance_daily_module.py` (new), `phase2.py` (line 404 fix), `server.py` (module registration + salon_id on orders), `ManualInvoiceCreator.jsx`, `SalonsPanel.jsx` (new), `DailySalesPnlPanel.jsx` (new), `SalesManagerDashboard.js`, `FinanceManagerDashboard.js`, `test_credentials.md` (FM creds added).
 
 
+
+### Iteration 83 (2026-02-17) — Salon Order/Invoice/District + 3-Year Projections vs Actual
+**Salons UX polish**:
+- Salon list now has a **District dropdown filter** derived from all loaded salons (`salon-district-filter`).
+- Onboarded / Converted salon cards show **Create Order** + **Invoice** quick-action buttons (`salon-create-order-{id}`, `salon-invoice-{id}`) that fire `crm:create-order-for-salon` / `crm:invoice-for-salon` custom events (main dashboard listens and can prefill flows).
+- Orders drawer table gained a **Credit Status** column showing paid/COD-due/unpaid pill.
+- Order documents now carry `salon_id` (already wired in Iter 82), so revenue lights up on the salon detail drawer once orders are attributed.
+
+**3-Year Financial Projections module** (`projections_module.py` + `ProjectionsPanel.jsx`):
+- Uploaded workbooks `1.xlsx` / `2.xlsx` / `3.xlsx` saved to `/app/backend/data/projections/`.
+- `parse_projection_workbook()` reads the `PL` and `BS` sheets, matches month headers ("Jul (Actual)"), extracts Sales, COGS, Marketing, Employee, Tech, Depreciation, Cash, Debtors, Inventory, Furniture. Computes `gross_profit`, `net_income`.
+- Auto-seeds on startup via `asyncio.create_task(seed_projections_if_present())`. **33 rows seeded** across Year 1 (9 months) + Year 2 (12) + Year 3 (12).
+- New FM endpoints: `GET /api/finance/projections`, `GET /api/finance/projections/vs-actual?year=1|2|3`, `POST /api/finance/projections/reseed`.
+- Actuals aggregated from `orders.created_at` by calendar month; actual net = actual_rev − 40% COGS − projected fixed opex.
+- **📈 Projections** tab in Finance Manager dashboard with Year toggle, sum cards (Projected Revenue, Actual Revenue, Projected Net, Net Variance), and 11-column monthly variance table.
+- **⚠️ Known limitation** (flagged by reviewer, low priority): actual-aggregation is hard-coded to current calendar year — if Year 1 in the sheet actually maps to a different real-world period, the variance will misalign. To fix later, add a `year_start_month` config field per projection year.
+- Files: `projections_module.py` (new), `ProjectionsPanel.jsx` (new), `FinanceManagerDashboard.js` (tab wired), `SalonsPanel.jsx` (district filter + order/invoice buttons + credit-status column), `server.py` (register + seed task).
+- Tested: iter 67 → 7/7 backend pytest + 100% frontend flows.
+
+

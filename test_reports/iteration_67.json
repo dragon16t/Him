@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 67 — Projections vs Actual + Salon district filter + Create Order/Invoice quick-actions + Credit Status column. Backend 7/7 pytest passing (33 seeded rows across Y1/Y2/Y3, vs-actual shape correct for Y1 & Y3, reseed idempotent, TC 403, admin allowed). Frontend: FM 📈 Projections tab renders with Year 1/2/3 chip toggle (Y1=9 rows, Y2=12, Y3=12), all 4 sum cards present, 11-column monthly table renders. SM Salons: District filter present with 'All Districts'+'Ernakulam' options, Elegance Salon MG Road shows Create Order + Invoice buttons (both fire window custom events and success toast confirmed). Credit Status column exists in code; couldn't visually verify because sample onboarded salon has 0 orders this month.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Salon detail dialog", "issues": ["Radix warning: Missing `Description` or `aria-describedby` on DialogContent (also flagged in iter64)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter67_projections.py",
+    "/app/test_reports/pytest/iter67.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "projections_module.projections_vs_actual: actual revenue aggregation is hard-coded to current calendar year (date.today().year=2026). Year-1 projection months (Jul→Mar) are matched to 2026 calendar months regardless of when 'Year 1' actually starts — will silently misalign if Year-1 begins mid-2025 or later. Consider adding a start-date offset per year, or a `year_start_month` config.",
+    "actual_net_income uses a hard-coded 40% COGS assumption. UI text notes this, but a per-product COGS aggregation would be more accurate for FM.",
+    "SalonsPanel: districtFilter is derived from currently-loaded salons only; if list is paginated/filtered by status, some districts disappear from the dropdown. Fine for MVP.",
+    "ProjectionsPanel table only shows a subset of projected months for Year-1 (9 rows in DB vs 12 in Y2/Y3) — parser only picks months where sales>0 in the sheet, which matches Year-1 sheet content (partial year). Good behaviour but worth noting to the user in UI (optional).",
+    "Escape-key close on salon-detail-dialog works, no console errors during projections load or year switch."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter67_projections.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% for tested flows"},
+  "test_credentials": "FM finance@celestaglow.com/fin123, SM salesmanager@celestaglow.com/sm123, TC telecaller1@celestaglow.com/tc123, Admin admin@celestaglow.com/admin123",
+  "seed_data_creation": "Projections auto-seeded by backend startup (33 rows). No test data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter67 verified. test_iter67_projections.py covers /api/finance/projections, /vs-actual (Y1/Y3), /reseed, TC 403, admin allowed. Run: `export $(grep REACT_APP_BACKEND_URL /app/frontend/.env | xargs) && pytest /app/backend/tests/test_iter67_projections.py -v`. UI testids verified: tab-projections, projections-panel, proj-year-1/2/3, proj-rev, actual-rev, proj-net, proj-variance, projections-table, salon-district-filter, salon-create-order-<id>, salon-invoice-<id>. Y1 has 9 seeded months (Jul-Mar with sales), Y2/Y3 have 12 each. Credit Status column only visually testable when a salon has orders in the selected month (not the case for seeded 'Elegance Salon MG Road' currently)."
+}
